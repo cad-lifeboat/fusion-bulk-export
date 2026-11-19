@@ -50,7 +50,7 @@ class UItests(unittest.TestCase):
 
     def open_dialog(self):
         self.module.run(None) if not self.definition.commandCreated.handlers else None
-        command = NS(execute=Event(), inputChanged=Event(), commandInputs=fake.Inputs(),
+        command = NS(execute=Event(), inputChanged=Event(), validateInputs=Event(), commandInputs=fake.Inputs(),
                      setDialogInitialSize=lambda w, h: None, setDialogMinimumSize=lambda w, h: None)
         self.definition.commandCreated.handlers[-1].notify(NS(command=command))
         self.assertEqual(self.errors, [])
@@ -127,6 +127,23 @@ class UItests(unittest.TestCase):
         self.assertTrue(inputs.find('fbx_p_0_0_whole').value and inputs.find('fbx_p_0_1_whole').value)
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
+
+    def valid(self, command):
+        args = NS(areInputsValid=True)
+        command.validateInputs.handlers[0].notify(args)
+        return args.areInputsValid
+
+    def test_export_button_disabled_until_something_is_chosen(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        self.assertTrue(self.valid(command))  # Everything
+        inputs.find('fbx_mode').select('Choose projects or folders')
+        self.change(command, inputs.find('fbx_mode'))
+        self.assertFalse(self.valid(command))
+        inputs.find('fbx_p_0_1_whole').value = True
+        self.change(command, inputs.find('fbx_p_0_1_whole'))
+        self.assertTrue(self.valid(command))
 
     def test_choose_with_nothing_ticked_explains_and_exports_nothing(self):
         self.picker_data()

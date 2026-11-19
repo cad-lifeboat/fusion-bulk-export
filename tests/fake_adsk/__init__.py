@@ -98,6 +98,7 @@ def install():
     adsk.fusion.FusionDocument = NS(cast=lambda value: value)
     adsk.core.CustomEventHandler = object
     adsk.core.InputChangedEventHandler = object
+    adsk.core.ValidateInputsEventHandler = object
     adsk.core.DropDownStyles = NS(TextListDropDownStyle=1)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module

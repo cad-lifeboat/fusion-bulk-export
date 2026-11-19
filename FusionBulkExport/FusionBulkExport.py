@@ -126,6 +126,15 @@ class InputChanged(adsk.core.InputChangedEventHandler):
             report('Fusion Bulk Export error')
 
 
+class Validate(adsk.core.ValidateInputsEventHandler):
+    """Export… stays greyed out until Everything is chosen or something is ticked."""
+    def notify(self, args):
+        try:
+            args.areInputsValid = _picker is None or _picker.selection() is not None
+        except Exception:
+            report('Fusion Bulk Export error')
+
+
 class Execute(adsk.core.CommandEventHandler):
     def notify(self, args):
         app = adsk.core.Application.get()
@@ -186,7 +195,8 @@ class Created(adsk.core.CommandCreatedEventHandler):
             command.setDialogInitialSize(460, 420)
             command.setDialogMinimumSize(380, 160)
             _picker = Picker(adsk.core.Application.get(), command.commandInputs, trace)
-            for event, handler in ((command.execute, Execute()), (command.inputChanged, InputChanged())):
+            for event, handler in ((command.execute, Execute()), (command.inputChanged, InputChanged()),
+                                   (command.validateInputs, Validate())):
                 event.add(handler)
                 _handlers.append(handler)
             command.isRepeatable = False
