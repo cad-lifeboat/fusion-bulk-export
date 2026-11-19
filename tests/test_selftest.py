@@ -71,17 +71,46 @@ class SelfTestTests(unittest.TestCase):
         self.assertIn('export end', (self.output / 'selftest.log').read_text())
         self.assertTrue(all(doc.closed for file in folder.dataFiles.items for doc in file.documents))
 
-    def test_reuses_named_project_only_in_first_hub_and_exports_all_hubs(self):
+    def add_unrelated_designs(self):
+        other_project = fake.File(identity='other-project-file')
+        self.projects.items.append(NS(id='other-project', name='Other', rootFolder=fake.folder(files=[other_project])))
+        other_file = fake.File(identity='other-file')
+        self.app.data.dataHubs.items.append(fake.data([other_file]).dataHubs.item(0))
+        return other_project, other_file
+
+    def test_reuses_named_project_and_exports_only_it_by_default(self):
         project = self.projects.add('bulk-export-selftest')
         self.projects.created.clear()
-        other_file = fake.File(identity='other-file')
-        other = fake.data([other_file]).dataHubs.item(0)
-        self.app.data.dataHubs.items.append(other)
+        unrelated = self.add_unrelated_designs()
         result = self.run_test()
-        self.assertTrue(result['passed'])
+        self.assertTrue(result['passed'], result['errors'])
+        self.assertEqual(result['scope'], 'project')
         self.assertEqual(self.projects.created, [])
         self.assertEqual(len(project.rootFolder.uploads), 2)
-        self.assertEqual(result['counts']['done'], 3)
+        self.assertEqual(result['counts']['done'], 2)
+        # Designs outside the self-test project are never opened.
+        self.assertTrue(all(file.calls == 0 for file in unrelated))
+
+    def test_scope_all_exports_every_hub(self):
+        self.projects.add('bulk-export-selftest')
+        self.add_unrelated_designs()
+        self.settings['scope'] = 'all'
+        self.config.write_text(json.dumps(self.settings))
+        result = self.run_test()
+        self.assertTrue(result['passed'], result['errors'])
+        self.assertEqual(result['counts']['done'], 4)
+
+    def test_invalid_scope_is_reported(self):
+        self.settings['scope'] = 'everything'
+        self.config.write_text(json.dumps(self.settings))
+        result = self.run_test()
+        self.assertFalse(result['passed'])
+        self.assertIn('scope', result['errors'][0]['error'])
+
+    def test_configuration_is_consumed_once(self):
+        self.run_test()
+        self.assertFalse(self.config.exists())
+        self.assertTrue((self.root / 'selftest.json.last').is_file())
 
     def test_wrong_archive_selection_fails_independent_reference_check(self):
         with patch('fusion_bulk_export.fusion.FusionAdapter.archive_extension', return_value='.f3d'):

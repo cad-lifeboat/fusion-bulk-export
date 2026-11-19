@@ -3,3 +3,4 @@ __pycache__/
 out/
 FusionBulkExport/selftest.json
 FusionBulkExport/selftest-output/
+FusionBulkExport/selftest.json.last

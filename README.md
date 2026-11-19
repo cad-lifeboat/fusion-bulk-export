@@ -92,7 +92,9 @@ The output directory must be new or empty, with an absolute path no longer than
 100 characters. The optional third argument names the project (default
 `bulk-export-selftest`). The script copies the add-in into
 `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionBulkExport`,
-writes `selftest.json`, launches Fusion, waits up to one hour and prints a summary.
+writes `selftest.json`, turns on `runOnStartup` in the installed copy for this one
+launch, starts Fusion, waits up to one hour and prints a summary. On exit it turns
+`runOnStartup` off again; the shipped manifest leaves it off.
 It returns 0 for a passing test, 1 for reported failure, and a nonzero status for
 launcher errors or timeout. Change the wait using `SELFTEST_TIMEOUT_SECONDS`.
 Fusion is left running. Do not run multiple tests concurrently.
@@ -118,6 +120,9 @@ without creating command UI or displaying dialogs. Its minimal format is:
 {"output": "/tmp/fusion-proof", "seed_folder": "/absolute/path/to/seeds", "project": "bulk-export-selftest"}
 ```
 
+The add-in renames the file to `selftest.json.last` as soon as it reads it, so the
+test runs once and later launches start normally.
+
 The test creates or reuses the named project in the first hub, uploads every seed
 using `DataFolder.uploadFile`, polls `DataFileFuture.uploadState` and waits for
 `DataFile.isComplete` before exporting. Each transfer and processing wait defaults
@@ -126,8 +131,10 @@ to 600 seconds; `upload_timeout_seconds` in the configuration changes this limit
 seeds or running the exporter. Nothing in any hub is deleted. Repeated tests
 upload again and may add files or versions to the reused project.
 
-The normal exporter visits **all accessible hubs and projects**, including designs
-created when uploading assembly bundles. Use the throwaway account accordingly.
+By default the test exports only the self-test project (including designs created
+when uploading assembly bundles), so nothing else in the account is opened. Set
+`"scope": "all"` in the configuration to run the normal exporter over every
+accessible hub and project instead.
 `selftest.log` records activity immediately, including each upload and export
 attempt, so a crash or stuck API call leaves a trail. `selftest-result.json` is
 written atomically on completion and includes Fusion version, timestamps, elapsed
@@ -145,9 +152,7 @@ If configuration cannot be read or its output is unusable, diagnostics go to
 not cancel Fusion or an in-progress API call; inspect the log before retrying.
 The polling timeouts cannot interrupt a synchronous Fusion API call.
 
-Remove the installed `selftest.json` after testing to restore the interactive
-startup behavior. The normal button, folder dialog and export behavior are unchanged.
-The manifest enables startup loading; Fusion's add-in settings can disable it.
+The normal button, folder dialog and export behavior are unchanged.
 Real Fusion compatibility remains unverified until this procedure passes on a Mac.
 
 Upload behavior follows Autodesk's [DataFolder.uploadFile documentation](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/core_DataFolder_uploadFile.htm)

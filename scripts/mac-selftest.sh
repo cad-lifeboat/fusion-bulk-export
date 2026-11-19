@@ -41,6 +41,20 @@ shutil.copytree(repo / 'FusionBulkExport', installed, dirs_exist_ok=True,
 (installed / 'selftest.json').write_text(json.dumps(dict(
     output=str(output), seed_folder=str(seed), project=str(project)), indent=2) + '\n')
 PY
+# Load at startup for this test only; the shipped manifest keeps runOnStartup off.
+set_startup() {
+  python3 - "$installed/FusionBulkExport.manifest" "$1" <<'PY'
+import json
+from pathlib import Path
+import sys
+manifest = Path(sys.argv[1])
+settings = json.loads(manifest.read_text())
+settings['runOnStartup'] = sys.argv[2] == 'on'
+manifest.write_text(json.dumps(settings, indent=2) + '\n')
+PY
+}
+set_startup on
+trap 'set_startup off' EXIT
 # LaunchServices resolves the default registered app; FUSION_APP may be a .app path.
 open -a "${FUSION_APP:-Autodesk Fusion}"
 python3 - "$output" "${SELFTEST_TIMEOUT_SECONDS:-3600}" <<'PY'
@@ -62,6 +76,7 @@ while not result.is_file():
     time.sleep(2)
 report = json.loads(result.read_text())
 print('PASS' if report['passed'] else 'FAIL')
+print('Scope:', report.get('scope'))
 print('Fusion:', report['fusion_version'])
 print('Counts:', report.get('counts', {}))
 for design in report['designs']:

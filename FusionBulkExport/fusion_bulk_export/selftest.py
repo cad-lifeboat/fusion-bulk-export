@@ -29,6 +29,27 @@ class Recorder:
         return detail
 
 
+class Only:
+    """A one-item API collection."""
+    def __init__(self, value):
+        self.value = value
+        self.count = 1
+
+    def item(self, index):
+        if index != 0:
+            raise IndexError(index)
+        return self.value
+
+
+def project_scope(hub, project):
+    """Data view containing only the self-test project, so other designs are never opened."""
+    view = type('HubView', (), {})()
+    view.id, view.name, view.dataProjects = hub.id, hub.name, Only(project)
+    data = type('DataView', (), {})()
+    data.dataHubs = Only(view)
+    return data
+
+
 class ObservedAdapter(FusionAdapter):
     def __init__(self, app, recorder):
         super().__init__(app)
@@ -95,7 +116,10 @@ def run_selftest(app, config_path):
     started = time.monotonic()
     try:
         # A bad config still gets local diagnostics when its output cannot be read.
-        config = json.loads(config_path.read_text(encoding='utf-8'))
+        text = config_path.read_text(encoding='utf-8')
+        # One-shot: later Fusion launches start normally instead of uploading again.
+        config_path.replace(config_path.with_name(config_path.name + '.last'))
+        config = json.loads(text)
         output = Path(config['output']).expanduser()
         if not output.is_absolute():
             raise ValueError('output must be an absolute path')
@@ -112,6 +136,9 @@ def run_selftest(app, config_path):
         project_name = config.get('project', 'bulk-export-selftest')
         if not isinstance(project_name, str) or not project_name.strip():
             raise ValueError('project must be a nonempty string')
+        scope = config.get('scope', 'project')
+        if scope not in ('project', 'all'):
+            raise ValueError('scope must be "project" or "all"')
         timeout = float(config.get('upload_timeout_seconds', 600))
         if not 0 < timeout <= 86400:
             raise ValueError('upload_timeout_seconds must be between 0 and 86400')
@@ -169,8 +196,10 @@ def run_selftest(app, config_path):
         exporter = Exporter(output, adapter, error_callback=recorder.error)
         export_start = time.monotonic()
         try:
+            data = project_scope(hub, project) if scope == 'project' else app.data
+            recorder.result['scope'] = scope
             recorder.result['counts'] = exporter.run(
-                app.data, progress=lambda i, total, name: recorder.log('design %d/%d %s' % (i + 1, total, name)))
+                data, progress=lambda i, total, name: recorder.log('design %d/%d %s' % (i + 1, total, name)))
         finally:
             recorder.result['timings']['export_seconds'] = time.monotonic() - export_start
     except Exception as error:
