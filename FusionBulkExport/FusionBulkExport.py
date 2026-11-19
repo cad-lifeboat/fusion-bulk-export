@@ -65,6 +65,11 @@ class Created(adsk.core.CommandCreatedEventHandler):
 
 def run(context):
     global _control, _definition
+    config = Path(__file__).parent / 'selftest.json'
+    if config.is_file():
+        from fusion_bulk_export.selftest import run_selftest
+        run_selftest(adsk.core.Application.get(), config)
+        return
     ui = adsk.core.Application.get().userInterface
     try:
         _definition = ui.commandDefinitions.addButtonDefinition(

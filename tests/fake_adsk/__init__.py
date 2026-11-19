@@ -78,10 +78,66 @@ class Documents(Collection):
 
 
 def install():
+    if getattr(sys.modules.get('adsk'), '_synthetic', False):
+        return
     adsk = ModuleType('adsk')
+    adsk._synthetic = True
     adsk.core = ModuleType('adsk.core')
     adsk.fusion = ModuleType('adsk.fusion')
     adsk.fusion.Design = NS(cast=lambda value: value)
     adsk.fusion.FusionDocument = NS(cast=lambda value: value)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module
+
+
+class UploadFuture:
+    def __init__(self, file, states=(0, 1)):
+        self.dataFile = file
+        self.states = list(states)
+        self.polls = 0
+
+    @property
+    def uploadState(self):
+        self.polls += 1
+        return self.states.pop(0) if len(self.states) > 1 else self.states[0]
+
+
+class UploadFolder:
+    def __init__(self):
+        self.name = 'Root'
+        self.dataFiles = Collection()
+        self.dataFolders = Collection()
+        self.futures = []
+        self.uploads = []
+        self.next_states = (0, 1)
+        self.processing_polls = 0
+
+    def uploadFile(self, path):
+        self.uploads.append(path)
+        file = File(Path(path).stem, 'upload-' + str(len(self.uploads)),
+                    references=Path(path).suffix.lower() == '.f3z')
+        file.isComplete = False
+
+        def refresh(handler):
+            assert handler is None
+            self.processing_polls += 1
+            file.isComplete = self.processing_polls % 2 == 0
+            return True
+
+        file.refresh = refresh
+        self.dataFiles.items.append(file)
+        future = UploadFuture(file, self.next_states)
+        self.futures.append(future)
+        return future
+
+
+class Projects(Collection):
+    def __init__(self, *items):
+        super().__init__(*items)
+        self.created = []
+
+    def add(self, name):
+        self.created.append(name)
+        project = NS(id='test-project-' + str(len(self.created)), name=name, rootFolder=UploadFolder())
+        self.items.append(project)
+        return project

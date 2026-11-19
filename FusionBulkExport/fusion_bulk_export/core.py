@@ -65,12 +65,13 @@ def atomic_write(path, value):
 
 
 class Exporter:
-    def __init__(self, output, adapter):
+    def __init__(self, output, adapter, error_callback=None):
         self.root = Path(output).resolve()
         if windows_length(self.root) > 100:
             raise ValueError('Choose an output folder with a path of at most 100 characters.')
         self.root.mkdir(parents=True, exist_ok=True)
         self.adapter = adapter
+        self.error_callback = error_callback
         self.manifest_path = self.root / 'manifest.json'
         self.manifest = {'schema': 1, 'runs': [], 'entries': []}
         if self.manifest_path.exists():
@@ -164,9 +165,13 @@ class Exporter:
                             entry.update(status='done', error=None)
                             break
                         except NonDesign as error:
+                            if self.error_callback:
+                                self.error_callback(key, error)
                             entry.update(status='skipped', error=str(error))
                             break
                         except Exception as error:
+                            if self.error_callback:
+                                self.error_callback(key, error)
                             entry.update(status='failed', error=str(error), files=[])
                             self.log('attempt failed ' + key + ': ' + str(error))
                             self.save()

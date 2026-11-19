@@ -8,6 +8,10 @@ class FusionAdapter:
     def __init__(self, app):
         self.app = app
 
+    def archive_extension(self, document, data_file):
+        references = document.documentReferences.count > 0 or data_file.childReferences.count > 0
+        return '.f3z' if references else '.f3d'
+
     def export(self, data_file, stem):
         # Opening an already open document may return that same document. Preserve it.
         for existing in collection(self.app.documents):
@@ -23,8 +27,7 @@ class FusionAdapter:
             fusion_document = adsk.fusion.FusionDocument.cast(document)
             if not fusion_document:
                 raise NonDesign('Not a Fusion document')
-            references = fusion_document.documentReferences.count > 0 or data_file.childReferences.count > 0
-            archive = str(stem) + ('.f3z' if references else '.f3d')
+            archive = str(stem) + self.archive_extension(fusion_document, data_file)
             step = str(stem) + '.step'
             manager = design.exportManager
             if not manager.execute(manager.createFusionArchiveExportOptions(archive)):
