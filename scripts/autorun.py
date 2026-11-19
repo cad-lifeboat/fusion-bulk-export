@@ -118,10 +118,11 @@ def install(installed, output, mode, projects=None, limit=None):
             pass
     shutil.copytree(REPO / 'FusionBulkExport', installed, dirs_exist_ok=True,
                     ignore=RUNTIME_FILES)
-    try:
-        (installed / 'startup-error.txt').unlink()
-    except FileNotFoundError:
-        pass
+    for stale in ('startup-error.txt', 'autorun-output/autorun-result.json'):
+        try:
+            (installed / stale).unlink()
+        except FileNotFoundError:
+            pass
     (installed / 'autorun.watch').write_text('', encoding='utf-8')
     config = dict(output=str(output), mode=mode)
     if projects:
@@ -167,11 +168,20 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
     result = output / 'autorun-result.json'
     print('Waiting for ' + str(result) + ' (progress: autorun.log)', flush=True)
     start = clock()
+    started_at = time.time() - 5
     hinted = False
     while not result.is_file():
         elapsed = clock() - start
         if elapsed >= timeout:
             raise SystemExit('Timed out. Inspect ' + str(output / 'autorun.log'))
+        fallback = installed / 'autorun-output' / 'autorun-result.json'
+        if fallback.is_file() and fallback.stat().st_mtime >= started_at:
+            # The add-in could not use this job's configuration; its report went beside it.
+            report = json.loads(fallback.read_text(encoding='utf-8'))
+            print('The add-in rejected the job:', flush=True)
+            for error in report.get('errors', []):
+                print('  ' + error.get('error', ''), flush=True)
+            return 1
         crash = installed / 'startup-error.txt'
         if crash.is_file():
             print('The add-in failed to start:\n' + crash.read_text(encoding='utf-8'), flush=True)

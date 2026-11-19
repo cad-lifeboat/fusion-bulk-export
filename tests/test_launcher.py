@@ -135,6 +135,18 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn('ModuleNotFoundError', stream.getvalue())
 
+    def test_wait_reports_rejected_job(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        (installed / 'autorun-output').mkdir(parents=True)
+        out.mkdir()
+        (installed / 'autorun-output' / 'autorun-result.json').write_text(json.dumps(dict(
+            errors=[dict(stage='autorun', error='mode must be "export" or "inventory"')])))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
+        self.assertEqual(status, 1)
+        self.assertIn('rejected the job', stream.getvalue())
+
     def test_wait_times_out(self):
         ticks = iter(range(0, 10000, 100))
         with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
