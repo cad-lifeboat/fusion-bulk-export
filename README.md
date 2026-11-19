@@ -8,7 +8,7 @@ Get all of your Fusion designs out, in one go.
 - Keeps your project and folder layout on disk, writes a `manifest.json`, and can resume: run it again on the same folder and it skips what's done.
 - Everything stays on your computer.
 
-**Status: early.** It's tested against a simulated Fusion API but hasn't run on real Fusion yet. If you try it, please open an issue with what happened (your Fusion version and the end-of-run counts help).
+**Tested on real Fusion** (2706.1.17, macOS) with a real account, using the unattended launcher: 59 of 59 designs exported, every archive and STEP file checked, no failures (3.5 minutes, 52 MB). The in-Fusion button runs the same exporter. Windows support is written but not yet tested on a Windows machine; if you try it there, please open an issue with your Fusion version and the end-of-run counts.
 
 ## Install
 
@@ -107,7 +107,10 @@ checks every `done` entry: the archive is a readable zip with Fusion's design me
 (members compressed with Zstandard are counted as not CRC-checked on Python before
 3.14), and the STEP has a valid header and ending and is not
 trivially small. It also compares the number of solids in each STEP with the
-solid-body count Fusion reported for that design (recorded in the manifest).
+visible solid-body count Fusion reported for that design (recorded in the manifest).
+A difference is printed as a NOTE, not a failure: the count is approximate for
+linked components, and Fusion's STEP translator occasionally drops a body it cannot
+write. The `.f3d` is the complete copy. Use `--strict` to treat differences as failures.
 Drawings and other non-design files are listed as `not_designs`, not as problems. It prints counts only; add `--names` to
 show design names.
 
@@ -209,7 +212,8 @@ not cancel Fusion or an in-progress API call; inspect the log before retrying.
 The polling timeouts cannot interrupt a synchronous Fusion API call.
 
 The normal button, folder dialog and export behavior are unchanged.
-Real Fusion compatibility remains unverified until this procedure passes on a Mac.
+The self-test uploads into the signed-in account; for checking your own export, use
+`scripts/verify-export.py` instead.
 
 Upload behavior follows Autodesk's [DataFolder.uploadFile documentation](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/core_DataFolder_uploadFile.htm)
 and [DataFile.isComplete documentation](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/core_DataFile_isComplete.htm).

@@ -92,7 +92,16 @@ class VerifyTests(unittest.TestCase):
         status, text = self.run_check()
         self.assertEqual(status, 1)
         self.assertIn('truncated', text)
-        self.assertIn('Fusion reported 3', text)
+        self.assertIn('NOTE STEP has 2 solids, Fusion reported 3', text)
+
+    def test_solid_mismatch_is_a_note_unless_strict(self):
+        self.build(solids=3)
+        status, text = self.run_check()
+        self.assertEqual(status, 0, text)
+        self.assertIn('"solids_differ": 1', text)
+        status, text = self.run_check('--strict')
+        self.assertEqual(status, 1)
+        self.assertIn('PROBLEM STEP has 2 solids', text)
 
 
 if __name__ == '__main__':

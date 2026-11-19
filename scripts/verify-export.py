@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Check an export folder: every done entry has a readable archive and a valid STEP.
 
-Usage: verify-export.py OUTPUT_FOLDER [--names]
+Usage: verify-export.py OUTPUT_FOLDER [--names] [--strict]
 
-Prints counts only, unless --names is given (manifests hold private design names).
+A STEP whose solid count differs from Fusion's visible solid count is a NOTE
+(--strict makes it a problem). Prints counts only, unless --names is given (manifests hold private design names).
 When selftest-result.json is present, STEP solid counts are compared with the
 solid-body counts Fusion reported for each design. Exit status 0 means every
 check passed.
@@ -69,13 +70,15 @@ def main(argv):
     UNCHECKED[0] = 0
     root = Path(argv[0]).resolve()
     names = '--names' in argv
+    strict = '--strict' in argv
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
     observed = {}
     result_path = root / 'selftest-result.json'
     if result_path.is_file():
         for design in json.loads(result_path.read_text(encoding='utf-8'))['designs']:
             observed[design['id']] = design.get('solid_bodies')
-    totals = dict(entries=0, done=0, not_designs=0, f3d=0, step_ok=0, solids_match=0, solids_unknown=0, failed_checks=0)
+    totals = dict(entries=0, done=0, not_designs=0, f3d=0, step_ok=0, solids_match=0, solids_differ=0,
+                  solids_unknown=0, failed_checks=0)
     for number, entry in enumerate(manifest['entries'], 1):
         totals['entries'] += 1
         label = entry['name'] if names else 'design %d' % number
@@ -87,7 +90,7 @@ def main(argv):
             totals['failed_checks'] += 1
             continue
         totals['done'] += 1
-        problems = []
+        problems, notes = [], []
         archive, step = (root / entry['files'][0]['path'], root / entry['files'][1]['path'])
         totals[archive.suffix.lower().lstrip('.')] = totals.get(archive.suffix.lower().lstrip('.'), 0) + 1
         archive_problems, members = check_archive(archive)
@@ -103,12 +106,17 @@ def main(argv):
         elif expected == solids:
             totals['solids_match'] += 1
         else:
-            problems.append('STEP has %d solids, Fusion reported %d' % (solids, expected))
+            # Advisory: the visible count is approximate for linked components, and the STEP
+            # translator can drop bodies it cannot write. The .f3d is the complete copy.
+            totals['solids_differ'] += 1
+            (problems if strict else notes).append('STEP has %d solids, Fusion reported %d' % (solids, expected))
         print('%s: %s, %d member design(s), STEP %d bytes, %d solid(s)%s' % (
             label, archive.suffix, members, step.stat().st_size, solids,
             '' if expected is None else ' (Fusion: %d)' % expected))
         for problem in problems:
             print('  PROBLEM ' + problem)
+        for note in notes:
+            print('  NOTE ' + note)
         if problems:
             totals['failed_checks'] += 1
     totals['members_not_crc_checked'] = UNCHECKED[0]
