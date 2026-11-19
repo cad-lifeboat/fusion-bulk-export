@@ -1,5 +1,13 @@
 # Fusion Bulk Export
 
+Get all of your Fusion designs out, in one go.
+
+- Exports every design in every hub, project and folder you can access: `.f3z` when it references other designs (so linked parts come with it), otherwise `.f3d`, plus a matching `.step`.
+- Keeps your project and folder layout on disk, writes a `manifest.json`, and can resume: run it again on the same folder and it skips what's done.
+- Everything stays on your computer.
+
+**Status: early.** It's tested against a simulated Fusion API but hasn't run on real Fusion yet. If you try it, please open an issue with what happened (your Fusion version and the end-of-run counts help).
+
 ## Install
 
 In Fusion, open **Utilities → Add-Ins →
