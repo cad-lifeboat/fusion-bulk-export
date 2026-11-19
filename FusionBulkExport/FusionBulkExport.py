@@ -126,6 +126,16 @@ class InputChanged(adsk.core.InputChangedEventHandler):
             report('Fusion Bulk Export error')
 
 
+class FromPage(adsk.core.HTMLEventHandler):
+    """Requests from the tree page in the dialog; the reply goes back as returnData."""
+    def notify(self, args):
+        try:
+            if _picker:
+                args.returnData = _picker.incoming(args.action, args.data)
+        except Exception:
+            report('Fusion Bulk Export error')
+
+
 class Validate(adsk.core.ValidateInputsEventHandler):
     """Export… stays greyed out until Everything is chosen or something is ticked."""
     def notify(self, args):
@@ -192,11 +202,12 @@ class Created(adsk.core.CommandCreatedEventHandler):
             command = args.command
             command.okButtonText = 'Export…'
             # Wide enough for project and folder names (Fusion's default cuts labels off).
-            command.setDialogInitialSize(460, 420)
+            command.setDialogInitialSize(460, 520)
             command.setDialogMinimumSize(380, 160)
             _picker = Picker(adsk.core.Application.get(), command.commandInputs, trace)
             for event, handler in ((command.execute, Execute()), (command.inputChanged, InputChanged()),
-                                   (command.validateInputs, Validate())):
+                                   (command.validateInputs, Validate()),
+                                   (command.incomingFromHTML, FromPage())):
                 event.add(handler)
                 _handlers.append(handler)
             command.isRepeatable = False

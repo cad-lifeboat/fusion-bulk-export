@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Choose what to export</title>
+<style>
+  :root { --text: #e3e6ea; --muted: #9aa4b1; --hover: rgba(255, 255, 255, 0.07); --box: #8d97a4; --tick: #2f9bd8; }
+  @media (prefers-color-scheme: light) {
+    :root { --text: #1f2328; --muted: #5d6670; --hover: rgba(0, 0, 0, 0.06); --box: #6b7480; --tick: #0a6fc2; }
+  }
+  html, body { margin: 0; background: transparent; color: var(--text);
+    font: 12px -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif; user-select: none; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  .row { display: flex; align-items: center; gap: 6px; height: 24px; border-radius: 4px; cursor: default; }
+  .row:hover { background: var(--hover); }
+  .caret { width: 14px; text-align: center; color: var(--muted); cursor: pointer; flex: none; }
+  .caret.leaf { cursor: default; }
+  .box { width: 12px; height: 12px; border: 1.5px solid var(--box); border-radius: 3px; flex: none; position: relative; }
+  .box.on { background: var(--tick); border-color: var(--tick); }
+  .box.on::after { content: ""; position: absolute; left: 3px; top: 0; width: 4px; height: 8px;
+    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .box.some { border-color: var(--tick); }
+  .box.some::after { content: ""; position: absolute; left: 2px; right: 2px; top: 4.5px; height: 2px; background: var(--tick); }
+  .icon { width: 14px; height: 12px; flex: none; border-radius: 2px; }
+  .icon.hub { background: #6b7480; border-radius: 50%; width: 12px; }
+  .icon.project { background: #f08a24; }
+  .icon.folder { background: #c9a23f; clip-path: polygon(0 15%, 40% 15%, 50% 30%, 100% 30%, 100% 100%, 0 100%); }
+  .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty { color: var(--muted); height: 22px; line-height: 22px; font-style: italic; }
+  .hint { color: var(--muted); margin: 4px 4px 8px; }
+</style>
+</head>
+<body>
+  <div class="hint">Tick what to export. Ticking a folder includes everything inside it.</div>
+  <ul id="tree"><li class="empty">Loading your hubs…</li></ul>
+  <script src="tree.js"></script>
+</body>
+</html>

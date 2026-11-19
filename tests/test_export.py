@@ -73,6 +73,11 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(self.exported(), ['deep'])
         self.assertEqual(exporter.run_info['discovery_errors'], [])
 
+    def test_selection_files_only_entries(self):
+        data, _ = self.selection_data()
+        self.run_export(data, selection=Selection({'project-1': [[''], ['Top', '']]}))
+        self.assertEqual(self.exported(), ['root', 'top'])
+
     def test_selection_from_config(self):
         selection = Selection.from_config(['project-2'], {'project-1': ['Top/Sub', 'Other'], 'project-2': ['X']})
         self.assertEqual(selection.projects, {'project-2': None, 'project-1': [['Top', 'Sub'], ['Other']]})

@@ -80,7 +80,8 @@ class Selection:
 
     projects maps a project id to None (the whole project) or to a list of folder
     paths, each a list of folder names below the project root. A chosen folder
-    includes its subfolders. Files at a project's root belong to the whole project.
+    includes its subfolders. A path ending in '' means only the files directly in
+    that folder ([''] is the files at the project's root).
     """
     def __init__(self, projects=None):
         self.projects = None if projects is None else {
@@ -100,7 +101,13 @@ class Selection:
         paths = self.projects.get(str(project.id), [])
         if paths is None:
             return True
-        return any(list(path[:len(folder)]) == folder for folder in paths)
+        for folder in paths:
+            if folder and folder[-1] == '':
+                if list(path) == folder[:-1]:  # files directly in this folder only
+                    return True
+            elif list(path[:len(folder)]) == folder:
+                return True
+        return False
 
     def may_contain(self, project, path):
         """Whether the folder at path is chosen, inside a chosen folder, or above one."""
@@ -109,7 +116,13 @@ class Selection:
         paths = self.projects.get(str(project.id), [])
         if paths is None:
             return True
-        return any(list(path[:len(folder)]) == folder or folder[:len(path)] == list(path) for folder in paths)
+        for folder in paths:
+            if folder and folder[-1] == '':
+                if folder[:-1][:len(path)] == list(path):
+                    return True
+            elif list(path[:len(folder)]) == folder or folder[:len(path)] == list(path):
+                return True
+        return False
 
     def describe(self):
         if self.everything:

@@ -99,6 +99,7 @@ def install():
     adsk.core.CustomEventHandler = object
     adsk.core.InputChangedEventHandler = object
     adsk.core.ValidateInputsEventHandler = object
+    adsk.core.HTMLEventHandler = object
     adsk.core.DropDownStyles = NS(TextListDropDownStyle=1)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module
@@ -194,6 +195,9 @@ class Inputs:
 
     def addBoolValueInput(self, id, name, is_check_box, resources, value):
         return self._add(NS(id=id, name=name, value=value, isVisible=True, isEnabled=True))
+
+    def addBrowserCommandInput(self, id, name, url, minimum_height, maximum_height=0):
+        return self._add(NS(id=id, name=name, htmlFileURL=url, isVisible=True))
 
     def addTextBoxCommandInput(self, id, name, text, rows, read_only):
         return self._add(NS(id=id, name=name, text=text, isVisible=True))

@@ -50,7 +50,8 @@ class UItests(unittest.TestCase):
 
     def open_dialog(self):
         self.module.run(None) if not self.definition.commandCreated.handlers else None
-        command = NS(execute=Event(), inputChanged=Event(), validateInputs=Event(), commandInputs=fake.Inputs(),
+        command = NS(execute=Event(), inputChanged=Event(), validateInputs=Event(), incomingFromHTML=Event(),
+                     commandInputs=fake.Inputs(),
                      setDialogInitialSize=lambda w, h: None, setDialogMinimumSize=lambda w, h: None)
         self.definition.commandCreated.handlers[-1].notify(NS(command=command))
         self.assertEqual(self.errors, [])
@@ -73,86 +74,79 @@ class UItests(unittest.TestCase):
         manifest = json.loads((Path(self.temp.name) / 'manifest.json').read_text())
         return sorted(e['id'] for e in manifest['entries'] if e['status'] == 'done')
 
-    def test_dialog_defaults_to_everything(self):
-        self.picker_data()
-        command = self.open_dialog()
-        inputs = command.commandInputs
-        self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Everything')
-        self.assertFalse(inputs.find('fbx_hub_0').isVisible)
-        command.execute.handlers[0].notify(None)
-        self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
+    def page(self, command, action, data=None):
+        """What the tree page does: send a request and read the reply."""
+        args = NS(action=action, data=json.dumps(data or {}), returnData='')
+        command.incomingFromHTML.handlers[0].notify(args)
+        self.assertEqual(self.errors, [])
+        return json.loads(args.returnData)
 
-    def test_choose_whole_project(self):
-        self.picker_data()
-        command = self.open_dialog()
+    def choose(self, command):
         inputs = command.commandInputs
         inputs.find('fbx_mode').select('Choose projects or folders')
         self.change(command, inputs.find('fbx_mode'))
-        self.assertTrue(inputs.find('fbx_hub_0').isVisible)
-        inputs.find('fbx_p_0_1_whole').value = True
-        self.change(command, inputs.find('fbx_p_0_1_whole'))
-        command.execute.handlers[0].notify(None)
-        self.assertEqual(self.exported(), ['second'])
-
-    def test_pick_folders_lists_them_lazily_and_exports_subtree(self):
-        self.picker_data()
-        command = self.open_dialog()
-        inputs = command.commandInputs
-        inputs.find('fbx_mode').select('Choose projects or folders')
-        self.change(command, inputs.find('fbx_mode'))
-        project = inputs.find('fbx_p_0_0')
-        self.assertEqual([c.name for c in project.children.added], ['Whole project', 'Pick folders'])
-        inputs.find('fbx_p_0_0_pick').value = True
-        self.change(command, inputs.find('fbx_p_0_0_pick'))
-        self.assertEqual([c.name for c in project.children.added[2:]], ['Top', '    Sub', 'Other'])
-        project.children.added[2].value = True  # Top, which includes Sub
-        command.execute.handlers[0].notify(None)
-        self.assertEqual(self.exported(), ['deep', 'top'])
-
-    def test_hidden_folder_choices_do_not_count_and_hub_box_ticks_all(self):
-        self.picker_data()
-        command = self.open_dialog()
-        inputs = command.commandInputs
-        inputs.find('fbx_mode').select('Choose projects or folders')
-        self.change(command, inputs.find('fbx_mode'))
-        pick = inputs.find('fbx_p_0_0_pick')
-        pick.value = True
-        self.change(command, pick)
-        inputs.find('fbx_p_0_0').children.added[4].value = True  # Other
-        pick.value = False
-        self.change(command, pick)
-        every = inputs.find('fbx_hub_0_all')
-        every.value = True
-        self.change(command, every)
-        self.assertTrue(inputs.find('fbx_p_0_0_whole').value and inputs.find('fbx_p_0_1_whole').value)
-        command.execute.handlers[0].notify(None)
-        self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
+        return inputs
 
     def valid(self, command):
         args = NS(areInputsValid=True)
         command.validateInputs.handlers[0].notify(args)
         return args.areInputsValid
 
-    def test_export_button_disabled_until_something_is_chosen(self):
+    def test_dialog_defaults_to_everything(self):
         self.picker_data()
         command = self.open_dialog()
         inputs = command.commandInputs
-        self.assertTrue(self.valid(command))  # Everything
-        inputs.find('fbx_mode').select('Choose projects or folders')
-        self.change(command, inputs.find('fbx_mode'))
-        self.assertFalse(self.valid(command))
-        inputs.find('fbx_p_0_1_whole').value = True
-        self.change(command, inputs.find('fbx_p_0_1_whole'))
+        self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Everything')
+        self.assertFalse(inputs.find('fbx_tree').isVisible)
+        self.assertTrue(inputs.find('fbx_tree').htmlFileURL.endswith('/ui/tree.html'))
         self.assertTrue(self.valid(command))
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
 
-    def test_choose_with_nothing_ticked_explains_and_exports_nothing(self):
+    def test_tree_lists_hubs_projects_and_folders_on_demand(self):
         self.picker_data()
         command = self.open_dialog()
-        inputs = command.commandInputs
-        inputs.find('fbx_mode').select('Choose projects or folders')
-        self.change(command, inputs.find('fbx_mode'))
+        inputs = self.choose(command)
+        self.assertTrue(inputs.find('fbx_tree').isVisible)
+        hubs = self.page(command, 'hubs')['hubs']
+        self.assertEqual([(p['id'], p['name']) for p in hubs[0]['projects']],
+                         [('project-1', 'Project'), ('project-2', 'Two')])
+        self.assertEqual(self.page(command, 'folders', dict(project='project-1', path=[]))['folders'],
+                         ['Top', 'Other'])
+        self.assertEqual(self.page(command, 'folders', dict(project='project-1', path=['Top']))['folders'],
+                         ['Sub'])
+
+    def test_ticked_folder_exports_its_subtree(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = self.choose(command)
+        self.page(command, 'hubs')
+        self.assertFalse(self.valid(command))
+        self.assertEqual(inputs.find('fbx_summary').text, 'Nothing chosen yet.')
+        self.page(command, 'selection', {'project-1': [['Top']]})
+        self.assertEqual(inputs.find('fbx_summary').text, '0 whole project(s) and 1 folder(s) chosen.')
+        self.assertTrue(self.valid(command))
         command.execute.handlers[0].notify(None)
-        self.assertEqual(self.summaries, [])
+        self.assertEqual(self.exported(), ['deep', 'top'])
+
+    def test_ticked_project_exports_whole_project(self):
+        self.picker_data()
+        command = self.open_dialog()
+        self.choose(command)
+        self.page(command, 'hubs')
+        self.page(command, 'selection', {'project-2': None})
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['second'])
+
+    def test_unticking_everything_disables_export(self):
+        self.picker_data()
+        command = self.open_dialog()
+        self.choose(command)
+        self.page(command, 'hubs')
+        self.page(command, 'selection', {'project-2': None})
+        self.page(command, 'selection', {})
+        self.assertFalse(self.valid(command))
+        command.execute.handlers[0].notify(None)
         self.assertIn('Tick at least one', self.errors[0][0])
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
 

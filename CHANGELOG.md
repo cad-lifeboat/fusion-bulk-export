@@ -3,7 +3,7 @@
 ## 0.2.0
 
 - Tested on real Fusion through the toolbar button (Everything, 59/59) and the launcher (one folder); the Export button stays greyed out until something is chosen; the dialog opens wide enough for names, and the button sits on the toolbar.
-- Choose what to export: everything, or whole hubs, projects or folders (with their subfolders) in the dialog; `--project` and `--folder` do the same for the unattended launcher.
+- Choose what to export in a tree of hubs, projects and folders (folders load as you open them; tri-state ticks; a project's own files count only when the project itself is ticked); `--project` and `--folder` do the same for the unattended launcher.
 - Download the add-in as one zip from the release page; README starts with a three-step quick start.
 - First real-Fusion run (2706.1.17, macOS): 59 of 59 designs exported and checked.
 - A design already open in Fusion is exported from the open copy (unless it has unsaved changes or is another version).
