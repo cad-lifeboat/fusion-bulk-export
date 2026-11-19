@@ -1,5 +1,6 @@
 """Synthetic command lifecycle and output-folder dialog checks."""
 import importlib
+import json
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace as NS
@@ -47,11 +48,100 @@ class UItests(unittest.TestCase):
         self.module = importlib.import_module('FusionBulkExport')
         self.addCleanup(self.module.stop, None)
 
+    def open_dialog(self):
+        self.module.run(None) if not self.definition.commandCreated.handlers else None
+        command = NS(execute=Event(), inputChanged=Event(), commandInputs=fake.Inputs())
+        self.definition.commandCreated.handlers[-1].notify(NS(command=command))
+        self.assertEqual(self.errors, [])
+        return command
+
+    def change(self, command, control):
+        command.inputChanged.handlers[0].notify(NS(input=control))
+        self.assertEqual(self.errors, [])
+
+    def picker_data(self):
+        """Hub with two projects; the first has folders Top/Sub and Other."""
+        self.files = {i: fake.File(identity=i) for i in ('root', 'top', 'deep', 'other', 'second')}
+        sub = fake.folder('Sub', files=[self.files['deep']])
+        self.app.data = fake.data([self.files['root']], [fake.folder('Top', files=[self.files['top']], folders=[sub]),
+                                                          fake.folder('Other', files=[self.files['other']])])
+        self.app.data.dataHubs.item(0).dataProjects.items.append(
+            NS(id='project-2', name='Two', rootFolder=fake.folder(files=[self.files['second']])))
+
+    def exported(self):
+        manifest = json.loads((Path(self.temp.name) / 'manifest.json').read_text())
+        return sorted(e['id'] for e in manifest['entries'] if e['status'] == 'done')
+
+    def test_dialog_defaults_to_everything(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Everything')
+        self.assertFalse(inputs.find('fbx_hub_0').isVisible)
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
+
+    def test_choose_whole_project(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        inputs.find('fbx_mode').select('Choose projects or folders')
+        self.change(command, inputs.find('fbx_mode'))
+        self.assertTrue(inputs.find('fbx_hub_0').isVisible)
+        inputs.find('fbx_p_0_1_whole').value = True
+        self.change(command, inputs.find('fbx_p_0_1_whole'))
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['second'])
+
+    def test_pick_folders_lists_them_lazily_and_exports_subtree(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        inputs.find('fbx_mode').select('Choose projects or folders')
+        self.change(command, inputs.find('fbx_mode'))
+        project = inputs.find('fbx_p_0_0')
+        self.assertEqual([c.name for c in project.children.added], ['Whole project', 'Pick folders'])
+        inputs.find('fbx_p_0_0_pick').value = True
+        self.change(command, inputs.find('fbx_p_0_0_pick'))
+        self.assertEqual([c.name for c in project.children.added[2:]], ['Top', '    Sub', 'Other'])
+        project.children.added[2].value = True  # Top, which includes Sub
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['deep', 'top'])
+
+    def test_hidden_folder_choices_do_not_count_and_hub_box_ticks_all(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        inputs.find('fbx_mode').select('Choose projects or folders')
+        self.change(command, inputs.find('fbx_mode'))
+        pick = inputs.find('fbx_p_0_0_pick')
+        pick.value = True
+        self.change(command, pick)
+        inputs.find('fbx_p_0_0').children.added[4].value = True  # Other
+        pick.value = False
+        self.change(command, pick)
+        every = inputs.find('fbx_hub_0_all')
+        every.value = True
+        self.change(command, every)
+        self.assertTrue(inputs.find('fbx_p_0_0_whole').value and inputs.find('fbx_p_0_1_whole').value)
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
+
+    def test_choose_with_nothing_ticked_explains_and_exports_nothing(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        inputs.find('fbx_mode').select('Choose projects or folders')
+        self.change(command, inputs.find('fbx_mode'))
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.summaries, [])
+        self.assertIn('Tick at least one', self.errors[0][0])
+        self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+
     def test_lifecycle_and_copyable_folder_dialog(self):
         self.module.run(None)
         self.assertEqual(self.errors, [])
-        command = NS(execute=Event())
-        self.definition.commandCreated.handlers[0].notify(NS(command=command))
+        command = self.open_dialog()
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.errors, [])
         self.assertEqual(len(self.summaries), 1)

@@ -16,7 +16,7 @@ def collection(values):
         yield values.item(index)
 
 
-def walk(data, on_error=None):
+def walk(data, on_error=None, selection=None):
     """Yield files from every hub, project and folder (including project roots).
 
     With on_error, a project or folder that cannot be read is reported as
@@ -33,10 +33,12 @@ def walk(data, on_error=None):
 
     def folders(hub, project, folder, path):
         where = [hub.name, project.name] + path
-        for file in guarded(where, lambda: collection(folder.dataFiles)):
-            yield path, file
+        if selection is None or selection.keeps(hub, project, path):
+            for file in guarded(where, lambda: collection(folder.dataFiles)):
+                yield path, file
         for child in guarded(where, lambda: collection(folder.dataFolders)):
-            yield from folders(hub, project, child, path + [child.name])
+            if selection is None or selection.may_contain(project, path + [child.name]):
+                yield from folders(hub, project, child, path + [child.name])
     for hub in collection(data.dataHubs):
         for project in guarded([hub.name], lambda: collection(hub.dataProjects)):
             root = guarded([hub.name, project.name], lambda: [project.rootFolder])
@@ -71,6 +73,67 @@ def select_projects(data, keep):
     view = _View()
     view.dataHubs = Listing(hubs)
     return view
+
+
+class Selection:
+    """What to export: everything, or chosen projects, whole or by folder.
+
+    projects maps a project id to None (the whole project) or to a list of folder
+    paths, each a list of folder names below the project root. A chosen folder
+    includes its subfolders. Files at a project's root belong to the whole project.
+    """
+    def __init__(self, projects=None):
+        self.projects = None if projects is None else {
+            str(key): None if paths is None else [list(path) for path in paths]
+            for key, paths in projects.items()}
+
+    @property
+    def everything(self):
+        return self.projects is None
+
+    def keeps_project(self, hub, project):
+        return self.everything or str(project.id) in self.projects
+
+    def keeps(self, hub, project, path):
+        if self.everything:
+            return True
+        paths = self.projects.get(str(project.id), [])
+        if paths is None:
+            return True
+        return any(list(path[:len(folder)]) == folder for folder in paths)
+
+    def may_contain(self, project, path):
+        """Whether the folder at path is chosen, inside a chosen folder, or above one."""
+        if self.everything:
+            return True
+        paths = self.projects.get(str(project.id), [])
+        if paths is None:
+            return True
+        return any(list(path[:len(folder)]) == folder or folder[:len(path)] == list(path) for folder in paths)
+
+    def describe(self):
+        if self.everything:
+            return 'everything'
+        folders = sum(len(paths) for paths in self.projects.values() if paths is not None)
+        whole = sum(1 for paths in self.projects.values() if paths is None)
+        return '%d whole project(s), %d folder(s)' % (whole, folders)
+
+    @classmethod
+    def from_config(cls, projects=None, folders=None):
+        """From autorun settings: project ids, and {project id: ["A/B", ...]}."""
+        if projects is None and not folders:
+            return cls()
+        chosen = {str(project): None for project in projects or []}
+        for project, paths in (folders or {}).items():
+            if chosen.get(str(project), []) is None:
+                continue  # whole project already chosen
+            chosen.setdefault(str(project), [])
+            for path in paths:
+                parts = [part for part in str(path).split('/') if part]
+                if not parts:
+                    raise ValueError('folder paths must name at least one folder')
+                chosen[str(project)].append(parts)
+        return cls(chosen)
 
 
 def sanitize(value, limit=42):
@@ -161,8 +224,13 @@ class Exporter:
         directory.mkdir(parents=True, exist_ok=True)
         return directory / stem
 
-    def run(self, data, cancelled=lambda: False, progress=lambda index, total, name: None, limit=None):
+    def run(self, data, cancelled=lambda: False, progress=lambda index, total, name: None, limit=None,
+            selection=None):
         counts = dict(done=0, failed=0, skipped=0)
+        selection = selection or Selection()
+        self.run_info['selection'] = selection.describe()
+        if not selection.everything:
+            data = select_projects(data, selection.keeps_project)
         self.run_info['discovery_errors'] = []
 
         def unreadable(where, error):
@@ -174,11 +242,12 @@ class Exporter:
         try:
             self.log('run started')
             items = []
-            for item in walk(data, unreadable):
+            for item in walk(data, unreadable, None if selection.everything else selection):
                 if cancelled():
                     self.run_info['cancelled'] = True
                     return counts
-                items.append(item)
+                if selection.keeps(item[0], item[1], item[2]):
+                    items.append(item)
             if limit is not None:
                 items = items[:limit]
             self.run_info['found'] = len(items)

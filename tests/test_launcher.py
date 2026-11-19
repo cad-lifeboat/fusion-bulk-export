@@ -147,6 +147,14 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn('rejected the job', stream.getvalue())
 
+    def test_folder_arguments(self):
+        self.assertEqual(launcher.folder_map(['p1:Parts/Brackets/', 'p1:Jigs', 'p2:/X']),
+                         {'p1': ['Parts/Brackets', 'Jigs'], 'p2': ['X']})
+        self.assertIsNone(launcher.folder_map(None))
+        for bad in ('noseparator', 'p1:', ':Parts', 'p1:/'):
+            with self.assertRaises(SystemExit):
+                launcher.folder_map([bad])
+
     def test_wait_times_out(self):
         ticks = iter(range(0, 10000, 100))
         with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):

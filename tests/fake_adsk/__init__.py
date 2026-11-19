@@ -97,6 +97,8 @@ def install():
     adsk.fusion.Design = NS(cast=lambda value: value)
     adsk.fusion.FusionDocument = NS(cast=lambda value: value)
     adsk.core.CustomEventHandler = object
+    adsk.core.InputChangedEventHandler = object
+    adsk.core.DropDownStyles = NS(TextListDropDownStyle=1)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module
 
@@ -152,3 +154,55 @@ class Projects(Collection):
         project = NS(id='test-project-' + str(len(self.created)), name=name, rootFolder=UploadFolder())
         self.items.append(project)
         return project
+
+
+class ListItems(list):
+    def add(self, name, selected, icon=''):
+        item = NS(name=name, isSelected=selected)
+        self.append(item)
+        return item
+
+
+class DropDown:
+    def __init__(self, id, name):
+        self.id, self.name, self.listItems, self.isVisible = id, name, ListItems(), True
+
+    @property
+    def selectedItem(self):
+        return next((item for item in self.listItems if item.isSelected), None)
+
+    def select(self, name):
+        for item in self.listItems:
+            item.isSelected = item.name == name
+
+
+class Inputs:
+    """Command inputs: the dialog controls an add-in creates."""
+    def __init__(self):
+        self.added = []
+
+    def _add(self, control):
+        self.added.append(control)
+        return control
+
+    def addDropDownCommandInput(self, id, name, style):
+        return self._add(DropDown(id, name))
+
+    def addGroupCommandInput(self, id, name):
+        return self._add(NS(id=id, name=name, isExpanded=True, isVisible=True, children=Inputs()))
+
+    def addBoolValueInput(self, id, name, is_check_box, resources, value):
+        return self._add(NS(id=id, name=name, value=value, isVisible=True, isEnabled=True))
+
+    def addTextBoxCommandInput(self, id, name, text, rows, read_only):
+        return self._add(NS(id=id, name=name, text=text, isVisible=True))
+
+    def find(self, id):
+        for control in self.added:
+            if control.id == id:
+                return control
+            if hasattr(control, 'children'):
+                found = control.children.find(id)
+                if found is not None:
+                    return found
+        return None

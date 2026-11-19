@@ -77,6 +77,17 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(report['text_commands'], ['Fusion.ExportArchive  Archive things'])
         self.assertTrue(all(file.calls == 0 for file in self.files))
 
+    def test_folder_selection(self):
+        result = self.run_with(folders={'project-1': ['Sub']})
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
+        self.assertEqual(result['counts'], dict(done=0, failed=0, skipped=1))  # Sub holds only a drawing
+        self.assertEqual(self.files[0].calls + self.files[1].calls + self.files[3].calls, 0)
+
+    def test_bad_folders_setting_is_reported(self):
+        result = self.run_with(folders={'project-1': []})
+        self.assertIn('folders must map', result['errors'][0]['error'])
+
     def test_unknown_project_is_an_error(self):
         result = self.run_with(projects=['missing'])
         self.assertIn('requested projects', result['errors'][0]['error'])

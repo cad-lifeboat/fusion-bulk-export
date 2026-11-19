@@ -2,7 +2,7 @@
 """Unattended Fusion Bulk Export on macOS or Windows.
 
   autorun.py inventory OUTPUT                       list everything, open nothing
-  autorun.py export OUTPUT [--project ID ...] [--limit N]
+  autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...] [--limit N]
                                                     export (rerun the same command to resume)
   autorun.py status OUTPUT                          counts so far (no design names)
   autorun.py stop OUTPUT                            pause an export between designs
@@ -109,7 +109,18 @@ def check_output(output):
     return output
 
 
-def install(installed, output, mode, projects=None, limit=None):
+def folder_map(values):
+    """--folder ID:Path/To/Folder values as {project id: [paths]}."""
+    folders = {}
+    for value in values or []:
+        project, sep, path = value.partition(':')
+        if not sep or not project or not path.strip('/'):
+            raise SystemExit('--folder needs PROJECT_ID:Folder/Subfolder, got ' + repr(value))
+        folders.setdefault(project, []).append(path.strip('/'))
+    return folders or None
+
+
+def install(installed, output, mode, projects=None, limit=None, folders=None):
     output.mkdir(parents=True, exist_ok=True)
     for stale in ('autorun-result.json', 'STOP'):
         try:
@@ -127,6 +138,8 @@ def install(installed, output, mode, projects=None, limit=None):
     config = dict(output=str(output), mode=mode)
     if projects:
         config['projects'] = projects
+    if folders:
+        config['folders'] = folders
     if limit:
         config['limit'] = limit
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
@@ -201,7 +214,8 @@ def start(args):
     output = check_output(args.output)
     installed = addins_dir(name) / 'FusionBulkExport'
     watching = alive(installed)
-    install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None))
+    install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
+            folder_map(getattr(args, 'folder', None)))
     if watching:
         return wait(installed, output, args.timeout)
     if fusion_running(name):
@@ -224,6 +238,8 @@ def main(argv=None):
         p.add_argument('output')
         if command == 'export':
             p.add_argument('--project', action='append', help='project id from inventory.json (repeatable)')
+            p.add_argument('--folder', action='append', metavar='ID:PATH',
+                           help='a folder (and its subfolders) in project ID, e.g. ID:Parts/Brackets (repeatable)')
             p.add_argument('--limit', type=int, help='export at most this many designs')
     args = parser.parse_args(argv)
     args.timeout = float(os.environ.get('AUTORUN_TIMEOUT_SECONDS', 86400))

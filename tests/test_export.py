@@ -8,7 +8,7 @@ from unittest.mock import patch
 from types import SimpleNamespace as NS
 
 from tests import fake_adsk as fake
-from fusion_bulk_export.core import Exporter, atomic_write, sanitize, walk
+from fusion_bulk_export.core import Exporter, Selection, atomic_write, sanitize, walk
 
 fake.install()
 from fusion_bulk_export.fusion import FusionAdapter
@@ -40,6 +40,45 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(items[1][2], ['Nested', 'Deep'])
         _, counts = self.run_export(data)
         self.assertEqual(counts['done'], 4)
+
+    def selection_data(self):
+        root, top, deep, other = (fake.File(identity=i) for i in ('root', 'top', 'deep', 'other'))
+        sub = fake.folder('Sub', files=[deep])
+        data = fake.data([root], [fake.folder('Top', files=[top], folders=[sub]), fake.folder('Other', files=[other])])
+        second = fake.File(identity='second')
+        data.dataHubs.item(0).dataProjects.items.append(NS(id='project-2', name='Two', rootFolder=fake.folder(files=[second])))
+        return data, dict(root=root, top=top, deep=deep, other=other, second=second)
+
+    def exported(self):
+        return sorted(entry['id'] for entry in self.manifest['entries'] if entry['status'] == 'done')
+
+    def test_selection_whole_project(self):
+        data, _ = self.selection_data()
+        self.run_export(data, selection=Selection({'project-2': None}))
+        self.assertEqual(self.exported(), ['second'])
+
+    def test_selection_folder_includes_subfolders_only(self):
+        data, files = self.selection_data()
+        exporter, _ = self.run_export(data, selection=Selection({'project-1': [['Top']]}))
+        self.assertEqual(self.exported(), ['deep', 'top'])
+        self.assertEqual(exporter.run_info['selection'], '0 whole project(s), 1 folder(s)')
+        self.assertEqual(files['other'].calls + files['root'].calls + files['second'].calls, 0)
+
+    def test_selection_nested_folder_and_unselected_folders_not_listed(self):
+        data, _ = self.selection_data()
+        project = data.dataHubs.item(0).dataProjects.item(0)
+        other = project.rootFolder.dataFolders.item(1)
+        other.dataFolders = None  # descending into it would fail and be logged as unreadable
+        exporter, _ = self.run_export(data, selection=Selection({'project-1': [['Top', 'Sub']]}))
+        self.assertEqual(self.exported(), ['deep'])
+        self.assertEqual(exporter.run_info['discovery_errors'], [])
+
+    def test_selection_from_config(self):
+        selection = Selection.from_config(['project-2'], {'project-1': ['Top/Sub', 'Other'], 'project-2': ['X']})
+        self.assertEqual(selection.projects, {'project-2': None, 'project-1': [['Top', 'Sub'], ['Other']]})
+        self.assertTrue(Selection.from_config().everything)
+        with self.assertRaises(ValueError):
+            Selection.from_config(folders={'p': ['/']})
 
     def test_cancel_from_progress_before_open(self):
         file = fake.File()

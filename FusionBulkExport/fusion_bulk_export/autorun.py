@@ -3,7 +3,8 @@
 Configuration (all paths absolute):
   {"output": "/path/out",            required; same folder resumes
    "mode": "export" | "inventory" | "diagnostics",   default "export"
-   "projects": ["<project id>", ...],  optional; default every project
+   "projects": ["<project id>", ...],  optional; whole projects (default: everything)
+   "folders": {"<project id>": ["Folder/Subfolder", ...]},  optional; chosen folders
    "limit": 25,                      optional; export at most this many designs
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
@@ -22,7 +23,7 @@ import traceback
 import adsk
 import adsk.core
 
-from .core import Exporter, atomic_write, collection, now, select_projects, walk
+from .core import Exporter, Selection, atomic_write, collection, now, select_projects, walk
 from .fusion import FusionAdapter
 
 
@@ -50,19 +51,32 @@ def read_config(config_path):
     output = Path(config['output']).expanduser()
     if not output.is_absolute():
         raise ValueError('output must be an absolute path')
+    try:
+        return (output,) + check_settings(config)
+    except Exception as error:
+        error.output = output  # report the problem in the folder the user asked for
+        raise
+
+
+def check_settings(config):
     mode = config.get('mode', 'export')
     if mode not in ('export', 'inventory', 'diagnostics'):
         raise ValueError('mode must be "export", "inventory" or "diagnostics"')
     projects = config.get('projects')
     if projects is not None and (not isinstance(projects, list) or not projects):
         raise ValueError('projects must be a nonempty list of project ids')
+    folders = config.get('folders')
+    if folders is not None and (not isinstance(folders, dict) or not folders
+                                or not all(isinstance(v, list) and v for v in folders.values())):
+        raise ValueError('folders must map project ids to nonempty lists of folder paths')
+    selection = Selection.from_config(projects, folders)
     limit = config.get('limit')
     if limit is not None and (not isinstance(limit, int) or limit < 1):
         raise ValueError('limit must be a positive integer')
     timeout = float(config.get('hub_timeout_seconds', 600))
     if not 0 < timeout <= 86400:
         raise ValueError('hub_timeout_seconds must be between 0 and 86400')
-    return output, mode, projects, limit, timeout
+    return mode, selection, limit, timeout
 
 
 def wait_for_hubs(app, timeout, log):
@@ -129,14 +143,14 @@ def run_autorun(app, config_path):
     started = time.monotonic()
     try:
         try:
-            output, mode, projects, limit, timeout = read_config(config_path)
-        except Exception:
-            output = config_path.parent / 'autorun-output'
+            output, mode, selection, limit, timeout = read_config(config_path)
+        except Exception as error:
+            output = getattr(error, 'output', None) or config_path.parent / 'autorun-output'
             raise
         finally:
             output.mkdir(parents=True, exist_ok=True)
             log = Log(output)
-        log.result.update(mode=mode, fusion_version=app.version, projects=projects, limit=limit)
+        log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit)
         log.write('autorun start ' + mode)
         if mode == 'diagnostics':
             report = diagnostics(app)
@@ -146,9 +160,9 @@ def run_autorun(app, config_path):
             return log.result
         wait_for_hubs(app, timeout, log)
         data = app.data
-        if projects is not None:
-            wanted = set(projects)
-            data = select_projects(data, lambda hub, project: str(project.id) in wanted)
+        if not selection.everything:
+            wanted = set(selection.projects)
+            data = select_projects(data, selection.keeps_project)
             log.result['projects_matched'] = sum(view.dataProjects.count for view in collection(data.dataHubs))
             if log.result['projects_matched'] != len(wanted):
                 raise ValueError('Only %d of %d requested projects were found'
@@ -165,7 +179,8 @@ def run_autorun(app, config_path):
                 adsk.doEvents()
 
             log.result['counts'] = exporter.run(
-                data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit)
+                data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
+                selection=selection)
             log.result.update(found=exporter.run_info.get('found'),
                               cancelled=exporter.run_info['cancelled'],
                               discovery_errors=len(exporter.run_info['discovery_errors']),

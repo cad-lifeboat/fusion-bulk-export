@@ -14,7 +14,10 @@ Get all of your Fusion designs out, in one go.
 
 1. **Download** `FusionBulkExport-<version>.zip` from the [latest release](../../releases/latest) and unzip it.
 2. **Add it to Fusion:** **Utilities → Add-Ins** (or press **Shift+S**) → **Add-Ins** tab → green **+** → choose the unzipped `FusionBulkExport` folder → select **FusionBulkExport** → **Run**.
-3. **Export:** on the **Utilities** tab, click **Fusion Bulk Export** in the **Add-Ins** panel, choose an empty folder with a short path (such as `Documents/FusionExport`), and wait. A progress bar shows each design and has a Cancel button; the last dialog shows the counts.
+3. **Export:** on the **Utilities** tab, click **Fusion Bulk Export** in the **Add-Ins** panel.
+   - Keep **Everything**, or pick **Choose projects or folders**, then tick whole hubs or projects. Under a project, **Pick folders** lists its folders; a ticked folder includes its subfolders.
+   - Click **Export…** and choose an empty folder with a short path (such as `Documents/FusionExport`).
+   - Wait. A progress bar shows each design and has a Cancel button, and the last dialog shows the counts.
 
 Leave Fusion open and signed in while it runs, and keep the computer awake. To pick up where you left off, or to catch designs added later, run it again on the same folder.
 
@@ -54,7 +57,8 @@ You need a download of this repository and Python 3.9 or newer. Sign in to Fusio
 
 ```sh
 python3 scripts/autorun.py inventory ~/FusionExport                  # list everything, open nothing
-python3 scripts/autorun.py export ~/FusionExport --project PROJECT_ID # try one project first
+python3 scripts/autorun.py export ~/FusionExport --project PROJECT_ID # one whole project
+python3 scripts/autorun.py export ~/FusionExport --folder PROJECT_ID:Parts/Brackets  # one folder and its subfolders
 python3 scripts/autorun.py export ~/FusionExport                      # everything; rerun to resume
 python3 scripts/autorun.py status ~/FusionExport                      # counts so far
 python3 scripts/autorun.py stop ~/FusionExport                        # pause between designs

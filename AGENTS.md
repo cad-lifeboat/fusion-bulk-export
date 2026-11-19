@@ -46,6 +46,9 @@ only reads from the account. Work on the person's machine, in a terminal, with t
 6. **Trial on one small project.** Read project ids and file counts from
    `OUT/inventory.json` locally (do not echo names), pick a project with a few designs:
    `python3 scripts/autorun.py export OUT --project PROJECT_ID`.
+   If one project holds nearly everything, use `--limit 3` instead; the full run reuses those.
+   If the person wants only part of the account, pass whole projects with `--project ID`
+   and single folders (with their subfolders) with `--folder ID:Folder/Subfolder`; both repeat.
 7. **Verify:** `python3 scripts/verify-export.py OUT`. Expect exit 0: every archive
    opens, every STEP has a valid header and ending.
 8. **Full export:** `python3 scripts/autorun.py export OUT`. Large accounts take hours;

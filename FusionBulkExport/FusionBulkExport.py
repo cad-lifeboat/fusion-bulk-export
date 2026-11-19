@@ -94,12 +94,30 @@ def start_watching():
     _watcher.start()
 
 
+_picker = None
+
+
+class InputChanged(adsk.core.InputChangedEventHandler):
+    def notify(self, args):
+        try:
+            if _picker:
+                _picker.changed(args.input)
+        except Exception:
+            adsk.core.Application.get().userInterface.messageBox(
+                traceback.format_exc(), 'Fusion Bulk Export error')
+
+
 class Execute(adsk.core.CommandEventHandler):
     def notify(self, args):
         app = adsk.core.Application.get()
         ui = app.userInterface
         progress = None
         try:
+            selection = _picker.selection() if _picker else None
+            if _picker and selection is None:
+                ui.messageBox('Tick at least one project or folder, or choose Everything.',
+                              'Fusion Bulk Export')
+                return
             dialog = ui.createFolderDialog()
             dialog.title = 'Fusion Bulk Export output folder'
             if dialog.showDialog() != adsk.core.DialogResults.DialogOK:
@@ -120,7 +138,7 @@ class Execute(adsk.core.CommandEventHandler):
                 return progress.wasCancelled
 
             exporter = Exporter(output, FusionAdapter(app))
-            counts = exporter.run(app.data, cancelled, update)
+            counts = exporter.run(app.data, cancelled, update, selection=selection)
             progress.hide()
             summary = ('Cancelled.\n' if exporter.run_info['cancelled'] else 'Finished.\n')
             summary += 'Done: {done}; failed: {failed}; skipped/verified: {skipped}\n'.format(**counts)
@@ -135,11 +153,16 @@ class Execute(adsk.core.CommandEventHandler):
 
 class Created(adsk.core.CommandCreatedEventHandler):
     def notify(self, args):
+        global _picker
         try:
-            handler = Execute()
-            args.command.execute.add(handler)
-            _handlers.append(handler)
-            args.command.isRepeatable = False
+            from fusion_bulk_export.picker import Picker
+            command = args.command
+            command.okButtonText = 'Export…'
+            _picker = Picker(adsk.core.Application.get(), command.commandInputs)
+            for event, handler in ((command.execute, Execute()), (command.inputChanged, InputChanged())):
+                event.add(handler)
+                _handlers.append(handler)
+            command.isRepeatable = False
         except Exception:
             adsk.core.Application.get().userInterface.messageBox(
                 traceback.format_exc(), 'Fusion Bulk Export command error')
@@ -175,7 +198,8 @@ def run(context):
 
 
 def stop(context):
-    global _control, _definition, _watcher, _custom_event
+    global _control, _definition, _watcher, _custom_event, _picker
+    _picker = None
     if _watcher:
         _watcher.stopped.set()
         _watcher = None
