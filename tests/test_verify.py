@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 import zipfile
 
@@ -56,6 +57,22 @@ class VerifyTests(unittest.TestCase):
     def test_plain_archive_passes(self):
         self.build(archive='.f3d')
         self.assertEqual(self.run_check()[0], 0)
+
+    def test_unsupported_member_compression_is_counted_not_fatal(self):
+        self.build(archive='.f3d')
+        with zipfile.ZipFile(self.root / 'a.f3d') as archive:
+            first = archive.infolist()[0].filename
+        real_open = zipfile.ZipFile.open
+
+        def fussy(archive, member, *args, **kwargs):
+            name = member.filename if isinstance(member, zipfile.ZipInfo) else member
+            if name == first:
+                raise NotImplementedError('That compression method is not supported')
+            return real_open(archive, member, *args, **kwargs)
+        with unittest.mock.patch.object(zipfile.ZipFile, 'open', fussy):
+            status, text = self.run_check()
+        self.assertEqual(status, 0, text)
+        self.assertIn('"members_not_crc_checked": 1', text)
 
     def test_truncated_step_and_solid_mismatch_fail(self):
         self.build(step=STEP.replace('END-ISO-10303-21;', ''), solids=3)

@@ -12,6 +12,19 @@ import adsk.fusion
 _DIR = os.path.dirname(os.path.abspath(__file__))
 if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
+
+
+def forget_package():
+    """Fusion keeps Python modules loaded between Stop and Run and between jobs; drop ours so
+    the next import reads the installed files. (The synthetic test API keeps them: tests
+    patch these modules.)"""
+    if getattr(adsk, '_synthetic', False):
+        return
+    for name in [n for n in sys.modules if n == 'fusion_bulk_export' or n.startswith('fusion_bulk_export.')]:
+        del sys.modules[name]
+
+
+forget_package()
 try:
     from fusion_bulk_export.core import Exporter
     from fusion_bulk_export.fusion import FusionAdapter
@@ -39,6 +52,8 @@ class AutorunEvent(adsk.core.CustomEventHandler):
             return
         AutorunEvent.busy = True
         try:
+            # Each job uses the add-in package as currently installed.
+            forget_package()
             from fusion_bulk_export.autorun import run_autorun
             run_autorun(adsk.core.Application.get(), _HERE / 'autorun.json')
         finally:

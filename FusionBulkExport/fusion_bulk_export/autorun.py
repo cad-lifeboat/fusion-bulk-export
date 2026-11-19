@@ -2,17 +2,20 @@
 
 Configuration (all paths absolute):
   {"output": "/path/out",            required; same folder resumes
-   "mode": "export" | "inventory",   default "export"
+   "mode": "export" | "inventory" | "diagnostics",   default "export"
    "projects": ["<project id>", ...],  optional; default every project
    "limit": 25,                      optional; export at most this many designs
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
+"diagnostics" writes diagnostics.json (Fusion version, the export-related API
+members and text commands this build offers) for bug reports; it reads no designs.
 "inventory" writes inventory.json (every hub, project and design with ids and
 versions) without opening anything. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
 """
 import json
 from pathlib import Path
+import re
 import time
 import traceback
 
@@ -48,8 +51,8 @@ def read_config(config_path):
     if not output.is_absolute():
         raise ValueError('output must be an absolute path')
     mode = config.get('mode', 'export')
-    if mode not in ('export', 'inventory'):
-        raise ValueError('mode must be "export" or "inventory"')
+    if mode not in ('export', 'inventory', 'diagnostics'):
+        raise ValueError('mode must be "export", "inventory" or "diagnostics"')
     projects = config.get('projects')
     if projects is not None and (not isinstance(projects, list) or not projects):
         raise ValueError('projects must be a nonempty list of project ids')
@@ -69,6 +72,35 @@ def wait_for_hubs(app, timeout, log):
             raise TimeoutError('No hubs appeared; is Fusion signed in?')
         adsk.doEvents()
         time.sleep(0.5)
+
+
+DIAGNOSTIC_CLASSES = [('core', 'DataFile'), ('core', 'Document'), ('core', 'DataFolder'),
+                      ('fusion', 'ExportManager'), ('fusion', 'FusionArchiveExportOptions'),
+                      ('fusion', 'FusionDocument'), ('core', 'Application')]
+TEXT_COMMAND = re.compile(r'archive|f3z|f3d|export|download', re.IGNORECASE)
+
+
+def diagnostics(app):
+    """API surface relevant to exporting, from this Fusion build. Contains no account data."""
+    import adsk.fusion
+    modules = dict(core=adsk.core, fusion=adsk.fusion)
+    classes = {}
+    for module, name in DIAGNOSTIC_CLASSES:
+        cls = getattr(modules[module], name, None)
+        if cls is None:
+            classes[name] = None
+            continue
+        members = {}
+        for member in sorted(m for m in dir(cls) if not m.startswith('_')):
+            doc = getattr(getattr(cls, member, None), '__doc__', None) or ''
+            members[member] = doc.strip()[:600]
+        classes[name] = members
+    try:
+        listing = app.executeTextCommand('TextCommands.List /hidden')
+        commands = [line.strip() for line in listing.splitlines() if TEXT_COMMAND.search(line)]
+    except Exception as error:
+        commands = ['unavailable: ' + str(error)]
+    return dict(fusion_version=app.version, classes=classes, text_commands=commands)
 
 
 def inventory(data, log):
@@ -106,6 +138,12 @@ def run_autorun(app, config_path):
             log = Log(output)
         log.result.update(mode=mode, fusion_version=app.version, projects=projects, limit=limit)
         log.write('autorun start ' + mode)
+        if mode == 'diagnostics':
+            report = diagnostics(app)
+            atomic_write(output / 'diagnostics.json', report)
+            log.result['counts'] = dict(classes=sum(1 for v in report['classes'].values() if v is not None),
+                                        text_commands=len(report['text_commands']))
+            return log.result
         wait_for_hubs(app, timeout, log)
         data = app.data
         if projects is not None:

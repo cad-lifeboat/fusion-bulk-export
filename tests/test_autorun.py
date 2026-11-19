@@ -66,6 +66,17 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(result['counts']['done'], 1)
         self.assertEqual(self.files[3].calls, 0)
 
+    def test_diagnostics_lists_api_without_account_data(self):
+        import adsk.fusion
+        adsk.fusion.ExportManager = type('ExportManager', (), {'createFusionArchiveExportOptions': lambda self: None})
+        self.app.executeTextCommand = lambda command: 'Fusion.ExportArchive  Archive things\nOther.Thing  x'
+        result = self.run_with(mode='diagnostics')
+        self.assertEqual(result['errors'], [])
+        report = json.loads((self.output / 'diagnostics.json').read_text())
+        self.assertIn('createFusionArchiveExportOptions', report['classes']['ExportManager'])
+        self.assertEqual(report['text_commands'], ['Fusion.ExportArchive  Archive things'])
+        self.assertTrue(all(file.calls == 0 for file in self.files))
+
     def test_unknown_project_is_an_error(self):
         result = self.run_with(projects=['missing'])
         self.assertIn('requested projects', result['errors'][0]['error'])

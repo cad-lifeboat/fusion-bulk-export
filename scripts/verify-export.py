@@ -14,19 +14,30 @@ import re
 import sys
 import zipfile
 
+UNCHECKED = [0]  # archive members whose compression this Python cannot read
 SOLID = re.compile(rb'=\s*(MANIFOLD_SOLID_BREP|BREP_WITH_VOIDS)\s*\(')
 
 
 def check_archive(path):
     problems = []
+    unchecked = 0
     try:
         with zipfile.ZipFile(path) as archive:
             names = archive.namelist()
-            bad = archive.testzip()
+            for info in archive.infolist():
+                try:
+                    with archive.open(info) as stream:
+                        while stream.read(1 << 20):
+                            pass  # reading to the end checks the CRC
+                except NotImplementedError:
+                    # Fusion stores some members with Zstandard (method 93); Python reads it from 3.14.
+                    unchecked += 1
+                except (zipfile.BadZipFile, OSError, EOFError) as error:
+                    problems.append('corrupt archive member %s: %s' % (info.filename, error))
     except zipfile.BadZipFile as error:
         return ['archive is not a zip: ' + str(error)], 0
-    if bad:
-        problems.append('corrupt archive member ' + bad)
+    if unchecked:
+        UNCHECKED[0] += unchecked
     designs = [n for n in names if n.lower().endswith('.f3d')]
     if path.suffix.lower() == '.f3z':
         if not designs:
@@ -55,6 +66,7 @@ def check_step(path):
 def main(argv):
     if not argv or argv[0].startswith('-'):
         raise SystemExit(__doc__)
+    UNCHECKED[0] = 0
     root = Path(argv[0]).resolve()
     names = '--names' in argv
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
@@ -95,6 +107,7 @@ def main(argv):
             print('  PROBLEM ' + problem)
         if problems:
             totals['failed_checks'] += 1
+    totals['members_not_crc_checked'] = UNCHECKED[0]
     print(json.dumps(totals))
     return 0 if totals['done'] and not totals['failed_checks'] else 1
 

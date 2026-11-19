@@ -32,7 +32,7 @@ RUNTIME_FILES = shutil.ignore_patterns(
 
 REPO = Path(__file__).resolve().parent.parent
 ALIVE_SECONDS = 20
-SAFE_LOG = re.compile(r'^\S+ (design \d+/\d+|autorun (start (export|inventory)|finished)|inventory: [\d ,a-z]+)$')
+SAFE_LOG = re.compile(r'^\S+ (design \d+/\d+|autorun (start (export|inventory|diagnostics)|finished)|inventory: [\d ,a-z]+)$')
 MANUAL_HINT_SECONDS = 180
 MANUAL_HINT = ('Fusion has not started the add-in. In Fusion: Utilities > Add-Ins > Scripts and '
                'Add-Ins, select FusionBulkExport, click Run (tick Run on Startup).')
@@ -209,7 +209,7 @@ def start(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
-    for command in ('inventory', 'export', 'status', 'stop'):
+    for command in ('inventory', 'export', 'diagnostics', 'status', 'stop'):
         p = sub.add_parser(command)
         p.add_argument('output')
         if command == 'export':
