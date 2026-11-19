@@ -95,6 +95,7 @@ def start_watching():
 
 
 _picker = None
+_code = dict(Exporter=Exporter, FusionAdapter=FusionAdapter)
 
 
 def report(title):
@@ -108,9 +109,17 @@ def report(title):
     adsk.core.Application.get().userInterface.messageBox(detail, title)
 
 
+def trace(message):
+    """With a file named "trace" beside the add-in, log dialog events to trace.log."""
+    if os.path.exists(os.path.join(_DIR, 'trace')):
+        with open(os.path.join(_DIR, 'trace.log'), 'a', encoding='utf-8') as stream:
+            stream.write('%s %s\n' % (time.strftime('%H:%M:%S'), message))
+
+
 class InputChanged(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         try:
+            trace('inputChanged ' + str(args.input.id))
             if _picker:
                 _picker.changed(args.input)
         except Exception:
@@ -147,7 +156,7 @@ class Execute(adsk.core.CommandEventHandler):
                 adsk.doEvents()
                 return progress.wasCancelled
 
-            exporter = Exporter(output, FusionAdapter(app))
+            exporter = _code['Exporter'](output, _code['FusionAdapter'](app))
             counts = exporter.run(app.data, cancelled, update, selection=selection)
             progress.hide()
             summary = ('Cancelled.\n' if exporter.run_info['cancelled'] else 'Finished.\n')
@@ -165,10 +174,18 @@ class Created(adsk.core.CommandCreatedEventHandler):
     def notify(self, args):
         global _picker
         try:
+            # Each dialog uses the add-in code as currently installed, without a restart.
+            forget_package()
+            from fusion_bulk_export.core import Exporter as fresh_exporter
+            from fusion_bulk_export.fusion import FusionAdapter as fresh_adapter
             from fusion_bulk_export.picker import Picker
+            _code.update(Exporter=fresh_exporter, FusionAdapter=fresh_adapter)
             command = args.command
             command.okButtonText = 'Export…'
-            _picker = Picker(adsk.core.Application.get(), command.commandInputs)
+            # Wide enough for project and folder names (Fusion's default cuts labels off).
+            command.setDialogInitialSize(460, 420)
+            command.setDialogMinimumSize(380, 160)
+            _picker = Picker(adsk.core.Application.get(), command.commandInputs, trace)
             for event, handler in ((command.execute, Execute()), (command.inputChanged, InputChanged())):
                 event.add(handler)
                 _handlers.append(handler)
@@ -202,6 +219,9 @@ def run(context):
         _handlers.append(handler)
         panel = ui.allToolbarPanels.itemById('SolidScriptsAddinsPanel')
         _control = panel.controls.addCommand(_definition)
+        # Show the button on the toolbar, not only inside the ADD-INS menu.
+        _control.isPromoted = True
+        _control.isPromotedByDefault = True
     except Exception:
         report('Fusion Bulk Export startup error')
 

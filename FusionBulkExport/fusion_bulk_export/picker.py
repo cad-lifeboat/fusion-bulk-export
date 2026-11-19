@@ -22,9 +22,10 @@ class Picker:
     a project's folders are listed only when its "Pick folders" box is ticked, so large
     accounts open quickly.
     """
-    def __init__(self, app, inputs):
+    def __init__(self, app, inputs, trace=lambda message: None):
         self.app = app
         self.inputs = inputs
+        self.trace = trace
         self.boxes = {}  # input id -> (kind, hub, project, extra)
         self.inputs_by_id = {}  # our own references; nested inputs need no lookup
         self.groups = []
@@ -48,12 +49,14 @@ class Picker:
                                                                  True, '', False)
                 pick = project_group.children.addBoolValueInput(prefix + '_pick', 'Pick folders',
                                                                 True, '', False)
-                project_group.isExpanded = False  # Fusion cannot fold a group until it has inputs
+                # Groups stay expanded: Fusion refuses to fold a group while the dialog is built.
                 self.boxes[whole.id] = ('project', hub, project, pick)
                 self.inputs_by_id[whole.id] = whole
                 self.inputs_by_id[pick.id] = pick
                 self.boxes[pick.id] = ('pick', hub, project, (prefix, project_group, whole))
                 self.boxes[every.id][3].append(whole)
+
+        trace('picker built: %d hub group(s), %d box(es)' % (len(self.groups), len(self.boxes)))
 
     @property
     def choosing(self):
@@ -62,8 +65,11 @@ class Picker:
     def changed(self, changed_input):
         """Handle an inputChanged event for one of our inputs."""
         if changed_input.id == self.mode.id:
+            self.trace('mode %r choosing=%s groups=%d' % (
+                getattr(self.mode.selectedItem, 'name', None), self.choosing, len(self.groups)))
             for group in self.groups:
                 group.isVisible = self.choosing
+                self.trace('group %s visible=%s' % (group.id, group.isVisible))
             return
         kind, hub, project, extra = self.boxes.get(changed_input.id, (None, None, None, None))
         if kind == 'hub':

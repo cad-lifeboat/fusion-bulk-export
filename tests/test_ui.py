@@ -50,7 +50,8 @@ class UItests(unittest.TestCase):
 
     def open_dialog(self):
         self.module.run(None) if not self.definition.commandCreated.handlers else None
-        command = NS(execute=Event(), inputChanged=Event(), commandInputs=fake.Inputs())
+        command = NS(execute=Event(), inputChanged=Event(), commandInputs=fake.Inputs(),
+                     setDialogInitialSize=lambda w, h: None, setDialogMinimumSize=lambda w, h: None)
         self.definition.commandCreated.handlers[-1].notify(NS(command=command))
         self.assertEqual(self.errors, [])
         return command

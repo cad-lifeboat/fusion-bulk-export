@@ -9,3 +9,5 @@ FusionBulkExport/autorun.json.last
 FusionBulkExport/autorun-output/
 dist/
 FusionBulkExport/errors.log
+FusionBulkExport/trace
+FusionBulkExport/trace.log

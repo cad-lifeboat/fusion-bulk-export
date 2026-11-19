@@ -14,7 +14,7 @@ Get all of your Fusion designs out, in one go.
 
 1. **Download** `FusionBulkExport-<version>.zip` from the [latest release](../../releases/latest) and unzip it.
 2. **Add it to Fusion:** **Utilities → Add-Ins** (or press **Shift+S**) → **Add-Ins** tab → green **+** → choose the unzipped `FusionBulkExport` folder → select **FusionBulkExport** → **Run**.
-3. **Export:** on the **Utilities** tab, click **Fusion Bulk Export** in the **Add-Ins** panel.
+3. **Export:** on the **Utilities** tab, click **Fusion Bulk Export** (the orange cube) in the **Add-Ins** panel; it is also in the **ADD-INS ▾** menu.
    - Keep **Everything**, or pick **Choose projects or folders**, then tick whole hubs or projects. Under a project, **Pick folders** lists its folders; a ticked folder includes its subfolders.
    - Click **Export…** and choose an empty folder with a short path (such as `Documents/FusionExport`).
    - Wait. A progress bar shows each design and has a Cancel button, and the last dialog shows the counts.

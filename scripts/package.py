@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADDIN = ROOT / 'FusionBulkExport'
 SKIP_DIRS = {'__pycache__', 'autorun-output', 'selftest-output'}
 SKIP_FILES = {'autorun.json', 'autorun.json.last', 'autorun.watch', 'autorun.alive',
-              'selftest.json', 'selftest.json.last', 'startup-error.txt', 'errors.log'}
+              'selftest.json', 'selftest.json.last', 'startup-error.txt', 'errors.log', 'trace', 'trace.log'}
 
 
 def files():

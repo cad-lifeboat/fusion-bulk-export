@@ -209,7 +209,7 @@ class Inputs:
 
 
 class Group:
-    """Like Fusion, an empty group cannot be folded."""
+    """Like Fusion while a dialog is being built, a group cannot be folded."""
     def __init__(self, id, name):
         self.id, self.name, self.isVisible, self.children = id, name, True, Inputs()
         self._expanded = True
@@ -220,6 +220,6 @@ class Group:
 
     @isExpanded.setter
     def isExpanded(self, value):
-        if not value and not self.children.added:
+        if not value:
             raise RuntimeError('3 : the group cannot be folded')
         self._expanded = value
