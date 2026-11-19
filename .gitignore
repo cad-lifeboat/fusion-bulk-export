@@ -4,3 +4,6 @@ out/
 FusionBulkExport/selftest.json
 FusionBulkExport/selftest-output/
 FusionBulkExport/selftest.json.last
+FusionBulkExport/autorun.json
+FusionBulkExport/autorun.json.last
+FusionBulkExport/autorun-output/

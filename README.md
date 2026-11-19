@@ -50,6 +50,27 @@ All generated output stays on your disk. Fusion retrieves cloud data through you
 existing authenticated account. Manifests and logs contain design identifiers and
 names, so treat them as private data.
 
+## Unattended export (Mac)
+
+For a large account you can run the export without dialogs. Sign in to Fusion once,
+quit it, then from this checkout:
+
+```sh
+./scripts/mac-autorun.sh ~/FusionExport inventory          # list everything, open nothing
+./scripts/mac-autorun.sh ~/FusionExport export PROJECT_ID  # try one project first
+./scripts/mac-autorun.sh ~/FusionExport                    # everything; rerun to resume
+```
+
+The script installs the add-in, writes `autorun.json` beside it, starts Fusion and
+waits for `autorun-result.json`. The add-in reads `autorun.json` once (renaming it
+to `autorun.json.last`), exports without showing any UI and logs progress to
+`autorun.log` in the output folder. `inventory.json` lists every hub, project and
+file with its id, so you can pick project ids for a trial run. Create a file named
+`STOP` in the output folder to pause between designs; run the same command again
+to resume. `AUTORUN_LIMIT` caps how many designs one run exports. Projects or folders
+that cannot be read are logged and skipped. These files contain your design names;
+keep them private.
+
 ## Check an export
 
 ```sh

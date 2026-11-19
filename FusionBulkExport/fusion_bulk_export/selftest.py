@@ -7,7 +7,7 @@ import traceback
 import adsk
 import adsk.core
 
-from .core import Exporter, NonDesign, atomic_write, collection, now
+from .core import Exporter, NonDesign, atomic_write, collection, now, select_projects
 from .fusion import FusionAdapter
 
 
@@ -27,27 +27,6 @@ class Recorder:
         self.result['errors'].append(detail)
         self.log(stage + ': ' + detail['traceback'])
         return detail
-
-
-class Only:
-    """A one-item API collection."""
-    def __init__(self, value):
-        self.value = value
-        self.count = 1
-
-    def item(self, index):
-        if index != 0:
-            raise IndexError(index)
-        return self.value
-
-
-def project_scope(hub, project):
-    """Data view containing only the self-test project, so other designs are never opened."""
-    view = type('HubView', (), {})()
-    view.id, view.name, view.dataProjects = hub.id, hub.name, Only(project)
-    data = type('DataView', (), {})()
-    data.dataHubs = Only(view)
-    return data
 
 
 class ObservedAdapter(FusionAdapter):
@@ -206,7 +185,8 @@ def run_selftest(app, config_path):
         exporter = Exporter(output, adapter, error_callback=recorder.error)
         export_start = time.monotonic()
         try:
-            data = project_scope(hub, project) if scope == 'project' else app.data
+            data = (select_projects(app.data, lambda h, p: str(p.id) == str(project.id))
+                    if scope == 'project' else app.data)
             recorder.result['scope'] = scope
             recorder.result['counts'] = exporter.run(
                 data, progress=lambda i, total, name: recorder.log('design %d/%d %s' % (i + 1, total, name)))

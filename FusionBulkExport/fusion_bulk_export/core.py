@@ -16,17 +16,61 @@ def collection(values):
         yield values.item(index)
 
 
-def walk(data):
-    """Yield files from every hub, project and folder (including project roots)."""
-    def folders(folder, path):
-        for file in collection(folder.dataFiles):
+def walk(data, on_error=None):
+    """Yield files from every hub, project and folder (including project roots).
+
+    With on_error, a project or folder that cannot be read is reported as
+    on_error(where, error) and skipped instead of stopping the walk.
+    """
+    def guarded(where, produce):
+        if on_error is None:
+            return list(produce())
+        try:
+            return list(produce())
+        except Exception as error:
+            on_error(where, error)
+            return []
+
+    def folders(hub, project, folder, path):
+        where = [hub.name, project.name] + path
+        for file in guarded(where, lambda: collection(folder.dataFiles)):
             yield path, file
-        for child in collection(folder.dataFolders):
-            yield from folders(child, path + [child.name])
+        for child in guarded(where, lambda: collection(folder.dataFolders)):
+            yield from folders(hub, project, child, path + [child.name])
     for hub in collection(data.dataHubs):
-        for project in collection(hub.dataProjects):
-            for path, file in folders(project.rootFolder, []):
-                yield hub, project, path, file
+        for project in guarded([hub.name], lambda: collection(hub.dataProjects)):
+            root = guarded([hub.name, project.name], lambda: [project.rootFolder])
+            for folder in root:
+                for path, file in folders(hub, project, folder, []):
+                    yield hub, project, path, file
+
+
+class Listing:
+    """A fixed list with the count/item(index) shape of Fusion API collections."""
+    def __init__(self, values):
+        self.values = list(values)
+        self.count = len(self.values)
+
+    def item(self, index):
+        return self.values[index]
+
+
+class _View:
+    pass
+
+
+def select_projects(data, keep):
+    """Data view holding only the projects for which keep(hub, project) is true."""
+    hubs = []
+    for hub in collection(data.dataHubs):
+        projects = [project for project in collection(hub.dataProjects) if keep(hub, project)]
+        if projects:
+            view = _View()
+            view.id, view.name, view.dataProjects = hub.id, hub.name, Listing(projects)
+            hubs.append(view)
+    view = _View()
+    view.dataHubs = Listing(hubs)
+    return view
 
 
 def sanitize(value, limit=42):
@@ -117,17 +161,27 @@ class Exporter:
         directory.mkdir(parents=True, exist_ok=True)
         return directory / stem
 
-    def run(self, data, cancelled=lambda: False, progress=lambda index, total, name: None):
+    def run(self, data, cancelled=lambda: False, progress=lambda index, total, name: None, limit=None):
         counts = dict(done=0, failed=0, skipped=0)
+        self.run_info['discovery_errors'] = []
+
+        def unreadable(where, error):
+            self.run_info['discovery_errors'].append(dict(path=where, error=str(error)))
+            self.log('could not read ' + json.dumps(where, ensure_ascii=False) + ': ' + str(error))
+            if self.error_callback:
+                self.error_callback('discovery ' + json.dumps(where, ensure_ascii=False), error)
         self.save()
         try:
             self.log('run started')
             items = []
-            for item in walk(data):
+            for item in walk(data, unreadable):
                 if cancelled():
                     self.run_info['cancelled'] = True
                     return counts
                 items.append(item)
+            if limit is not None:
+                items = items[:limit]
+            self.run_info['found'] = len(items)
             entries = {entry['key']: entry for entry in self.manifest['entries']}
             for index, (hub, project, folders, file) in enumerate(items):
                 if cancelled():

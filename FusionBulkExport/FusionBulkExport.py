@@ -65,6 +65,11 @@ class Created(adsk.core.CommandCreatedEventHandler):
 
 def run(context):
     global _control, _definition
+    autorun = Path(__file__).parent / 'autorun.json'
+    if autorun.is_file():
+        from fusion_bulk_export.autorun import run_autorun
+        run_autorun(adsk.core.Application.get(), autorun)
+        return
     config = Path(__file__).parent / 'selftest.json'
     if config.is_file():
         from fusion_bulk_export.selftest import run_selftest
