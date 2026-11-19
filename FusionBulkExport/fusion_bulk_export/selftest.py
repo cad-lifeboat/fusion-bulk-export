@@ -65,6 +65,16 @@ class ObservedAdapter(FusionAdapter):
                               or data_file.childReferences.count > 0 else '.f3d'))
         return extension
 
+    def observe(self, design, data_file):
+        # Distinct solid bodies per component, the count a STEP export should carry.
+        try:
+            solids = sum(1 for component in collection(design.allComponents)
+                         for body in collection(component.bRepBodies) if body.isSolid)
+        except Exception as error:
+            solids = None
+            self.recorder.error('observe ' + str(data_file.id), error)
+        self.observations[str(data_file.id)]['solid_bodies'] = solids
+
     def export(self, data_file, stem):
         identity = str(data_file.id)
         observation = self.observations.setdefault(identity, dict(attempt_details=[]))

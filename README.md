@@ -50,6 +50,18 @@ All generated output stays on your disk. Fusion retrieves cloud data through you
 existing authenticated account. Manifests and logs contain design identifiers and
 names, so treat them as private data.
 
+## Check an export
+
+```sh
+python3 scripts/verify-export.py /path/to/output
+```
+
+checks every `done` entry: the archive is a readable zip (an `.f3z` holds its member
+designs and `Manifest.json`), and the STEP has a valid header and ending and is not
+trivially small. After a self-test it also compares the number of solids in each STEP
+with the solid-body count Fusion reported. It prints counts only; add `--names` to
+show design names.
+
 ## Resume
 
 Choose the same output folder to resume. Completed pairs are skipped only if their

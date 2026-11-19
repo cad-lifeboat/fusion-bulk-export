@@ -60,7 +60,10 @@ class Document:
         self.dataFile = file
         self.closed = False
         self.documentReferences = Collection(*([NS()] if file.references else []))
-        self.products = NS(itemByProductType=lambda product: NS(exportManager=Manager(file)) if file.design else None)
+        body = NS(isSolid=True)
+        component = NS(bRepBodies=Collection(body, NS(isSolid=False)))
+        self.products = NS(itemByProductType=lambda product: NS(
+            exportManager=Manager(file), allComponents=Collection(component)) if file.design else None)
 
     def close(self, save):
         assert save is False

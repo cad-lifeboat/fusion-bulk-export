@@ -12,6 +12,9 @@ class FusionAdapter:
         references = document.documentReferences.count > 0 or data_file.childReferences.count > 0
         return '.f3z' if references else '.f3d'
 
+    def observe(self, design, data_file):
+        """Hook called with each opened design before export."""
+
     def export(self, data_file, stem):
         # Opening an already open document may return that same document. Preserve it.
         for existing in collection(self.app.documents):
@@ -27,6 +30,7 @@ class FusionAdapter:
             fusion_document = adsk.fusion.FusionDocument.cast(document)
             if not fusion_document:
                 raise NonDesign('Not a Fusion document')
+            self.observe(design, data_file)
             archive = str(stem) + self.archive_extension(fusion_document, data_file)
             step = str(stem) + '.step'
             manager = design.exportManager
