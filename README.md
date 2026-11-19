@@ -105,8 +105,9 @@ python3 scripts/verify-export.py /path/to/output
 checks every `done` entry: the archive is a readable zip with Fusion's design members
 (members compressed with Zstandard are counted as not CRC-checked on Python before
 3.14), and the STEP has a valid header and ending and is not
-trivially small. After a self-test it also compares the number of solids in each STEP
-with the solid-body count Fusion reported. It prints counts only; add `--names` to
+trivially small. It also compares the number of solids in each STEP with the
+solid-body count Fusion reported for that design (recorded in the manifest).
+Drawings and other non-design files are listed as `not_designs`, not as problems. It prints counts only; add `--names` to
 show design names.
 
 ## Resume

@@ -54,6 +54,19 @@ class VerifyTests(unittest.TestCase):
         self.build()
         self.assertIn('Secret Name', self.run_check('--names')[1])
 
+    def test_manifest_solid_count_and_skipped_drawings(self):
+        self.build(solids=2)
+        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest['entries'][0]['solid_bodies'] = 2
+        (self.root / 'selftest-result.json').unlink()
+        manifest['entries'].append(dict(id='d', name='Drawing', status='skipped',
+                                        error='Not a Fusion design: f2d', files=[]))
+        (self.root / 'manifest.json').write_text(json.dumps(manifest))
+        status, text = self.run_check()
+        self.assertEqual(status, 0, text)
+        self.assertIn('"not_designs": 1', text)
+        self.assertIn('"solids_match": 1', text)
+
     def test_plain_archive_passes(self):
         self.build(archive='.f3d')
         self.assertEqual(self.run_check()[0], 0)

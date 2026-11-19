@@ -218,6 +218,7 @@ class Exporter:
                             stem = self.destination(hub, project, folders, file, key)
                             paths = self.adapter.export(file, stem)
                             entry['files'] = [file_info(Path(path), self.root) for path in paths]
+                            entry.update(getattr(self.adapter, 'details', None) or {})
                             entry.update(status='done', error=None)
                             break
                         except NonDesign as error:

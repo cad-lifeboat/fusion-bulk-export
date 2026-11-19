@@ -9,6 +9,7 @@ from .core import NonDesign, collection
 class FusionAdapter:
     def __init__(self, app):
         self.app = app
+        self.details = {}  # facts about the last exported design, stored in its manifest entry
 
     def references(self, data_file):
         """Designs this one references (linked components, derives), by cloud id and name.
@@ -20,9 +21,14 @@ class FusionAdapter:
         return [dict(id=str(child.id), name=child.name) for child in collection(data_file.childReferences)]
 
     def observe(self, design, data_file):
-        """Hook called with each opened design before export."""
+        """Called with each opened design before export; records facts for the manifest."""
+        # Distinct solid bodies over all components: what the STEP should carry.
+        self.details['solid_bodies'] = sum(
+            1 for component in collection(design.allComponents)
+            for body in collection(component.bRepBodies) if body.isSolid)
 
     def export(self, data_file, stem):
+        self.details = {}
         # Opening an already open document may return that same document. Preserve it.
         for existing in collection(self.app.documents):
             if existing.dataFile and existing.dataFile.id == data_file.id:

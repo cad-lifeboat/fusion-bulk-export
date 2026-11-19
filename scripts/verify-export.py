@@ -75,11 +75,14 @@ def main(argv):
     if result_path.is_file():
         for design in json.loads(result_path.read_text(encoding='utf-8'))['designs']:
             observed[design['id']] = design.get('solid_bodies')
-    totals = dict(entries=0, done=0, f3d=0, f3z=0, step_ok=0, solids_match=0, solids_unknown=0, failed_checks=0)
+    totals = dict(entries=0, done=0, not_designs=0, f3d=0, step_ok=0, solids_match=0, solids_unknown=0, failed_checks=0)
     for number, entry in enumerate(manifest['entries'], 1):
         totals['entries'] += 1
         label = entry['name'] if names else 'design %d' % number
         if entry['status'] != 'done':
+            if entry['status'] == 'skipped' and str(entry.get('error', '')).startswith('Not a Fusion design'):
+                totals['not_designs'] += 1  # drawings and other files are expected to be skipped
+                continue
             print('%s: status %s (%s)' % (label, entry['status'], entry.get('error') if names else 'see manifest'))
             totals['failed_checks'] += 1
             continue
@@ -93,7 +96,7 @@ def main(argv):
         problems += step_problems
         if not step_problems:
             totals['step_ok'] += 1
-        expected = observed.get(entry['id'])
+        expected = entry.get('solid_bodies', observed.get(entry['id']))
         if expected is None:
             totals['solids_unknown'] += 1
         elif expected == solids:

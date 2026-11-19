@@ -73,6 +73,7 @@ class ExportTests(unittest.TestCase):
                 self.assertEqual(len(info['sha256']), 64)
                 self.assertEqual(info['bytes'], len(b'Synthetic CAD placeholder'))
         self.assertEqual(self.manifest['entries'][0]['references'], [])
+        self.assertTrue(all(entry['solid_bodies'] == 1 for entry in self.manifest['entries']))
         self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part')])
         self.assertTrue(all(doc.closed for file in [a, b] for doc in file.documents))
 
