@@ -28,7 +28,8 @@ import time
 # a broad glob: "autorun*" would also skip the autorun.py module itself).
 RUNTIME_FILES = shutil.ignore_patterns(
     '__pycache__', 'selftest.json', 'selftest.json.last', 'selftest-output', 'autorun.json',
-    'autorun.json.last', 'autorun.watch', 'autorun.alive', 'autorun-output', 'startup-error.txt')
+    'autorun.json.last', 'autorun.watch', 'autorun.alive', 'autorun-output', 'startup-error.txt',
+    'errors.log')
 
 REPO = Path(__file__).resolve().parent.parent
 ALIVE_SECONDS = 20

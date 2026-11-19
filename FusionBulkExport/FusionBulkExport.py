@@ -97,14 +97,24 @@ def start_watching():
 _picker = None
 
 
+def report(title):
+    """Show the current exception and append it to errors.log beside the add-in."""
+    detail = traceback.format_exc()
+    try:
+        with open(os.path.join(_DIR, 'errors.log'), 'a', encoding='utf-8') as stream:
+            stream.write('%s %s\n%s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S'), title, detail))
+    except OSError:
+        pass
+    adsk.core.Application.get().userInterface.messageBox(detail, title)
+
+
 class InputChanged(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         try:
             if _picker:
                 _picker.changed(args.input)
         except Exception:
-            adsk.core.Application.get().userInterface.messageBox(
-                traceback.format_exc(), 'Fusion Bulk Export error')
+            report('Fusion Bulk Export error')
 
 
 class Execute(adsk.core.CommandEventHandler):
@@ -145,7 +155,7 @@ class Execute(adsk.core.CommandEventHandler):
             ui.inputBox(summary + '\nOutput folder (select and copy):',
                         'Fusion Bulk Export', output)
         except Exception:
-            ui.messageBox(traceback.format_exc(), 'Fusion Bulk Export error')
+            report('Fusion Bulk Export error')
         finally:
             if progress:
                 progress.hide()
@@ -164,8 +174,7 @@ class Created(adsk.core.CommandCreatedEventHandler):
                 _handlers.append(handler)
             command.isRepeatable = False
         except Exception:
-            adsk.core.Application.get().userInterface.messageBox(
-                traceback.format_exc(), 'Fusion Bulk Export command error')
+            report('Fusion Bulk Export command error')
 
 
 def run(context):
@@ -194,7 +203,7 @@ def run(context):
         panel = ui.allToolbarPanels.itemById('SolidScriptsAddinsPanel')
         _control = panel.controls.addCommand(_definition)
     except Exception:
-        ui.messageBox(traceback.format_exc(), 'Fusion Bulk Export startup error')
+        report('Fusion Bulk Export startup error')
 
 
 def stop(context):
@@ -212,8 +221,7 @@ def stop(context):
         if _definition:
             _definition.deleteMe()
     except Exception:
-        adsk.core.Application.get().userInterface.messageBox(
-            traceback.format_exc(), 'Fusion Bulk Export shutdown error')
+        report('Fusion Bulk Export shutdown error')
     finally:
         _control = None
         _definition = None

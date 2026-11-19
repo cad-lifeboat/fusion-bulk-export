@@ -35,7 +35,6 @@ class Picker:
         self.mode.listItems.add(CHOOSE, False, '')
         for h, hub in enumerate(collection(app.data.dataHubs)):
             group = inputs.addGroupCommandInput('fbx_hub_%d' % h, hub.name)
-            group.isExpanded = True
             group.isVisible = False
             self.groups.append(group)
             every = group.children.addBoolValueInput('fbx_hub_%d_all' % h, 'All projects in this hub',
@@ -45,11 +44,11 @@ class Picker:
             for p, project in enumerate(collection(hub.dataProjects)):
                 prefix = 'fbx_p_%d_%d' % (h, p)
                 project_group = group.children.addGroupCommandInput(prefix, project.name)
-                project_group.isExpanded = False
                 whole = project_group.children.addBoolValueInput(prefix + '_whole', 'Whole project',
                                                                  True, '', False)
                 pick = project_group.children.addBoolValueInput(prefix + '_pick', 'Pick folders',
                                                                 True, '', False)
+                project_group.isExpanded = False  # Fusion cannot fold a group until it has inputs
                 self.boxes[whole.id] = ('project', hub, project, pick)
                 self.inputs_by_id[whole.id] = whole
                 self.inputs_by_id[pick.id] = pick

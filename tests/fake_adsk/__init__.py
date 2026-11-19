@@ -189,7 +189,7 @@ class Inputs:
         return self._add(DropDown(id, name))
 
     def addGroupCommandInput(self, id, name):
-        return self._add(NS(id=id, name=name, isExpanded=True, isVisible=True, children=Inputs()))
+        return self._add(Group(id, name))
 
     def addBoolValueInput(self, id, name, is_check_box, resources, value):
         return self._add(NS(id=id, name=name, value=value, isVisible=True, isEnabled=True))
@@ -206,3 +206,20 @@ class Inputs:
                 if found is not None:
                     return found
         return None
+
+
+class Group:
+    """Like Fusion, an empty group cannot be folded."""
+    def __init__(self, id, name):
+        self.id, self.name, self.isVisible, self.children = id, name, True, Inputs()
+        self._expanded = True
+
+    @property
+    def isExpanded(self):
+        return self._expanded
+
+    @isExpanded.setter
+    def isExpanded(self, value):
+        if not value and not self.children.added:
+            raise RuntimeError('3 : the group cannot be folded')
+        self._expanded = value
