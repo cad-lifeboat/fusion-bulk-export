@@ -1,0 +1,43 @@
+name: Something went wrong
+description: An export failed, stopped, or produced a bad file.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Keep your designs private.** `manifest.json`, `inventory.json` and the logs contain
+        your project and design names. Do not attach them. Counts and error messages are enough;
+        replace any names in them with `X`.
+  - type: input
+    id: fusion
+    attributes:
+      label: Fusion version
+      description: Help → About, or the `Fusion` line printed by `scripts/autorun.py status`.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Windows]
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you ran it
+      options: [Button in Fusion, scripts/autorun.py, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: counts
+    attributes:
+      label: Counts
+      description: Output of `scripts/autorun.py status OUT` or the end-of-run dialog.
+      render: text
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The error message (names replaced with X) and what you expected.
+    validations:
+      required: true

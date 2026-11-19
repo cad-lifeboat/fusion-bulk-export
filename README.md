@@ -1,5 +1,7 @@
 # Fusion Bulk Export
 
+![Fusion Bulk Export: every design in your Fusion account, saved to your own disk](docs/hero.png)
+
 Get all of your Fusion designs out, in one go.
 
 - Exports every design in every hub, project and folder you can access: `.f3z` when it references other designs (so linked parts come with it), otherwise `.f3d`, plus a matching `.step`.
