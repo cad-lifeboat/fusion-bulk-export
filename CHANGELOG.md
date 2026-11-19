@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Unattended export on macOS (`scripts/mac-autorun.sh`): inventory, per-project trial, resumable full run, STOP file to pause.
+- Unattended export on macOS and Windows (`scripts/autorun.py`): inventory, per-project trial, resumable full run, status, stop; the add-in keeps watching for new jobs in the same Fusion session.
+- AGENTS.md: step-by-step guidance for an AI coding agent running the backup for you.
 - Projects or folders that cannot be read are logged and skipped instead of ending the run.
 - `scripts/verify-export.py` checks archives and STEP files in an export folder.
 

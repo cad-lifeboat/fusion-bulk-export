@@ -50,30 +50,41 @@ All generated output stays on your disk. Fusion retrieves cloud data through you
 existing authenticated account. Manifests and logs contain design identifiers and
 names, so treat them as private data.
 
-## Unattended export (Mac)
+## Unattended export (macOS and Windows)
 
-For a large account you can run the export without dialogs. Sign in to Fusion once,
-quit it, then from this checkout:
+For a large account, run the export without dialogs. Sign in to Fusion once, quit
+it, then from this checkout (Python 3.9 or newer):
 
 ```sh
-./scripts/mac-autorun.sh ~/FusionExport inventory          # list everything, open nothing
-./scripts/mac-autorun.sh ~/FusionExport export PROJECT_ID  # try one project first
-./scripts/mac-autorun.sh ~/FusionExport                    # everything; rerun to resume
+python3 scripts/autorun.py inventory ~/FusionExport                  # list everything, open nothing
+python3 scripts/autorun.py export ~/FusionExport --project PROJECT_ID # try one project first
+python3 scripts/autorun.py export ~/FusionExport                      # everything; rerun to resume
+python3 scripts/autorun.py status ~/FusionExport                      # counts so far
+python3 scripts/autorun.py stop ~/FusionExport                        # pause between designs
 ```
 
-The script installs the add-in, writes `autorun.json` beside it, starts Fusion and
-waits for `autorun-result.json`. Fusion stays open and the add-in keeps watching
-for the next `autorun.json`, so later runs start at once without a restart (the
-add-in code itself is only reloaded when Fusion restarts). Quit Fusion to leave
-unattended mode, and delete `autorun.watch` from the installed add-in folder
-to go back to the normal button. The add-in reads `autorun.json` once (renaming it
+On Windows use `py scripts\autorun.py ...` and a short folder such as `C:\FusionExport`.
+
+The launcher installs the add-in, writes `autorun.json` beside it, starts Fusion and
+waits for `autorun-result.json`. The add-in reads `autorun.json` once (renaming it
 to `autorun.json.last`), exports without showing any UI and logs progress to
-`autorun.log` in the output folder. `inventory.json` lists every hub, project and
-file with its id, so you can pick project ids for a trial run. Create a file named
-`STOP` in the output folder to pause between designs; run the same command again
-to resume. `AUTORUN_LIMIT` caps how many designs one run exports. Projects or folders
-that cannot be read are logged and skipped. These files contain your design names;
-keep them private.
+`autorun.log` in the output folder. Fusion stays open and the add-in keeps watching
+for the next job, so later runs start at once without a restart (new add-in code
+loads only when Fusion restarts).
+
+Fusion does not always start a newly installed add-in by itself. If the launcher
+says so after three minutes, open **Utilities → Add-Ins → Scripts and Add-Ins**,
+select **FusionBulkExport**, tick **Run on Startup** and click **Run**; the waiting
+job then starts. If Fusion is already open when you begin, either quit it or do the
+same.
+
+`inventory.json` lists every hub, project and file with its id, so you can pick a
+project id for a trial run. `--limit N` caps how many designs one run exports. Projects or
+folders that cannot be read are logged and skipped. To leave unattended mode, quit
+Fusion and delete `autorun.watch` from the installed add-in folder. These files
+contain your design names; keep them private.
+
+Using an AI coding agent to do this for you? Point it at [AGENTS.md](AGENTS.md).
 
 ## Check an export
 
