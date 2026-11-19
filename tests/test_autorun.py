@@ -105,13 +105,47 @@ class AutorunTests(unittest.TestCase):
         self.assertIn('JSONDecodeError', result['errors'][0]['traceback'])
         self.assertTrue((self.root / 'autorun-output' / 'autorun-result.json').exists())
 
-    def test_startup_dispatches_autorun_before_ui(self):
-        self.config.write_text(json.dumps(dict(output=str(self.output))))
+    def start_add_in(self):
+        events = {}
+        self.fired = []
+        self.app.registerCustomEvent = lambda name: events.setdefault(name, NS(handlers=[], add=lambda h: events[name].handlers.append(h)))
+        self.app.unregisterCustomEvent = lambda name: events.pop(name)
+        self.app.fireCustomEvent = lambda name, info: self.fired.append(name)
         module = importlib.import_module('FusionBulkExport')
-        with patch.object(module, '__file__', str(self.root / 'FusionBulkExport.py')):
-            module.run(None)
-        self.assertEqual(json.loads((self.output / 'autorun-result.json').read_text())['counts']['done'], 3)
+        here = patch.object(module, '_HERE', self.root)
+        here.start()
+        self.addCleanup(here.stop)
+        idle = patch.object(module.Watcher, 'start', lambda watcher: None)  # polled by hand below
+        idle.start()
+        self.addCleanup(idle.stop)
+        module.run(None)
+        self.addCleanup(module.stop, None)
+        return module, events
 
+    def test_startup_runs_pending_job_then_watches_for_more(self):
+        self.config.write_text(json.dumps(dict(output=str(self.output))))
+        module, events = self.start_add_in()
+        self.assertEqual(json.loads((self.output / 'autorun-result.json').read_text())['counts']['done'], 3)
+        self.assertEqual(len(events['FusionBulkExportAutorun'].handlers), 1)
+        # A later job in the same Fusion session: the poll fires the event, the handler runs it.
+        module._watcher.poll()
+        self.assertEqual(self.fired, [])
+        self.assertTrue((self.root / 'autorun.alive').is_file())
+        second = self.root / 'second'
+        self.config.write_text(json.dumps(dict(output=str(second), mode='inventory')))
+        module._watcher.poll()
+        self.assertEqual(self.fired, ['FusionBulkExportAutorun'])
+        events['FusionBulkExportAutorun'].handlers[0].notify(None)
+        self.assertEqual(json.loads((second / 'autorun-result.json').read_text())['mode'], 'inventory')
+        self.assertFalse(self.config.exists())
+
+    def test_watch_marker_alone_starts_watching_without_ui(self):
+        (self.root / 'autorun.watch').write_text('')
+        module, events = self.start_add_in()
+        self.assertIn('FusionBulkExportAutorun', events)
+        self.assertIsNotNone(module._watcher)
+        module.stop(None)
+        self.assertNotIn('FusionBulkExportAutorun', events)
 
 if __name__ == '__main__':
     unittest.main()

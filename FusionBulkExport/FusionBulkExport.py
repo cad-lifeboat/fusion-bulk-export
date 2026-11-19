@@ -1,5 +1,7 @@
 """Fusion add-in entry point (MIT)."""
 from pathlib import Path
+import threading
+import time
 import traceback
 import adsk.core
 import adsk.fusion
@@ -10,6 +12,59 @@ _handlers = []
 _control = None
 _definition = None
 _ID = 'FusionBulkExport'
+_EVENT = 'FusionBulkExportAutorun'
+_HERE = Path(__file__).parent
+_watcher = None
+_custom_event = None
+
+
+class AutorunEvent(adsk.core.CustomEventHandler):
+    """Runs a pending autorun.json on Fusion's main thread."""
+    busy = False
+
+    def notify(self, args):
+        if AutorunEvent.busy or not (_HERE / 'autorun.json').is_file():
+            return
+        AutorunEvent.busy = True
+        try:
+            from fusion_bulk_export.autorun import run_autorun
+            run_autorun(adsk.core.Application.get(), _HERE / 'autorun.json')
+        finally:
+            AutorunEvent.busy = False
+
+
+class Watcher(threading.Thread):
+    """Background poll: keeps autorun.alive fresh and signals new autorun.json files."""
+    def __init__(self, interval=3):
+        super().__init__(daemon=True)
+        self.interval = interval
+        self.stopped = threading.Event()
+
+    def poll(self):
+        (_HERE / 'autorun.alive').write_text(str(time.time()))
+        if (_HERE / 'autorun.json').is_file() and not AutorunEvent.busy:
+            adsk.core.Application.get().fireCustomEvent(_EVENT, '')
+
+    def run(self):
+        while not self.stopped.is_set():
+            try:
+                self.poll()
+            except Exception:
+                pass
+            self.stopped.wait(self.interval)
+
+
+def start_watching():
+    """Unattended mode: no command UI; run autorun jobs now and whenever one appears."""
+    global _watcher, _custom_event
+    app = adsk.core.Application.get()
+    _custom_event = app.registerCustomEvent(_EVENT)
+    handler = AutorunEvent()
+    _custom_event.add(handler)
+    _handlers.append(handler)
+    handler.notify(None)
+    _watcher = Watcher()
+    _watcher.start()
 
 
 class Execute(adsk.core.CommandEventHandler):
@@ -65,10 +120,8 @@ class Created(adsk.core.CommandCreatedEventHandler):
 
 def run(context):
     global _control, _definition
-    autorun = Path(__file__).parent / 'autorun.json'
-    if autorun.is_file():
-        from fusion_bulk_export.autorun import run_autorun
-        run_autorun(adsk.core.Application.get(), autorun)
+    if (_HERE / 'autorun.json').is_file() or (_HERE / 'autorun.watch').is_file():
+        start_watching()
         return
     config = Path(__file__).parent / 'selftest.json'
     if config.is_file():
@@ -90,7 +143,13 @@ def run(context):
 
 
 def stop(context):
-    global _control, _definition
+    global _control, _definition, _watcher, _custom_event
+    if _watcher:
+        _watcher.stopped.set()
+        _watcher = None
+    if _custom_event:
+        adsk.core.Application.get().unregisterCustomEvent(_EVENT)
+        _custom_event = None
     try:
         if _control:
             _control.deleteMe()

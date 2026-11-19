@@ -13,17 +13,27 @@ if [[ $# -lt 1 ]]; then
   echo "Usage: $0 OUTPUT_FOLDER [inventory|export] [PROJECT_ID ...]" >&2
   exit 2
 fi
-for process in 'Autodesk Fusion' 'Autodesk Fusion 360' Fusion360; do
-  if pgrep -x "$process" >/dev/null; then
-    echo 'Quit Fusion before running this script so startup add-ins run.' >&2
-    exit 2
-  fi
-done
 repo=$(cd "$(dirname "$0")/.." && pwd)
 output=$1
 mode=${2:-export}
 shift $(( $# >= 2 ? 2 : 1 ))
 installed="$HOME/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionBulkExport"
+# A Fusion session started by an earlier run keeps watching for jobs (autorun.alive
+# is refreshed every few seconds), so later runs need no restart.
+running=
+for process in 'Autodesk Fusion' 'Autodesk Fusion 360' Fusion360; do
+  pgrep -x "$process" >/dev/null && running=1
+done
+watching=
+if [[ -n $running ]]; then
+  if python3 -c 'import os, sys, time; sys.exit(0 if time.time() - os.path.getmtime(sys.argv[1]) < 20 else 1)' \
+      "$installed/autorun.alive" 2>/dev/null; then
+    watching=1
+  else
+    echo 'Quit Fusion before the first run so the add-in loads at startup.' >&2
+    exit 2
+  fi
+fi
 python3 - "$repo" "$output" "$mode" "$installed" "${AUTORUN_LIMIT:-}" "$@" <<'PY'
 import json
 from pathlib import Path
@@ -40,7 +50,8 @@ output.mkdir(parents=True, exist_ok=True)
 for stale in ('autorun-result.json', 'STOP'):
     (output / stale).unlink(missing_ok=True)
 shutil.copytree(repo / 'FusionBulkExport', installed, dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns('__pycache__', 'selftest.json*', 'autorun.json*', '*-output'))
+                ignore=shutil.ignore_patterns('__pycache__', 'selftest.json*', 'autorun*', '*-output'))
+(installed / 'autorun.watch').write_text('')
 config = dict(output=str(output), mode=mode)
 if projects:
     config['projects'] = projects
@@ -59,9 +70,11 @@ settings['runOnStartup'] = sys.argv[2] == 'on'
 manifest.write_text(json.dumps(settings, indent=2) + '\n')
 PY
 }
-set_startup on
-trap 'set_startup off' EXIT
-open -a "${FUSION_APP:-Autodesk Fusion}"
+if [[ -z $watching ]]; then
+  set_startup on
+  trap 'set_startup off' EXIT
+  open -a "${FUSION_APP:-Autodesk Fusion}"
+fi
 python3 - "$output" "${AUTORUN_TIMEOUT_SECONDS:-86400}" <<'PY'
 import json
 from pathlib import Path

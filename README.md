@@ -62,7 +62,11 @@ quit it, then from this checkout:
 ```
 
 The script installs the add-in, writes `autorun.json` beside it, starts Fusion and
-waits for `autorun-result.json`. The add-in reads `autorun.json` once (renaming it
+waits for `autorun-result.json`. Fusion stays open and the add-in keeps watching
+for the next `autorun.json`, so later runs start at once without a restart (the
+add-in code itself is only reloaded when Fusion restarts). Quit Fusion to leave
+unattended mode, and delete `autorun.watch` from the installed add-in folder
+to go back to the normal button. The add-in reads `autorun.json` once (renaming it
 to `autorun.json.last`), exports without showing any UI and logs progress to
 `autorun.log` in the output folder. `inventory.json` lists every hub, project and
 file with its id, so you can pick project ids for a trial run. Create a file named

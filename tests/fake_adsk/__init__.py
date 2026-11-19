@@ -89,6 +89,7 @@ def install():
     adsk.fusion = ModuleType('adsk.fusion')
     adsk.fusion.Design = NS(cast=lambda value: value)
     adsk.fusion.FusionDocument = NS(cast=lambda value: value)
+    adsk.core.CustomEventHandler = object
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module
 
