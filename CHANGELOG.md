@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
+- Download the add-in as one zip from the release page; README starts with a three-step quick start.
 - First real-Fusion run (2706.1.17, macOS): 59 of 59 designs exported and checked.
 - A design already open in Fusion is exported from the open copy (unless it has unsaved changes or is another version).
 - The manifest records each design's solid-body counts; `verify-export.py` compares them with the STEP (differences are notes; `--strict` makes them failures).

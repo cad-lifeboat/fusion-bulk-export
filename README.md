@@ -4,67 +4,53 @@
 
 Get all of your Fusion designs out, in one go.
 
-- Exports every design in every hub, project and folder you can access as a Fusion archive (`.f3d`) plus a matching `.step`. Linked designs are exported too, and each design's links are listed in the manifest.
-- Keeps your project and folder layout on disk, writes a `manifest.json`, and can resume: run it again on the same folder and it skips what's done.
-- Everything stays on your computer.
+- Saves every design in every hub, project and folder you can access as a Fusion archive (`.f3d`) plus a `.step`, in the same project and folder layout.
+- Resumable: run it again on the same folder and it skips what's already done.
+- Everything stays on your computer. Nothing in your account is changed.
 
-**Tested on real Fusion** (2706.1.17, macOS) with a real account, using the unattended launcher: 59 of 59 designs exported, every archive and STEP file checked, no failures (3.5 minutes, 52 MB). The in-Fusion button runs the same exporter. Windows support is written but not yet tested on a Windows machine; if you try it there, please open an issue with your Fusion version and the end-of-run counts.
+**Tested on real Fusion** (2706.1.17, macOS) with a real account: 59 of 59 designs exported, every archive and STEP file checked, no failures (3.5 minutes, 52 MB). Windows support is written but not yet tested on a Windows machine; if you try it there, please [open an issue](../../issues/new/choose) with your Fusion version and the end-of-run counts.
 
-## Install
+## Quick start
 
-In Fusion, open **Utilities → Add-Ins →
-Scripts and Add-Ins**. On the **Add-Ins** tab, click the green **+**, select the included
-`FusionBulkExport` folder, then select **FusionBulkExport** and click **Run**. Optionally enable
-Run on Startup. This add-in is licensed under MIT; see LICENSE.
+1. **Download** `FusionBulkExport-<version>.zip` from the [latest release](../../releases/latest) and unzip it.
+2. **Add it to Fusion:** **Utilities → Add-Ins** (or press **Shift+S**) → **Add-Ins** tab → green **+** → choose the unzipped `FusionBulkExport` folder → select **FusionBulkExport** → **Run**.
+3. **Export:** on the **Utilities** tab, click **Fusion Bulk Export** in the **Add-Ins** panel, choose an empty folder with a short path (such as `Documents/FusionExport`), and wait. A progress bar shows each design and has a Cancel button; the last dialog shows the counts.
 
-## Usage
+Leave Fusion open and signed in while it runs, and keep the computer awake. To pick up where you left off, or to catch designs added later, run it again on the same folder.
 
-Close designs before exporting. Choose **Fusion Bulk Export** in the Utilities /
-Add-Ins panel and select a short output folder (at most 100 characters).
-The add-in walks every accessible hub, project, and folder. The progress dialog
-has a Cancel button; cancellation takes effect between items. An in-progress
-Fusion API call must finish first. The final dialog shows counts and a selectable,
-copyable output folder path.
+**Let your AI do it.** If you use an AI coding agent, ask it to follow [AGENTS.md](AGENTS.md). It runs the whole backup unattended (inventory, a trial project, the full export and a check of every file) and only needs you for signing in and one click in Fusion.
 
-Fusion must remain running and signed in. Retrieval and translation time depend on
-design complexity, references, and network conditions. A design that is already
-open in Fusion is exported from the open copy and left open; if it has unsaved changes
-or is a different version, it is reported as failed instead (save or close it and rerun).
-Exported documents are closed without saving. No follow-up command is launched.
+## What you get
 
-## Outputs
+```
+FusionExport/
+  <hub>/<project>/<folders>/<design> v<version>.f3d    the full design: history, sketches, everything
+  <hub>/<project>/<folders>/<design> v<version>.step   geometry for any other CAD program
+  manifest.json                                        every design, its status and checksums
+  export.log
+```
 
-Each design produces `<output>/<hub>/<project>/<folders>/<name> v<version>.f3d`
-and a matching `.step`. Only the current version exposed by each cloud file is exported;
-previous versions are not enumerated. Drawings, other file types, and files without
-a Design product are logged as skipped.
+- **`.f3d`** opens in Fusion with **Upload** or **File → Open → Open from my computer**.
+- **`.step`** holds the visible bodies, without history. Most CAD programs open it.
+- Drawings and other non-design files are listed as skipped.
+- Only each design's current version is exported, not its older versions.
+- **Linked designs:** Fusion's API can only save a design on its own, not as a `.f3z` bundle with the designs it links to. Every linked design is exported in its own right, so nothing is lost, and `manifest.json` lists each design's links under `references`. Re-linking after import is manual. If you need one self-contained `.f3z`, use **File → Export** in Fusion for that design.
+- Names are made safe for every operating system and kept short. A short `~hash` suffix keeps similar names apart, and the original names are in the manifest.
 
-**Linked designs.** Fusion's API can only write a design's own archive, not a `.f3z`
-bundle with the designs it references (the File → Export `.f3z` option has no API
-equivalent; Fusion silently writes `.f3d` when asked for `.f3z`). So for an assembly
-with linked components, or a design with a derive, its `.f3d` holds the design itself,
-and its manifest entry lists the referenced designs under `references` (cloud id and
-name). Every referenced design you can access is exported as well, so nothing is lost;
-re-linking after import is manual. If you need one self-contained `.f3z` for a particular
-assembly, use File → Export in Fusion for that one.
+`manifest.json` and the logs contain your project and design names. Keep them private, and don't attach them to issues.
 
-Stable identity suffixes distinguish names that collide after sanitizing, truncating,
-or ignoring case. Reserved characters, reserved names, Unicode, and trailing spaces
-or dots are normalized to portable ASCII. Names are shortened to keep absolute file
-paths below 240 characters. Very deep folder paths become one `folders~<hash>`
-directory; the complete original path remains in the manifest.
+## If something goes wrong
 
-`manifest.json` contains original hub/project names, folder paths, names, cloud IDs,
-version numbers, modified dates (Unix timestamps), statuses, errors, output paths,
-SHA-256 hashes, byte counts, and run information. `export.log` is appended each run.
-All generated output stays on your disk. Fusion retrieves cloud data through your
-existing authenticated account. Manifests and logs contain design identifiers and
-names, so treat them as private data.
+- **A design shows as failed:** run the export again on the same folder. Failed designs are retried, and finished ones are checked and skipped.
+- **"Open in Fusion with unsaved changes":** save or close that design, then run again.
+- **Cancel:** finished designs are kept, so run again to continue.
+- **Check the files:** `python3 scripts/verify-export.py <folder>` (from a download of this repository) opens every archive and STEP file and prints counts only.
+- Still stuck? [Open an issue](../../issues/new/choose) with the counts and error messages, with any design names replaced by `X`.
 
 ## Unattended export (macOS and Windows)
 
-For a large account, run the export without dialogs. Sign in to Fusion once, quit
-it, then from this checkout (Python 3.9 or newer):
+For large accounts, or to let an agent drive it, the export runs without any dialogs.
+You need a download of this repository and Python 3.9 or newer. Sign in to Fusion once, then:
 
 ```sh
 python3 scripts/autorun.py inventory ~/FusionExport                  # list everything, open nothing
@@ -76,144 +62,48 @@ python3 scripts/autorun.py stop ~/FusionExport                        # pause be
 
 On Windows use `py scripts\autorun.py ...` and a short folder such as `C:\FusionExport`.
 
-The launcher installs the add-in, writes `autorun.json` beside it, starts Fusion and
-waits for `autorun-result.json`. The add-in reads `autorun.json` once (renaming it
-to `autorun.json.last`), exports without showing any UI and logs progress to
-`autorun.log` in the output folder. Fusion stays open and the add-in keeps watching
-for the next job, so later runs start at once without a restart (new add-in code
-loads only when Fusion restarts).
+The launcher installs the add-in, hands it the job and starts Fusion if needed.
+Fusion does not always start a newly installed add-in by itself. If the launcher says
+so, open **Utilities → Add-Ins**, select **FusionBulkExport** and click **Run**, and the
+waiting job starts. After that, Fusion stays open and the add-in picks up each new job
+at once.
 
-Fusion does not always start a newly installed add-in by itself. If the launcher
-says so after three minutes, open **Utilities → Add-Ins → Scripts and Add-Ins**,
-select **FusionBulkExport**, tick **Run on Startup** and click **Run**; the waiting
-job then starts. If Fusion is already open when you begin, either quit it or do the
-same.
+`inventory.json` lists every hub, project and file with its id, so you can choose a
+project for a trial run. `--limit N` caps one run. Projects or folders that can't be
+read are logged and skipped. `scripts/autorun.py diagnostics <folder>` records which
+export functions your Fusion build has, which helps with bug reports. To go back to the
+button, quit Fusion and delete `autorun.watch` from the installed add-in folder.
 
-`inventory.json` lists every hub, project and file with its id, so you can pick a
-project id for a trial run. `--limit N` caps how many designs one run exports. Projects or
-folders that cannot be read are logged and skipped. To leave unattended mode, quit
-Fusion and delete `autorun.watch` from the installed add-in folder. These files
-contain your design names; keep them private.
+## How resuming works
 
-Using an AI coding agent to do this for you? Point it at [AGENTS.md](AGENTS.md).
+Running again on the same folder skips a finished design only if its files are still
+there with matching checksums. Missing or changed files are made again. A failed design
+gets two tries per run. A new version of a design gets its own files next to the old
+ones. The manifest is saved after every design, so stopping or a crash loses at most the
+design in progress. Run only one export at a time into a folder.
 
-## Check an export
+## Checking an export
 
-```sh
-python3 scripts/verify-export.py /path/to/output
-```
+`python3 scripts/verify-export.py <folder>` checks every exported design:
+- the `.f3d` is a readable archive with Fusion's design data;
+- the `.step` has a valid start and end;
+- the number of solids in the STEP matches the visible solid bodies Fusion reported.
 
-checks every `done` entry: the archive is a readable zip with Fusion's design members
-(members compressed with Zstandard are counted as not CRC-checked on Python before
-3.14), and the STEP has a valid header and ending and is not
-trivially small. It also compares the number of solids in each STEP with the
-visible solid-body count Fusion reported for that design (recorded in the manifest).
-A difference is printed as a NOTE, not a failure: the count is approximate for
-linked components, and Fusion's STEP translator occasionally drops a body it cannot
-write. The `.f3d` is the complete copy. Use `--strict` to treat differences as failures.
-Drawings and other non-design files are listed as `not_designs`, not as problems. It prints counts only; add `--names` to
-show design names.
+A solid-count difference is printed as a NOTE, not a failure. The count is approximate
+for linked components, and Fusion's STEP translator occasionally drops a body it can't
+write; the `.f3d` is the complete copy. Use `--strict` to treat differences as failures,
+and `--names` to show design names. On Python before 3.14, archive parts compressed with
+Zstandard are counted as not CRC-checked.
 
-## Resume
+## Developers
 
-Choose the same output folder to resume. Completed pairs are skipped only if their
-files, hashes, and sizes still match. Missing or changed files are regenerated.
-Failed designs get at most two attempts per run. Cancelled runs preserve completed
-work. New versions get separate filenames and manifest entries. Partial files can
-remain after failures; only `done` entries represent complete archive/STEP pairs.
+- Tests: `python3 -m unittest discover -s tests` (a simulated Fusion API; no Fusion needed).
+- Self-test on a real Mac with a throwaway account: [docs/selftest.md](docs/selftest.md).
+- Cards: `python3 docs/cards.py` regenerates the banner and social preview.
+- Release zip: `python3 scripts/package.py` writes `dist/FusionBulkExport-<version>.zip`.
 
-The manifest is replaced atomically after each item and failed attempt. An unreadable
-manifest stops the run without overwriting it. Use only one export at a time per
-output folder. Back up the directory as you would other valuable files.
-
-STEP can omit design history and manufacturing information. Unavailable references,
-permissions, or translator limitations are recorded as failures.
+MIT licensed; see [LICENSE](LICENSE).
 
 ---
 
 Not affiliated with or endorsed by Autodesk. Fusion is a trademark of Autodesk, Inc.
-
-## Unattended Mac test
-
-Use a throwaway account in a logged-in macOS desktop session. Install Fusion,
-complete its first-launch setup and sign in once, then quit Fusion. Install Python 3
-(`python3` on PATH). Put real `.f3d` and `.f3z` archives in a local seed directory;
-include a linked assembly so reference recording is exercised. Seed subdirectories are
-searched recursively. No sample CAD data is bundled.
-
-From this checkout, run:
-
-```sh
-./scripts/mac-selftest.sh /absolute/path/to/seeds /tmp/fusion-proof
-```
-
-The output directory must be new or empty, with an absolute path no longer than
-100 characters. The optional third argument names the project (default
-`bulk-export-selftest`). The script copies the add-in into
-`~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionBulkExport`,
-writes `selftest.json`, turns on `runOnStartup` in the installed copy for this one
-launch, starts Fusion, waits up to one hour and prints a summary. On exit it turns
-`runOnStartup` off again; the shipped manifest leaves it off.
-It returns 0 for a passing test, 1 for reported failure, and a nonzero status for
-launcher errors or timeout. Change the wait using `SELFTEST_TIMEOUT_SECONDS`.
-Fusion is left running. Do not run multiple tests concurrently.
-
-The default launch command is `open -a "Autodesk Fusion"`, using the app registered
-with macOS LaunchServices. No fixed installation path is assumed. If your app is
-named differently or is not registered, set its exact application bundle path:
-
-```sh
-FUSION_APP="/Applications/Autodesk Fusion.app" ./scripts/mac-selftest.sh /path/to/seeds /tmp/fusion-proof
-```
-
-Depending on your installation, the bundle may instead be under `~/Applications`
-or have the older name `Autodesk Fusion 360.app`. The path above is an example;
-use the installed `.app` on the test Mac. Fusion must start a fresh process so
-`runOnStartup` executes. Login prompts, licensing screens and operating-system
-permission prompts must have been handled during the initial setup.
-
-When `selftest.json` exists beside the add-in entry point, startup runs the test
-without creating command UI or displaying dialogs. Its minimal format is:
-
-```json
-{"output": "/tmp/fusion-proof", "seed_folder": "/absolute/path/to/seeds", "project": "bulk-export-selftest"}
-```
-
-The add-in renames the file to `selftest.json.last` as soon as it reads it, so the
-test runs once and later launches start normally.
-
-The test creates or reuses the named project in the first hub, uploads every seed
-using `DataFolder.uploadFile`, polls `DataFileFuture.uploadState` and waits for
-`DataFile.isComplete` before exporting. Each transfer and processing wait defaults
-to 600 seconds; `upload_timeout_seconds` in the configuration changes this limit
-(and the initial hub wait). Upload failure does not prevent trying the remaining
-seeds or running the exporter. Nothing in any hub is deleted. Repeated tests
-upload again and may add files or versions to the reused project.
-
-By default the test exports only the self-test project (including designs created
-when uploading assembly bundles), so nothing else in the account is opened. Set
-`"scope": "all"` in the configuration to run the normal exporter over every
-accessible hub and project instead.
-`selftest.log` records activity immediately, including each upload and export
-attempt, so a crash or stuck API call leaves a trail. `selftest-result.json` is
-written atomically on completion and includes Fusion version, timestamps, elapsed
-times, uploads, per-design manifest statuses and file hashes, reference counts,
-archive selection checks, and caught errors with tracebacks, including retries.
-A pass requires successful uploads, export of their returned file IDs, and every
-design exported with its expected archive extension. Even a recovered retry is
-reported as a failed test so its error remains visible. Cached exports have no
-fresh archive observation and cannot establish a passing test; use fresh output.
-The check establishes archive extension selection, not that the archive can be
-reimported or that STEP preserves every design feature.
-
-If configuration cannot be read or its output is unusable, diagnostics go to
-`selftest-output` inside the installed add-in directory. A launcher timeout does
-not cancel Fusion or an in-progress API call; inspect the log before retrying.
-The polling timeouts cannot interrupt a synchronous Fusion API call.
-
-The normal button, folder dialog and export behavior are unchanged.
-The self-test uploads into the signed-in account; for checking your own export, use
-`scripts/verify-export.py` instead.
-
-Upload behavior follows Autodesk's [DataFolder.uploadFile documentation](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/core_DataFolder_uploadFile.htm)
-and [DataFile.isComplete documentation](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/core_DataFile_isComplete.htm).

@@ -88,6 +88,20 @@ CARDS = {
 }
 
 
+ICON = '''<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 64 64">
+<path d="M32,4 l14,7 l-14,7 l-14,-7 z" fill="#f6b26b"/>
+<path d="M18,11 l14,7 v15 l-14,-7 z" fill="#d9731a"/>
+<path d="M46,11 l-14,7 v15 l14,-7 z" fill="#b85f12"/>
+<path d="M32,37 v8" stroke="#2f9bb0" stroke-width="5" stroke-linecap="round"/>
+<path d="M25,41 l7,7 l7,-7" fill="none" stroke="#2f9bb0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M8,44 v12 a4,4 0 0 0 4,4 h40 a4,4 0 0 0 4,-4 v-12" fill="none" stroke="#5b6b7c" stroke-width="5"
+ stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+'''
+# Toolbar icons Fusion loads from the add-in's resources folder (plain and @2x for HiDPI).
+ICON_SIZES = {'16x16': 16, '16x16@2x': 32, '32x32': 32, '32x32@2x': 64, '64x64': 64, '64x64@2x': 128}
+
+
 def main():
     try:
         import cairosvg
@@ -99,6 +113,13 @@ def main():
         if cairosvg:
             cairosvg.svg2png(bytestring=svg.encode('utf-8'), write_to=str(HERE / (name + '.png')))
         print(name, 'png' if cairosvg else 'svg only')
+    resources = HERE.parent / 'FusionBulkExport' / 'resources'
+    (HERE / 'icon.svg').write_text(ICON.format(size=64), encoding='utf-8')
+    if cairosvg:
+        for name, size in ICON_SIZES.items():
+            cairosvg.svg2png(bytestring=ICON.format(size=size).encode('utf-8'),
+                             write_to=str(resources / (name + '.png')))
+        print('icons', ', '.join(ICON_SIZES))
 
 
 if __name__ == '__main__':
