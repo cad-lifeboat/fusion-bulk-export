@@ -65,15 +65,15 @@ only reads from the account. Work on the person's machine, in a terminal, with t
   by itself, even when Fusion was opened by the launcher.
 - **"The add-in failed to start"** plus a traceback: the Run toggle springs back off.
   Report the error type (not paths with the person's name in them) and stop.
-- **A design is "failed" with "Close this design in Fusion"**: it was open in Fusion.
-  Have the person close it and rerun the export.
+- **A design is "failed" because it is open with unsaved changes, or another version is
+  open**: have the person save or close it in Fusion, then rerun the export.
 - **Timeout**: the add-in may still be working. Check `status`; rerun the same command
   to keep waiting. Raise `AUTORUN_TIMEOUT_SECONDS` for very large accounts.
 - **Disk full**: stop, free space or choose another folder on a bigger disk, then rerun
   `export` with the same folder to resume.
 - **"could not read" lines in `export.log`**: a project or folder the account cannot
   open (permissions, deleted, offline). They are skipped; report how many, not which.
-- **STEP solid count differs from Fusion's body count** (`verify-export.py`): STEP
-  dropped or merged bodies (e.g. surface bodies, or translator limits). The `.f3d`
-  archive is still the complete copy; note the count to the person.
+- **STEP solid count differs from Fusion's visible solid count** (`verify-export.py`):
+  hidden bodies are already accounted for, so this is a translator difference (merged
+  or dropped bodies). The `.f3d` archive is still the complete copy; report the count.
 - **Drawings and non-design files are "skipped"**: expected; only Fusion designs export.

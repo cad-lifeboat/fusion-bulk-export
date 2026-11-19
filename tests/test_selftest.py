@@ -64,7 +64,7 @@ class SelfTestTests(unittest.TestCase):
         self.assertEqual(sorted(d['child_references'] for d in result['designs']), [0, 1])
         for design in result['designs']:
             self.assertTrue(design['archive_correct'])
-            self.assertEqual(design['solid_bodies'], 1)
+            self.assertEqual(design['solid_bodies'], 2)
             self.assertGreaterEqual(design['attempt_details'][0]['seconds'], 0)
             for file in design['files']:
                 self.assertTrue((self.output / file['path']).exists())

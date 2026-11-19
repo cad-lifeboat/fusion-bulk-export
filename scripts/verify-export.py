@@ -96,7 +96,8 @@ def main(argv):
         problems += step_problems
         if not step_problems:
             totals['step_ok'] += 1
-        expected = entry.get('solid_bodies', observed.get(entry['id']))
+        # STEP leaves out hidden bodies, so compare with the visible count when recorded.
+        expected = entry.get('visible_solid_bodies', entry.get('solid_bodies', observed.get(entry['id'])))
         if expected is None:
             totals['solids_unknown'] += 1
         elif expected == solids:

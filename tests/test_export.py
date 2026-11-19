@@ -73,7 +73,9 @@ class ExportTests(unittest.TestCase):
                 self.assertEqual(len(info['sha256']), 64)
                 self.assertEqual(info['bytes'], len(b'Synthetic CAD placeholder'))
         self.assertEqual(self.manifest['entries'][0]['references'], [])
-        self.assertTrue(all(entry['solid_bodies'] == 1 for entry in self.manifest['entries']))
+        # Root has one solid (plus one surface body); a visible part holds one hidden solid.
+        self.assertTrue(all(entry['solid_bodies'] == 2 for entry in self.manifest['entries']))
+        self.assertTrue(all(entry['visible_solid_bodies'] == 1 for entry in self.manifest['entries']))
         self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part')])
         self.assertTrue(all(doc.closed for file in [a, b] for doc in file.documents))
 
@@ -193,14 +195,33 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(all(len(str(self.root / p)) < 240 for p in paths))
         self.assertTrue(all(' v3.' in p for p in paths))
 
-    def test_existing_documents_are_preserved(self):
+    def test_open_unmodified_design_is_exported_and_left_open(self):
         file = fake.File()
         document = fake.Document(file)
         self.app.documents.items.append(document)
         self.run_export(fake.data([file]))
         self.assertFalse(document.closed)
         self.assertEqual(file.calls, 0)
-        self.assertEqual(self.manifest['entries'][0]['status'], 'failed')
+        self.assertEqual(self.manifest['entries'][0]['status'], 'done')
+
+    def test_open_design_with_unsaved_changes_or_other_version_is_refused(self):
+        for change, message in [(dict(isModified=True), 'unsaved changes'),
+                                (dict(dataFile=NS(id='file-1', versionNumber=2)), 'Another version')]:
+            with self.subTest(message=message):
+                self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
+                self.root = Path(self.temp.name)
+                file = fake.File()
+                document = fake.Document(file)
+                for key, value in change.items():
+                    setattr(document, key, value)
+                self.app.documents.items[:] = [document]
+                self.run_export(fake.data([file]))
+                self.assertFalse(document.closed)
+                self.assertEqual(file.calls, 0)
+                entry = self.manifest['entries'][0]
+                self.assertEqual(entry['status'], 'failed')
+                self.assertIn(message, entry['error'])
+                self.temp.cleanup()
 
     def test_export_false_and_close_on_failure(self):
         file = fake.File()

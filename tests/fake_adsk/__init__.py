@@ -61,10 +61,16 @@ class Document:
         self.dataFile = file
         self.closed = False
         self.documentReferences = Collection(*([NS()] if file.references else []))
-        body = NS(isSolid=True)
-        component = NS(bRepBodies=Collection(body, NS(isSolid=False)))
+        self.isModified = False
+        body = NS(isSolid=True, isLightBulbOn=True)
+        hidden = NS(isSolid=True, isLightBulbOn=False)
+        component = NS(id='root', bRepBodies=Collection(body, NS(isSolid=False, isLightBulbOn=True)),
+                       allOccurrences=Collection())
+        part = NS(id='part', bRepBodies=Collection(hidden))
+        component.allOccurrences = Collection(NS(isVisible=True, component=part))
         self.products = NS(itemByProductType=lambda product: NS(
-            exportManager=Manager(file), allComponents=Collection(component)) if file.design else None)
+            exportManager=Manager(file), rootComponent=component,
+            allComponents=Collection(component, part)) if file.design else None)
 
     def close(self, save):
         assert save is False

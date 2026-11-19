@@ -27,8 +27,9 @@ Fusion API call must finish first. The final dialog shows counts and a selectabl
 copyable output folder path.
 
 Fusion must remain running and signed in. Retrieval and translation time depend on
-design complexity, references, and network conditions. Already open designs are
-reported as failed to preserve your editing session; close them and rerun.
+design complexity, references, and network conditions. A design that is already
+open in Fusion is exported from the open copy and left open; if it has unsaved changes
+or is a different version, it is reported as failed instead (save or close it and rerun).
 Exported documents are closed without saving. No follow-up command is launched.
 
 ## Outputs
