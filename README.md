@@ -8,7 +8,7 @@ Get all of your Fusion designs out, in one go.
 - Resumable: run it again on the same folder and it skips what's already done.
 - Everything stays on your computer. Nothing in your account is changed.
 
-**Tested on real Fusion** (2706.1.17, macOS) with a real account: 59 of 59 designs exported, every archive and STEP file checked, no failures (3.5 minutes, 52 MB). Windows support is written but not yet tested on a Windows machine; if you try it there, please [open an issue](../../issues/new/choose) with your Fusion version and the end-of-run counts.
+**Tested on real Fusion** (2706.1.17, macOS) with a real account, through both the toolbar button and the unattended launcher: 59 of 59 designs exported, every archive and STEP file checked, no failures (3.5 minutes, 52 MB); exporting a single chosen folder was checked too. Windows support is written but not yet tested on a Windows machine; if you try it there, please [open an issue](../../issues/new/choose) with your Fusion version and the end-of-run counts.
 
 ## Quick start
 
