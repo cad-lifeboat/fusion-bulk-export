@@ -24,6 +24,12 @@ import subprocess
 import sys
 import time
 
+# Files the add-in creates at run time. Never copied over an installation (and never
+# a broad glob: "autorun*" would also skip the autorun.py module itself).
+RUNTIME_FILES = shutil.ignore_patterns(
+    '__pycache__', 'selftest.json', 'selftest.json.last', 'selftest-output', 'autorun.json',
+    'autorun.json.last', 'autorun.watch', 'autorun.alive', 'autorun-output', 'startup-error.txt')
+
 REPO = Path(__file__).resolve().parent.parent
 ALIVE_SECONDS = 20
 SAFE_LOG = re.compile(r'^\S+ (design \d+/\d+|autorun (start (export|inventory)|finished)|inventory: [\d ,a-z]+)$')
@@ -111,7 +117,11 @@ def install(installed, output, mode, projects=None, limit=None):
         except FileNotFoundError:
             pass
     shutil.copytree(REPO / 'FusionBulkExport', installed, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns('__pycache__', 'selftest.json*', 'autorun*', '*-output'))
+                    ignore=RUNTIME_FILES)
+    try:
+        (installed / 'startup-error.txt').unlink()
+    except FileNotFoundError:
+        pass
     (installed / 'autorun.watch').write_text('', encoding='utf-8')
     config = dict(output=str(output), mode=mode)
     if projects:
@@ -162,6 +172,10 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
         elapsed = clock() - start
         if elapsed >= timeout:
             raise SystemExit('Timed out. Inspect ' + str(output / 'autorun.log'))
+        crash = installed / 'startup-error.txt'
+        if crash.is_file():
+            print('The add-in failed to start:\n' + crash.read_text(encoding='utf-8'), flush=True)
+            return 1
         if not hinted and elapsed >= hint_after and not (installed / 'autorun.alive').exists():
             print(MANUAL_HINT, flush=True)
             hinted = True
@@ -177,12 +191,13 @@ def start(args):
     output = check_output(args.output)
     installed = addins_dir(name) / 'FusionBulkExport'
     watching = alive(installed)
-    if not watching and fusion_running(name):
-        raise SystemExit('Fusion is open but the add-in is not watching. Quit Fusion and run this '
-                         'again, or in Fusion use Utilities > Add-Ins, select FusionBulkExport, Run.')
     install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None))
     if watching:
         return wait(installed, output, args.timeout)
+    if fusion_running(name):
+        # Open but not watching: the job is in place; starting the add-in by hand picks it up.
+        print(MANUAL_HINT, flush=True)
+        return wait(installed, output, args.timeout, hint_after=float('inf'))
     set_startup(installed, True)
     try:
         launch_fusion(name)

@@ -1,12 +1,24 @@
 """Fusion add-in entry point (MIT)."""
+import os
+import sys
 from pathlib import Path
 import threading
 import time
 import traceback
 import adsk.core
 import adsk.fusion
-from fusion_bulk_export.core import Exporter
-from fusion_bulk_export.fusion import FusionAdapter
+
+# Fusion does not put an add-in's own folder on sys.path; the package lives beside this file.
+_DIR = os.path.dirname(os.path.abspath(__file__))
+if _DIR not in sys.path:
+    sys.path.insert(0, _DIR)
+try:
+    from fusion_bulk_export.core import Exporter
+    from fusion_bulk_export.fusion import FusionAdapter
+except Exception:
+    with open(os.path.join(_DIR, 'startup-error.txt'), 'w', encoding='utf-8') as _stream:
+        _stream.write(traceback.format_exc())
+    raise
 
 _handlers = []
 _control = None
@@ -121,7 +133,12 @@ class Created(adsk.core.CommandCreatedEventHandler):
 def run(context):
     global _control, _definition
     if (_HERE / 'autorun.json').is_file() or (_HERE / 'autorun.watch').is_file():
-        start_watching()
+        try:
+            start_watching()
+        except Exception:
+            # Unattended: no dialog, but leave the reason where the launcher can show it.
+            (_HERE / 'startup-error.txt').write_text(traceback.format_exc(), encoding='utf-8')
+            raise
         return
     config = Path(__file__).parent / 'selftest.json'
     if config.is_file():

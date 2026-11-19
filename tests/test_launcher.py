@@ -98,6 +98,10 @@ class LauncherTests(unittest.TestCase):
                          dict(output=str(out), mode='export', projects=['p1'], limit=5))
         self.assertTrue((installed / 'autorun.watch').exists())
         self.assertTrue((installed / 'FusionBulkExport.py').exists())
+        # Every module of the add-in package is installed (a broad "autorun*" ignore once dropped one).
+        source = Path(launcher.__file__).resolve().parents[1] / 'FusionBulkExport' / 'fusion_bulk_export'
+        for module in source.glob('*.py'):
+            self.assertTrue((installed / 'fusion_bulk_export' / module.name).is_file(), module.name)
         self.assertFalse((out / 'STOP').exists())
         launcher.set_startup(installed, True)
         self.assertTrue(json.loads((installed / 'FusionBulkExport.manifest').read_text())['runOnStartup'])
@@ -119,6 +123,17 @@ class LauncherTests(unittest.TestCase):
             status = launcher.wait(installed, out, 86400, sleep=sleep, clock=lambda: next(ticks))
         self.assertEqual(status, 1)
         self.assertEqual(stream.getvalue().count('has not started the add-in'), 1)
+
+    def test_wait_reports_add_in_startup_crash(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        out.mkdir()
+        installed.mkdir()
+        (installed / 'startup-error.txt').write_text('ModuleNotFoundError: x')
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
+        self.assertEqual(status, 1)
+        self.assertIn('ModuleNotFoundError', stream.getvalue())
 
     def test_wait_times_out(self):
         ticks = iter(range(0, 10000, 100))

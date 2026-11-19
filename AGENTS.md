@@ -59,9 +59,11 @@ only reads from the account. Work on the person's machine, in a terminal, with t
 ## Troubleshooting
 
 - **"Fusion has not started the add-in"**: ask for the Add-Ins **Run** click. The job
-  waiting in `autorun.json` then starts.
-- **"Fusion is open but the add-in is not watching"**: the person quits Fusion (closing
-  any dialog first), or does the **Run** click; then rerun your command.
+  waiting in `autorun.json` then starts; your command is still waiting and reports it.
+  This is normal the first time: Fusion does not always start a newly installed add-in
+  by itself, even when Fusion was opened by the launcher.
+- **"The add-in failed to start"** plus a traceback: the Run toggle springs back off.
+  Report the error type (not paths with the person's name in them) and stop.
 - **A design is "failed" with "Close this design in Fusion"**: it was open in Fusion.
   Have the person close it and rerun the export.
 - **Timeout**: the add-in may still be working. Check `status`; rerun the same command
