@@ -61,7 +61,7 @@ class SelfTestTests(unittest.TestCase):
         self.assertTrue(all(future.polls == 2 for future in folder.futures))
         self.assertEqual(folder.processing_polls, 4)
         self.assertEqual([u['status'] for u in result['uploads']], ['done', 'done'])
-        self.assertEqual({d['expected_archive'] for d in result['designs']}, {'.f3d', '.f3z'})
+        self.assertEqual(sorted(d['child_references'] for d in result['designs']), [0, 1])
         for design in result['designs']:
             self.assertTrue(design['archive_correct'])
             self.assertEqual(design['solid_bodies'], 1)
@@ -113,12 +113,12 @@ class SelfTestTests(unittest.TestCase):
         self.assertFalse(self.config.exists())
         self.assertTrue((self.root / 'selftest.json.last').is_file())
 
-    def test_wrong_archive_selection_fails_independent_reference_check(self):
-        with patch('fusion_bulk_export.fusion.FusionAdapter.archive_extension', return_value='.f3d'):
+    def test_unrecorded_references_fail_the_check(self):
+        with patch('fusion_bulk_export.fusion.FusionAdapter.references', return_value=[]):
             result = self.run_test()
         self.assertFalse(result['passed'])
         assembly = next(d for d in result['designs'] if d['name'] == 'Assembly')
-        self.assertEqual(assembly['expected_archive'], '.f3z')
+        self.assertEqual(assembly['child_references'], 1)
         self.assertFalse(assembly['archive_correct'])
 
     def test_destination_errors_include_tracebacks_for_both_attempts(self):

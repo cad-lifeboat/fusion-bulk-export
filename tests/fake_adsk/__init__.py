@@ -20,7 +20,7 @@ class File:
     def __init__(self, name='Part', identity='file-1', version=3, extension='f3d', references=False, design=True):
         self.name, self.id, self.versionNumber = name, identity, version
         self.fileExtension, self.dateModified = extension, 1700000000
-        self.childReferences = Collection(*([NS()] if references else []))
+        self.childReferences = Collection(*([NS(id='linked-' + identity, name='Linked part')] if references else []))
         self.references, self.design = references, design
         self.failures = 0
         self.calls = 0
@@ -42,7 +42,8 @@ class Manager:
         self.file = file
 
     def createFusionArchiveExportOptions(self, path):
-        return path
+        # Like Fusion: the archive is always .f3d, whatever extension is asked for.
+        return path if path.endswith('.f3d') else path + '.f3d'
 
     def createSTEPExportOptions(self, path):
         return path

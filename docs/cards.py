@@ -40,7 +40,7 @@ def art(ox, oy, k):
     parts.append(f'<path d="M70,250 h58 l14,16 h118 a10,10 0 0 1 10,10 v104 a10,10 0 0 1 -10,10 h-180 '
                  f'a10,10 0 0 1 -10,-10 v-120 a10,10 0 0 1 10,-10 z" fill="{BG2}" stroke="{MUTED}" stroke-width="4"/>')
     # Files in the folder.
-    for i, (label, color) in enumerate([('.f3d', ACCENT), ('.f3z', ACCENT2), ('.step', INK)]):
+    for i, (label, color) in enumerate([('.f3d', ACCENT), ('.step', ACCENT2), ('manifest', INK)]):
         y = 286 + i * 30
         parts.append(f'<rect x="88" y="{y}" width="164" height="22" rx="5" fill="{BG}" stroke="{LINE}" stroke-width="2"/>')
         parts.append(f'<rect x="96" y="{y + 7}" width="60" height="8" rx="4" fill="{LINE}"/>')
@@ -70,7 +70,7 @@ def card(width, height, title_size, tagline, chip_size, art_x, art_y, art_k, tex
 <rect x="0" y="0" width="{width}" height="6" fill="{ACCENT}"/>
 <text x="{text_x}" y="{text_y}" font-family="{FONT}" font-size="{title_size}" font-weight="800" fill="{INK}">Fusion Bulk Export</text>
 {''.join(f'<text x="{text_x}" y="{text_y + title_size * 0.95 + i * title_size * 0.62:.0f}" font-family="{FONT}" font-size="{title_size * 0.42:.0f}" fill="{MUTED}">{line}</text>' for i, line in enumerate(tagline))}
-{chips(text_x, int(text_y + title_size * 0.95 + len(tagline) * title_size * 0.62), ['.f3d / .f3z + STEP', 'resumable', 'macOS + Windows', 'MIT'], chip_size)}
+{chips(text_x, int(text_y + title_size * 0.95 + len(tagline) * title_size * 0.62), ['.f3d + STEP', 'resumable', 'macOS + Windows', 'MIT'], chip_size)}
 {art(art_x, art_y, art_k)}
 </svg>
 '''

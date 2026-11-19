@@ -4,7 +4,7 @@
 
 Get all of your Fusion designs out, in one go.
 
-- Exports every design in every hub, project and folder you can access: `.f3z` when it references other designs (so linked parts come with it), otherwise `.f3d`, plus a matching `.step`.
+- Exports every design in every hub, project and folder you can access as a Fusion archive (`.f3d`) plus a matching `.step`. Linked designs are exported too, and each design's links are listed in the manifest.
 - Keeps your project and folder layout on disk, writes a `manifest.json`, and can resume: run it again on the same folder and it skips what's done.
 - Everything stays on your computer.
 
@@ -34,10 +34,18 @@ Exported documents are closed without saving. No follow-up command is launched.
 ## Outputs
 
 Each design produces `<output>/<hub>/<project>/<folders>/<name> v<version>.f3d`
-and a matching `.step`. Designs with document or child references use `.f3z`
-instead of `.f3d`. Only the current version exposed by each cloud file is exported;
+and a matching `.step`. Only the current version exposed by each cloud file is exported;
 previous versions are not enumerated. Drawings, other file types, and files without
 a Design product are logged as skipped.
+
+**Linked designs.** Fusion's API can only write a design's own archive, not a `.f3z`
+bundle with the designs it references (the File → Export `.f3z` option has no API
+equivalent; Fusion silently writes `.f3d` when asked for `.f3z`). So for an assembly
+with linked components, or a design with a derive, its `.f3d` holds the design itself,
+and its manifest entry lists the referenced designs under `references` (cloud id and
+name). Every referenced design you can access is exported as well, so nothing is lost;
+re-linking after import is manual. If you need one self-contained `.f3z` for a particular
+assembly, use File → Export in Fusion for that one.
 
 Stable identity suffixes distinguish names that collide after sanitizing, truncating,
 or ignoring case. Reserved characters, reserved names, Unicode, and trailing spaces
@@ -94,8 +102,9 @@ Using an AI coding agent to do this for you? Point it at [AGENTS.md](AGENTS.md).
 python3 scripts/verify-export.py /path/to/output
 ```
 
-checks every `done` entry: the archive is a readable zip (an `.f3z` holds its member
-designs and `Manifest.json`), and the STEP has a valid header and ending and is not
+checks every `done` entry: the archive is a readable zip with Fusion's design members
+(members compressed with Zstandard are counted as not CRC-checked on Python before
+3.14), and the STEP has a valid header and ending and is not
 trivially small. After a self-test it also compares the number of solids in each STEP
 with the solid-body count Fusion reported. It prints counts only; add `--names` to
 show design names.
@@ -112,11 +121,6 @@ The manifest is replaced atomically after each item and failed attempt. An unrea
 manifest stops the run without overwriting it. Use only one export at a time per
 output folder. Back up the directory as you would other valuable files.
 
-Fusion version tested: **unknown until a volunteer run**. Synthetic tests do not
-establish Fusion compatibility. A volunteer should verify referenced archive export
-through `createFusionArchiveExportOptions` with `.f3z`, the reference properties
-`document.documentReferences` and `dataFile.childReferences`, hidden document opening,
-Design product lookup, STEP export, panel placement, and the progress/copy dialog.
 STEP can omit design history and manufacturing information. Unavailable references,
 permissions, or translator limitations are recorded as failures.
 
@@ -129,7 +133,7 @@ Not affiliated with or endorsed by Autodesk. Fusion is a trademark of Autodesk, 
 Use a throwaway account in a logged-in macOS desktop session. Install Fusion,
 complete its first-launch setup and sign in once, then quit Fusion. Install Python 3
 (`python3` on PATH). Put real `.f3d` and `.f3z` archives in a local seed directory;
-include a linked assembly to exercise `.f3z` selection. Seed subdirectories are
+include a linked assembly so reference recording is exercised. Seed subdirectories are
 searched recursively. No sample CAD data is bundled.
 
 From this checkout, run:

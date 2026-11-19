@@ -63,22 +63,26 @@ class ExportTests(unittest.TestCase):
         a, b = fake.File(), fake.File('Assembly', 'assembly', references=True)
         _, counts = self.run_export(fake.data([a, b]))
         self.assertEqual(counts, dict(done=2, failed=0, skipped=0))
-        for entry, extension in zip(self.manifest['entries'], ['.f3d', '.f3z']):
+        for entry in self.manifest['entries']:
             self.assertEqual(entry['version'], 3)
             self.assertEqual(entry['date'], 1700000000)
             self.assertIsNone(entry['error'])
-            self.assertEqual([Path(f['path']).suffix for f in entry['files']], [extension, '.step'])
+            # Fusion can only write .f3d; links are recorded instead of bundled.
+            self.assertEqual([Path(f['path']).suffix for f in entry['files']], ['.f3d', '.step'])
             for info in entry['files']:
                 self.assertEqual(len(info['sha256']), 64)
                 self.assertEqual(info['bytes'], len(b'Synthetic CAD placeholder'))
+        self.assertEqual(self.manifest['entries'][0]['references'], [])
+        self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part')])
         self.assertTrue(all(doc.closed for file in [a, b] for doc in file.documents))
 
-    def test_child_references_alone_choose_bundle(self):
+    def test_reported_success_without_file_is_failure(self):
         file = fake.File()
-        file.childReferences = fake.Collection(NS())
-        self.run_export(fake.data([file]))
+        with patch.object(fake.Manager, 'execute', return_value=True):
+            self.run_export(fake.data([file]))
         entry = self.manifest['entries'][0]
-        self.assertEqual(Path(entry['files'][0]['path']).suffix, '.f3z')
+        self.assertEqual(entry['status'], 'failed')
+        self.assertIn('wrote no file', entry['error'])
 
     def test_new_version_keeps_previous_pair(self):
         file = fake.File()

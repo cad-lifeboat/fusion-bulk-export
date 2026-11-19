@@ -213,6 +213,8 @@ class Exporter:
                     for attempt in range(2):
                         entry['attempts'] = attempt + 1
                         try:
+                            if hasattr(self.adapter, 'references'):
+                                entry['references'] = self.adapter.references(file)
                             stem = self.destination(hub, project, folders, file, key)
                             paths = self.adapter.export(file, stem)
                             entry['files'] = [file_info(Path(path), self.root) for path in paths]

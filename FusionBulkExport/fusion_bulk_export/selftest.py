@@ -35,15 +35,6 @@ class ObservedAdapter(FusionAdapter):
         self.recorder = recorder
         self.observations = {}
 
-    def archive_extension(self, document, data_file):
-        extension = super().archive_extension(document, data_file)
-        self.observations[str(data_file.id)].update(
-            document_references=document.documentReferences.count,
-            child_references=data_file.childReferences.count,
-            expected_archive=('.f3z' if document.documentReferences.count > 0
-                              or data_file.childReferences.count > 0 else '.f3d'))
-        return extension
-
     def observe(self, design, data_file):
         # Distinct solid bodies per component, the count a STEP export should carry.
         try:
@@ -52,7 +43,9 @@ class ObservedAdapter(FusionAdapter):
         except Exception as error:
             solids = None
             self.recorder.error('observe ' + str(data_file.id), error)
-        self.observations[str(data_file.id)]['solid_bodies'] = solids
+        observation = self.observations[str(data_file.id)]
+        observation['solid_bodies'] = solids
+        observation['child_references'] = data_file.childReferences.count
 
     def export(self, data_file, stem):
         identity = str(data_file.id)
@@ -64,7 +57,8 @@ class ObservedAdapter(FusionAdapter):
         try:
             files = super().export(data_file, stem)
             attempt['files'] = files
-            observation['archive_correct'] = Path(files[0]).suffix == observation['expected_archive']
+            # Archives are always .f3d; references are recorded in the manifest instead.
+            observation['archive_correct'] = Path(files[0]).suffix == '.f3d' and Path(files[0]).is_file()
             return files
         except Exception as error:
             attempt.update(error=str(error), traceback=traceback.format_exc())
@@ -209,9 +203,12 @@ def run_selftest(app, config_path):
                     design.setdefault('attempt_details', [])
                     design['errors'] = [e for e in recorder.result['errors'] if e['stage'] == entry['key']]
                     recorder.result['designs'].append(design)
+                    recorded = len(design.get('references', []))
+                    if design['status'] == 'done' and design.get('child_references') not in (None, recorded):
+                        design['archive_correct'] = False
                     if design['status'] == 'done' and design['archive_correct'] is not True:
                         try:
-                            raise RuntimeError('Archive choice unverified or incorrect: ' + entry['name'])
+                            raise RuntimeError('Archive or recorded references unverified: ' + entry['name'])
                         except RuntimeError as error:
                             recorder.error('verification ' + entry['key'], error)
                 uploaded_ids = {u.get('id') for u in recorder.result['uploads'] if u['status'] == 'done'}

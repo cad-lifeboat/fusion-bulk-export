@@ -1,4 +1,6 @@
 """Adapter using Autodesk's public Fusion API. Imported only inside Fusion."""
+import os
+
 import adsk.core
 import adsk.fusion
 from .core import NonDesign, collection
@@ -8,9 +10,14 @@ class FusionAdapter:
     def __init__(self, app):
         self.app = app
 
-    def archive_extension(self, document, data_file):
-        references = document.documentReferences.count > 0 or data_file.childReferences.count > 0
-        return '.f3z' if references else '.f3d'
+    def references(self, data_file):
+        """Designs this one references (linked components, derives), by cloud id and name.
+
+        The Fusion API can only write a design's own archive (.f3d), never a .f3z bundle with
+        its references, so the links are recorded instead; each referenced design in the
+        account is exported in its own right.
+        """
+        return [dict(id=str(child.id), name=child.name) for child in collection(data_file.childReferences)]
 
     def observe(self, design, data_file):
         """Hook called with each opened design before export."""
@@ -31,13 +38,18 @@ class FusionAdapter:
             if not fusion_document:
                 raise NonDesign('Not a Fusion document')
             self.observe(design, data_file)
-            archive = str(stem) + self.archive_extension(fusion_document, data_file)
+            # Fusion writes .f3d whatever extension is asked for (".f3z" becomes ".f3z.f3d").
+            archive = str(stem) + '.f3d'
             step = str(stem) + '.step'
             manager = design.exportManager
             if not manager.execute(manager.createFusionArchiveExportOptions(archive)):
                 raise RuntimeError('Fusion archive export returned false')
+            if not os.path.isfile(archive):
+                raise RuntimeError('Fusion reported a successful archive export but wrote no file')
             if not manager.execute(manager.createSTEPExportOptions(step)):
                 raise RuntimeError('STEP export returned false')
+            if not os.path.isfile(step):
+                raise RuntimeError('Fusion reported a successful STEP export but wrote no file')
             return [archive, step]
         finally:
             if document.close(False) is False:

@@ -1,8 +1,9 @@
 # Guidance for AI coding agents
 
 You are helping a person back up **their own** Fusion account to **their own computer**
-(macOS or Windows). This tool exports every design they can access as `.f3z` (designs
-with references) or `.f3d`, plus a `.step`, keeping the hub/project/folder layout. It
+(macOS or Windows). This tool exports every design they can access as `.f3d` plus a
+`.step`, keeping the hub/project/folder layout. Links between designs are listed in the
+manifest (`references`); Fusion's API cannot write `.f3z` bundles. It
 only reads from the account. Work on the person's machine, in a terminal, with them nearby.
 
 ## Rules
@@ -73,6 +74,6 @@ only reads from the account. Work on the person's machine, in a terminal, with t
 - **"could not read" lines in `export.log`**: a project or folder the account cannot
   open (permissions, deleted, offline). They are skipped; report how many, not which.
 - **STEP solid count differs from Fusion's body count** (`verify-export.py`): STEP
-  dropped or merged bodies (e.g. surface bodies, or translator limits). The `.f3d`/`.f3z`
+  dropped or merged bodies (e.g. surface bodies, or translator limits). The `.f3d`
   archive is still the complete copy; note the count to the person.
 - **Drawings and non-design files are "skipped"**: expected; only Fusion designs export.
