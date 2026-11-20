@@ -195,24 +195,32 @@ def choose_addin(installed, source=None):
     """(install, line): whether to copy this checkout's add-in over the installed one, and one
     line saying which add-in is used. Installed only when none is there or the installed one is
     older by version; never downgraded; one of the same version is kept (its files may differ:
-    a test build, an edited checkout), since which is newer cannot be told."""
+    a test build, an edited checkout), since which is newer cannot be told.
+
+    The installed copy is judged by its files, not by its install-stamp.json, which may be
+    missing (copied by hand) or old: the same files are the same add-in. The same files with
+    another version in the manifest (an install that copied everything but the manifest and the
+    stamp) are this checkout with a stale label: the label is corrected, and the line says so."""
     installer = _installer()
     source = Path(source or REPO / 'FusionBulkExport')
     mine = installer.manifest_version(source)
     theirs = installer.manifest_version(installed)
     if theirs is None:
         return True, 'Installing the add-in %s from this checkout (none was installed).' % mine
+    if installer.content_hash(installed) == installer.content_hash(source):
+        return False, 'Using the installed add-in %s (the same as this checkout).' % theirs
+    label = (installer.MANIFEST,)
+    if installer.content_hash(installed, leave_out=label) == installer.content_hash(source, leave_out=label):
+        return True, ('The installed add-in has the files of this checkout (%s) but an out-of-date version label '
+                      '(%s); correcting the label.' % (mine, theirs))
     mine_key, theirs_key = installer.version_key(mine), installer.version_key(theirs)
     if mine_key is not None and theirs_key is not None and mine_key > theirs_key:
         return True, 'Updating the installed add-in %s to %s from this checkout.' % (theirs, mine)
     if mine_key != theirs_key:
         return False, ('Using the installed add-in %s: it is newer than this checkout (%s) and is never '
                        'downgraded.' % (theirs, mine))
-    stamp = installer.read_stamp(installed) or {}
-    if stamp.get('sha256') == installer.content_hash(source):
-        return False, 'Using the installed add-in %s (the same as this checkout).' % theirs
-    return False, ('Using the installed add-in %s: same version as this checkout but other files, so it is '
-                   'kept (scripts/install.py replaces it).' % theirs)
+    return False, ('Using the installed add-in %s: installed copy differs from this checkout; kept the installed '
+                   'one; run scripts/install.py to replace it.' % theirs)
 
 
 def update_addin(installed, source=None):

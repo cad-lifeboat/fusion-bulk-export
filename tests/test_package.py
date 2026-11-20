@@ -96,6 +96,11 @@ class PackageTests(unittest.TestCase):
         self.assertIn(b'\r\n', data)
         self.assertEqual(data.count(b'\n'), data.count(b'\r\n'))
         self.assertIn(b'robocopy', data)
+        # Every file of the zip carries the same date, so robocopy would skip a file whose size did
+        # not change (a manifest going from 0.2.3 to 0.3.1): it must copy those too.
+        line = [l for l in data.split(b'\r\n') if l.startswith(b'robocopy')][0]
+        self.assertIn(b' /IS ', line)
+        self.assertIn(b' /IT ', line)
         self.assertTrue(data.rstrip().endswith(b'exit /b %RESULT%'))
 
     def test_other_files_are_not_executable(self):

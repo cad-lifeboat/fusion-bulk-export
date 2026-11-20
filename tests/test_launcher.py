@@ -560,16 +560,38 @@ class AddInVersionTests(unittest.TestCase):
 
     def test_the_same_version_is_kept_whether_or_not_its_files_match(self):
         source = self.addin(self.root / 'checkout', '0.3.0')
+        same = (False, 'Using the installed add-in 0.3.0 (the same as this checkout).')
         self.installed_copy('0.3.0')
-        self.assertEqual(self.update(source), (False, 'Using the installed add-in 0.3.0 (the same as this checkout).'))
+        self.assertEqual(self.update(source), same)
+        # The same files without a stamp (installed by hand), or with an old one: still the same.
+        self.installed_copy('0.3.0', stamped=False)
+        self.assertEqual(self.update(source), same)
+        (self.installed / self.installer.STAMP).write_text(json.dumps(dict(version='0.2.3', sha256='0' * 64)))
+        self.assertEqual(self.update(source), same)
         # Another build of the same version (a test build; an older checkout before a version
         # bump): which is newer cannot be told, so the installed one stays.
         for stamped in (True, False):
             self.installed_copy('0.3.0', '# test build\n', stamped=stamped)
             copied, line = self.update(source)
             self.assertFalse(copied)
-            self.assertIn('same version as this checkout but other files, so it is kept', line)
+            self.assertEqual(line, 'Using the installed add-in 0.3.0: installed copy differs from this checkout; kept '
+                                   'the installed one; run scripts/install.py to replace it.')
             self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(encoding='utf-8'), '# test build\n')
+
+    def test_an_installed_copy_with_a_stale_version_label_is_named_as_such(self):
+        # A Windows install over 0.2.3 copied the 0.3.1 files but kept 0.2.3's manifest and stamp
+        # (same size, same date in the zip, so robocopy skipped them): the files are this
+        # checkout's, only the label is old. Said so, and the label corrected.
+        source = self.addin(self.root / 'checkout', '0.3.1')
+        self.addin(self.installed, '0.2.3')
+        (self.installed / self.installer.STAMP).write_text(json.dumps(dict(version='0.2.3', sha256='1' * 64)))
+        copied, line = self.update(source)
+        self.assertTrue(copied)
+        self.assertEqual(line, 'The installed add-in has the files of this checkout (0.3.1) but an out-of-date '
+                               'version label (0.2.3); correcting the label.')
+        self.assertEqual(self.installer.manifest_version(self.installed), '0.3.1')
+        self.assertEqual(self.installer.read_stamp(self.installed), self.installer.stamp(source))
+        self.assertEqual(self.update(source), (False, 'Using the installed add-in 0.3.1 (the same as this checkout).'))
 
     def test_nothing_is_replaced_while_an_export_runs(self):
         self.installed_copy('0.2.3', '# old\n')

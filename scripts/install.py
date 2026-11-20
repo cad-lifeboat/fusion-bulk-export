@@ -59,13 +59,14 @@ def addin_files(source=SOURCE):
             yield path, relative
 
 
-def content_hash(source=SOURCE):
+def content_hash(source=SOURCE, leave_out=()):
     """SHA-256 over the add-in's shipped files: each relative path and its bytes, in order, with
     CRLF read as LF (so a Windows checkout and the zip agree). The LICENSE the installers add
-    beside the add-in is not part of it, so a checkout and its installation agree."""
+    beside the add-in is not part of it, so a checkout and its installation agree; nor are the
+    relative paths in leave_out (MANIFEST: are these the same files whatever their version label?)."""
     digest = hashlib.sha256()
     for path, relative in addin_files(source):
-        if relative.as_posix() == 'LICENSE':
+        if relative.as_posix() == 'LICENSE' or relative.as_posix() in leave_out:
             continue
         digest.update(relative.as_posix().encode('utf-8') + b'\0')
         digest.update(path.read_bytes().replace(b'\r\n', b'\n') + b'\0')

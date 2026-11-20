@@ -11,7 +11,9 @@ if "%APPDATA%"=="" goto failed
 
 if not exist "%ADDINS%" mkdir "%ADDINS%"
 if not exist "%ADDINS%" goto failed
-robocopy "%SOURCE%" "%ADDINS%\FusionBulkExport" /MIR /NFL /NDL /NJH /NJS /NP >nul
+rem /IS /IT: copy every file, even one robocopy thinks unchanged (the zip gives all files one
+rem date, so a manifest of the same size would otherwise keep the old version).
+robocopy "%SOURCE%" "%ADDINS%\FusionBulkExport" /MIR /IS /IT /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 goto failed
 
 echo Installed. In Fusion press Shift+S and find FusionBulkExport in the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on Startup box first, then switch Run on. The window closes when you switch it on; that is normal.
