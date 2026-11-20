@@ -872,7 +872,7 @@ class ExportTests(unittest.TestCase):
     def test_output_folder_rules(self):
         deep = self.root / ('o' * 120)  # within Windows' 200 characters for the output folder
         exporter = Exporter(deep, self.adapter)  # no 100-character cap any more
-        self.assertEqual(exporter.root, deep.resolve())
+        self.assertEqual(exporter.root, deep)
         blocker = self.root / 'a-file'
         blocker.write_text('x')
         with self.assertRaises(ValueError) as caught:

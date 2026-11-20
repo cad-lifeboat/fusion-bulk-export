@@ -79,6 +79,18 @@ class StagedMoveTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_a_file_from_another_disk_arrives_whole_under_its_name(self):
+        # The file-system calls get names.long_path()'s spelling of each path: on Windows
+        # "\\?\C:\..." , not the path itself. Here the same is done with another spelling of
+        # the same file ("<folder>/../<folder>/<name>"), so a fake that compares whole paths would
+        # miss the staged file here as it did on Windows.
+        def respelled(path):
+            path = Path(path)
+            return str(path.parent / '..' / path.parent.name / path.name)
+        for spelling in (None, respelled):
+            with self.subTest(spelling=spelling and spelling.__name__):
+                self.cross_disk_move(spelling)
+
+    def cross_disk_move(self, spelling):
         place = staging.Staging(self.root / 'out', temporary=self.root / 'tmp')
         staged = place.path('.f3d')
         Path(staged).write_bytes(b'archive')
@@ -88,15 +100,17 @@ class StagedMoveTests(unittest.TestCase):
 
         def replace(source, target):
             moves.append((Path(source).name, Path(target).name))
-            if Path(source) == Path(staged):
+            if Path(source).name == Path(staged).name:  # by name: the path's spelling varies
                 raise OSError(errno.EXDEV, 'Invalid cross-device link')
             return real_replace(source, target)
-        with patch.object(staging.os, 'replace', replace):
+        with patch.object(staging.os, 'replace', replace), \
+                patch.object(staging, 'long_path', spelling or staging.long_path):
             place.place(staged, final)
         self.assertEqual(final.read_bytes(), b'archive')
         self.assertFalse(Path(staged).exists())
-        self.assertEqual(moves[-1], ('final.f3d.partial', 'final.f3d'))
+        self.assertEqual(moves, [(Path(staged).name, 'final.f3d'), ('final.f3d.partial', 'final.f3d')])
         self.assertFalse((self.root / 'final.f3d.partial').exists())
+        final.unlink()
 
     def test_a_failed_copy_leaves_no_partial_file(self):
         place = staging.Staging(self.root / 'out', temporary=self.root / 'tmp')

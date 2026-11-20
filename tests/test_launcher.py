@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace as NS
 
+from tests import LinkedTemporaryDirectory
+
 spec = importlib.util.spec_from_file_location('autorun_launcher', Path(__file__).parent.parent / 'scripts' / 'autorun.py')
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
@@ -18,7 +20,7 @@ spec.loader.exec_module(launcher)
 
 class LauncherTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = LinkedTemporaryDirectory()  # as macOS and Windows temporary folders are
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
@@ -87,7 +89,17 @@ class LauncherTests(unittest.TestCase):
 
     def test_long_output_path_is_allowed(self):
         long = self.root / ('x' * 150) / ('y' * 150)
-        self.assertEqual(launcher.check_output(str(long)), long.resolve())
+        self.assertEqual(launcher.check_output(str(long)), long)
+
+    def test_the_output_folder_keeps_the_path_it_was_given(self):
+        # Not resolved: a mapped drive keeps its letter, a temporary folder its short or linked
+        # name (macOS /var/folders, Windows RUNNER~1); "." and ".." are folded.
+        folder = LinkedTemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        given = Path(folder.name) / 'out'
+        self.assertEqual(launcher.check_output(str(given / 'sub' / '..')), given)
+        if folder.linked:
+            self.assertNotEqual(given, given.resolve())
 
     def test_status_reports_counts_without_names(self):
         out = self.root / 'out'

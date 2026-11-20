@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import patch
 
-from tests import fake_adsk as fake
+from tests import LinkedTemporaryDirectory, fake_adsk as fake
 
 fake.install()
 
@@ -29,11 +29,13 @@ class UIBase(unittest.TestCase):
         self.adsk = adsk
         adsk.core.CommandEventHandler = object
         adsk.core.CommandCreatedEventHandler = object
-        self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
+        # Reached through a link, as macOS and Windows temporary folders are: the add-in keeps
+        # the path it was given, never the resolved one.
+        self.temp = LinkedTemporaryDirectory(prefix='fusion-')
         self.addCleanup(self.temp.cleanup)
         self.folder = NS(title='', folder=self.temp.name, showDialog=lambda: adsk.core.DialogResults.DialogOK)
         # Remembered settings live in a temporary file here; the last folder is the test's folder.
-        home = tempfile.TemporaryDirectory(prefix='home-')
+        home = LinkedTemporaryDirectory(prefix='home-')
         self.addCleanup(home.cleanup)
         self.settings = Path(home.name) / 'settings.json'
         self.settings.write_text(json.dumps(dict(output=self.temp.name)))
@@ -350,7 +352,7 @@ class UItests(UIBase):
         # The page is this run's file in the app-data folder (beside settings.json), not in the
         # export folder or the add-in's, with the summary already in it: no message needed.
         shown = self.page_file(dialog)
-        self.assertEqual(shown.parent, self.settings.parent.resolve())  # the page's URL is of the resolved path
+        self.assertEqual(shown.parent, self.settings.parent)  # the page's URL keeps the given path
         self.assertNotIn(self.temp.name, page.htmlFileURL)
         html = shown.read_text(encoding='utf-8')
         self.assertIn('<h1 class="finished">Finished</h1>', html)
@@ -363,7 +365,7 @@ class UItests(UIBase):
         self.assertTrue((folder / 'index.csv').exists())
         self.assertEqual(self.page(dialog, 'ready'), {'ok': True})  # logged only
         self.assertEqual(self.page(dialog, 'open', {'what': 'report'}), {'ok': True})
-        self.assertEqual([str(path) for path in self.opened], [str(folder.resolve() / 'index.html')])
+        self.assertEqual([str(path) for path in self.opened], [str(folder / 'index.html')])
         self.assertEqual(self.page(dialog, 'open', {'what': 'folder'}), {'ok': True})
         self.assertEqual(str(self.opened[1]), self.temp.name)
         # Enter or Escape on the page ends the command; its page is deleted.
@@ -385,7 +387,7 @@ class UItests(UIBase):
         with patch('fusion_bulk_export.report.open_path', side_effect=OSError('no viewer')):
             reply = self.page(dialog, 'open', {'what': 'report'})
         self.assertIn('Could not open it (no viewer)', reply['error'])
-        self.assertEqual(reply['path'], str(Path(self.temp.name).resolve() / 'index.html'))  # to copy
+        self.assertEqual(reply['path'], str(Path(self.temp.name) / 'index.html'))  # to copy
         self.assertEqual(self.errors, [])
 
     def assert_fallback(self, reason):
@@ -399,7 +401,7 @@ class UItests(UIBase):
         self.assertTrue(text.startswith('Finished\n'), text)
         self.assertIn('Exported now  1', text)
         self.assertIn('Folder: ' + self.temp.name, text)
-        self.assertIn('Report: ' + str(Path(self.temp.name).resolve() / 'index.html'), text)
+        self.assertIn('Report: ' + str(Path(self.temp.name) / 'index.html'), text)
         self.assertNotIn('Traceback', text)
         self.assertEqual(self.errors, [])
         self.assertEqual(self.details, [])
