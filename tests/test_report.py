@@ -126,6 +126,9 @@ class ReportTests(unittest.TestCase):
         self.assertIn('Also save other files', report.next_step('skipped', 'Not a Fusion design: pdf'))
         self.assertIn('not a 3D design', report.next_step('skipped', 'No Fusion Design product (drawing)'))
         self.assertIn('export its PDF by hand', report.next_step('skipped', 'Fusion did not write the drawing PDF'))
+        self.assertEqual(report.next_step('skipped', 'This drawing is open in Fusion with unsaved changes; save or '
+                                                     'close it, then run again.'),
+                         'Save or close it in Fusion, then export again.')
 
     def test_empty_folder_report(self):
         self.manifest = dict(entries=[])

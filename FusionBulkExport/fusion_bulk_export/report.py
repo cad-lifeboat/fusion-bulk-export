@@ -31,6 +31,8 @@ def next_step(status, error):
             return 'Not saved: only designs were exported. Tick "Also save other files" to save it.'
         if 'no fusion design' in text or 'not a fusion document' in text:
             return 'Nothing to do: not a 3D design.'
+        if 'unsaved changes' in text or 'close it' in text:
+            return 'Save or close it in Fusion, then export again.'
         if 'drawing pdf' in text:
             return 'Export again to retry; or open the drawing in Fusion and export its PDF by hand.'
         if 'cannot export this file type' in text:
@@ -99,9 +101,10 @@ table { border-collapse: collapse; width: 100%; } th, td { text-align: left; ver
 
 def counts_html(counts):
     return ('<div class="counts"><span>Exported now: <b>%d</b></span><span>Already up to date: <b>%d</b></span>'
-            '<span>Other files saved: <b>%d</b></span><span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b>'
+            '<span>Other files saved: <b>%d</b></span><span>Other files up to date: <b>%d</b></span>'
+            '<span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b>'
             '</span></div>' % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
-                               counts.get('skipped', 0), counts.get('failed', 0)))
+                               counts.get('files_up_to_date', 0), counts.get('skipped', 0), counts.get('failed', 0)))
 
 
 def table_html(rows, heading, column):
@@ -163,6 +166,9 @@ def render_html(manifest, run_info, counts):
         saved = sum(1 for row in others if row['status'] == 'done')
         line += '; %d other files saved, %d not saved' % (saved, len(others) - saved)
     out.append('<div class="muted">%s.</div>' % esc(line))
+    long_paths = long_path_count(manifest)
+    if long_paths:
+        out.append('<p class="stop">%s</p>' % esc(LONG_PATHS % long_paths))
     out += table_html(designs, 'Designs', 'Design')
     if others:
         out += table_html(others, 'Other files', 'File')
@@ -218,9 +224,12 @@ def failure_reasons(manifest, run_info=None, limit=3):
 
 
 def count_sentence(counts):
-    """The run's counts in one line, designs and other files apart."""
-    return ('%d exported now, %d already up to date, %d other file(s) saved, %d skipped, %d failed.'
+    """The run's counts in one line, designs and other files apart ("already up to date" is
+    designs; other files already up to date are named when there are any)."""
+    unchanged = counts.get('files_up_to_date', 0)
+    return ('%d exported now, %d already up to date, %d other file(s) saved%s, %d skipped, %d failed.'
             % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
+               ', %d other file(s) already up to date' % unchanged if unchanged else '',
                counts.get('skipped', 0), counts.get('failed', 0)))
 
 
@@ -236,6 +245,14 @@ def warning_lines(manifest, limit=3):
     """(number of items with a warning, up to limit "name: warning" lines)."""
     rows = [row for row in items(manifest) if row['warnings']]
     return len(rows), ['%s: %s' % (row['name'], '; '.join(row['warnings'])) for row in rows[:limit]]
+
+
+LONG_PATHS = ('%d item(s) have a path over 260 characters: they are saved, but Explorer and some programs '
+              'cannot open them. A shorter output folder (such as C:\\FusionExport) avoids this.')
+
+
+def long_path_count(manifest):
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done' and entry.get('long_path'))
 
 
 def summary_text(counts, run_info, manifest, output):
@@ -257,6 +274,9 @@ def summary_text(counts, run_info, manifest, output):
     not_saved = skipped_files(manifest)
     if not_saved:
         lines.append('%d other file(s) could not be saved; the report says why.' % not_saved)
+    long_paths = long_path_count(manifest)
+    if long_paths:
+        lines.append(LONG_PATHS % long_paths)
     unreadable = len(run_info.get('discovery_errors') or [])
     if unreadable:
         lines.append('%d folder(s) could not be read (listed in the report).' % unreadable)

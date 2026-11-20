@@ -38,9 +38,14 @@ class File:
         # 'raise', 'nothing', 'two' files, or 'pdf': the file comes down as a PDF), and what.
         self.download_mode = 'ok'
         # A drawing (.f2d): how its PDF export behaves: 'now', 'later' (written a few doEvents
-        # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false'.
+        # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false',
+        # 'partial' (a PDF that stops before its end).
         self.pdf_mode = 'now'
         self.products_flaky = 0
+        # Seen with old or linked designs: Fusion marks a document modified as it opens it
+        # (a recompute, an updated reference), although nobody edited it.
+        self.modified_on_open = False
+        self.close_result = True  # what Document.close returns (Fusion can answer False)
         self.content = b'Synthetic file content of ' + identity.encode('utf-8')
         self.downloads = []
 
@@ -144,12 +149,15 @@ class DrawingManager:
             return False
 
         def write():
-            Path(path).write_bytes(b'%PDF-1.4 synthetic drawing')
-        if mode == 'now':
+            Path(path).write_bytes(PDF if mode != 'partial' else PDF[:20])
+        if mode in ('now', 'partial'):
             write()
         elif mode == 'later':
             PENDING.extend([lambda: None, lambda: None, write])
         return True
+
+
+PDF = b'%PDF-1.4\n% synthetic drawing, no real content\ntrailer\n<<>>\n%%EOF\n'
 
 
 def write_archive(path):
@@ -185,12 +193,15 @@ def occurrence(part, visible=True, bulb=True, parent=None):
 
 
 class Document:
-    def __init__(self, file, owner=None):
+    """An open document. Made directly in a test it is one the user opened (shown in Fusion);
+    Documents.open makes hidden ones, as the add-in asks for."""
+    def __init__(self, file, owner=None, visible=True):
         self.dataFile = file
         self.closed = False
         self.owner = owner  # the Documents collection it is listed in, once opened there
         self.documentReferences = Collection(*([NS()] if file.references else []))
         self.isModified = False
+        self.isVisible = visible
         if file.root is not None:
             root = file.root
             parts = {}
@@ -221,6 +232,8 @@ class Document:
 
     def close(self, save):
         assert save is False
+        if self.dataFile.close_result is False:
+            return False
         self.closed = True
         if self.owner is not None and self in self.owner.items:
             self.owner.items.remove(self)
@@ -229,18 +242,26 @@ class Document:
 
 class Documents(Collection):
     """Application.documents. Opening a design also opens the designs it references (as Fusion
-    does for an assembly), unless one of them is open already; all are listed until closed."""
+    does for an assembly), unless one of them is open already; all are listed until closed.
+    Opening a file that is open already returns that document (as the add-in assumes Fusion
+    does). Documents opened here are hidden, and modified at once if the file says so."""
     def open(self, file, visible):
         assert visible is False
         file.calls += 1
-        document = Document(file, self)
-        file.documents.append(document)
-        self.items.append(document)
+        for open_ in self.items:
+            if open_.dataFile is not None and open_.dataFile.id == file.id:
+                return open_
+        document = self.opened(file)
         for linked in collection_items(file.childReferences):
             if not any(open_.dataFile is not None and open_.dataFile.id == linked.id for open_ in self.items):
-                reference = Document(linked, self)
-                linked.documents.append(reference)
-                self.items.append(reference)
+                self.opened(linked)
+        return document
+
+    def opened(self, file):
+        document = Document(file, self, visible=False)
+        document.isModified = bool(file.modified_on_open)
+        file.documents.append(document)
+        self.items.append(document)
         return document
 
 
@@ -264,13 +285,14 @@ def install():
     adsk.core.HTMLEventHandler = object
     adsk.core.DropDownStyles = NS(TextListDropDownStyle=1)
     # Documented enums of messageBox and the dialogs (values here are arbitrary but distinct).
-    adsk.core.MessageBoxButtonTypes = NS(OKButtonType=0, OKCancelButtonType=1, RetryCancelButtonType=2,
+    # Only members known to exist in every Fusion are defined, so a test cannot pass on a member
+    # the real API may lack (a Retry button and its DialogRetry result are left out on purpose).
+    adsk.core.MessageBoxButtonTypes = NS(OKButtonType=0, OKCancelButtonType=1,
                                          YesNoButtonType=3, YesNoCancelButtonType=4)
     adsk.core.MessageBoxIconTypes = NS(NoIconIconType=0, QuestionIconType=1, InformationIconType=2,
                                        WarningIconType=3, CriticalIconType=4)
     adsk.core.FutureStates = NS(ProcessingFutureState=0, FinishedFutureState=1, FailedFutureState=2)
-    adsk.core.DialogResults = NS(DialogError=-1, DialogOK=0, DialogCancel=1, DialogNo=2, DialogYes=3,
-                                 DialogRetry=4)
+    adsk.core.DialogResults = NS(DialogError=-1, DialogOK=0, DialogCancel=1, DialogNo=2, DialogYes=3)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module
 

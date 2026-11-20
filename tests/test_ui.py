@@ -41,14 +41,14 @@ class UIBase(unittest.TestCase):
                            show=lambda *args: None, hide=lambda: None)
         self.summaries, self.errors, self.details, self.troubles, self.opened = [], [], [], [], []
         self.answer = adsk.core.DialogResults.DialogCancel  # to the end-of-run dialog
-        self.trouble_answer = adsk.core.DialogResults.DialogCancel  # to Retry / Stop
+        self.trouble_answer = adsk.core.DialogResults.DialogCancel  # to carry on (OK) / stop
         buttons = adsk.core.MessageBoxButtonTypes
 
         def message_box(*args):
             if len(args) > 2 and args[2] == buttons.YesNoCancelButtonType:
                 self.summaries.append(args)
                 return self.answer
-            if len(args) > 2 and args[2] == buttons.RetryCancelButtonType:
+            if len(args) > 2 and args[2] == buttons.OKCancelButtonType:
                 self.troubles.append(args)
                 return self.trouble_answer
             self.errors.append(args)
@@ -308,11 +308,25 @@ class UItests(UIBase):
         for file in files[:5]:
             file.failures = 2
         self.app.data = fake.data(files)
-        self.trouble_answer = self.adsk.core.DialogResults.DialogRetry
+        self.trouble_answer = self.adsk.core.DialogResults.DialogOK
         self.open_dialog().execute.handlers[0].notify(None)
         self.assertEqual(len(self.troubles), 1)
         self.assertIn('2 exported now', self.summaries[0][0])
         self.assertIn('Run again to retry the 5 failed.', self.summaries[0][0])
+
+    def test_dialogs_work_without_optional_enum_members(self):
+        # Icons are optional, and no Retry button or DialogRetry result is used.
+        self.assertFalse(hasattr(self.adsk.core.DialogResults, 'DialogRetry'))
+        self.assertFalse(hasattr(self.adsk.core.MessageBoxButtonTypes, 'RetryCancelButtonType'))
+        files = [fake.File('P%d' % n, 'f%d' % n) for n in range(7)]
+        for file in files[:5]:
+            file.failures = 2
+        self.app.data = fake.data(files)
+        self.trouble_answer = self.adsk.core.DialogResults.DialogOK
+        with patch.object(self.adsk.core, 'MessageBoxIconTypes', NS()):
+            self.open_dialog().execute.handlers[0].notify(None)
+        self.assertEqual([len(args) for args in self.troubles + self.summaries], [3, 3])
+        self.assertIn('2 exported now', self.summaries[0][0])
 
     def test_low_space_is_reported(self):
         with patch('fusion_bulk_export.core.free_bytes', return_value=200 << 20):
@@ -461,9 +475,32 @@ class FriendlyErrorTests(UIBase):
         prompt, title, details = self.details[-1]
         log = self.log / 'errors.log'
         self.assertIn(str(log), prompt)
-        self.assertIn("KeyError: 'boom'", details)
+        self.assertIn('nothing is sent anywhere', prompt)
+        self.assertIn('KeyError: <...>', details)  # a key can be a name: left out
+        self.assertIn('at FusionBulkExport.py:', details)
         self.assertNotIn('\n', details)
-        self.assertIn("KeyError: 'boom'", log.read_text())
+        self.assertIn('KeyError: <...>', log.read_text())
+
+    def test_unexpected_error_details_hold_no_names(self):
+        import errno
+        command = self.open_dialog()
+        secret = '/Users/someone/FusionExport/Secret Hub/Secret Project/Secret Design v3.step'
+
+        def failing(*args, **kwargs):
+            try:
+                raise OSError(errno.EACCES, 'Permission denied', secret)
+            except OSError as error:
+                raise RuntimeError('could not move %s to "Secret Design"' % secret) from error
+        self.module._code['export'] = failing
+        command.execute.handlers[0].notify(None)
+        prompt, title, details = self.details[-1]
+        logged = (self.log / 'errors.log').read_text()
+        for text in (details, logged):
+            self.assertNotIn('Secret', text)
+            self.assertNotIn('someone', text)
+            self.assertIn('RuntimeError: could not move <path>', text)
+            self.assertIn('PermissionError: [Errno 13] Permission denied', text)
+            self.assertNotIn('test_ui.py', text)  # only the add-in's own code is listed
 
     def test_old_fusion_offers_everything_only(self):
         self.module.run(None)
@@ -510,10 +547,22 @@ class ProgressTextTests(unittest.TestCase):
     def test_listing_and_design_lines(self):
         from fusion_bulk_export.command import describe
         self.assertEqual(describe(self.state()),
-                         'Project 3 of 17, listing: P / A / B\n40 design(s) so far\n12 min · 2 failed')
+                         'Project 3 of 17, listing: P / A / B\n40 item(s) so far\n12 min · 2 failed')
         state = self.state(phase='design', design=41, name='Gear 50%', seconds_per_design=3.42, elapsed=4000)
         self.assertEqual(describe(state),
                          'Project 3 of 17, design 41: Gear 50%%\nP / A / B\n1 h 06 min · 3.4 s/design · 2 failed')
+        state.update(kind='file', name='Spec.pdf')
+        self.assertTrue(describe(state).startswith('Project 3 of 17, file 41: Spec.pdf\n'))
+
+    def test_the_engine_says_which_items_are_other_files(self):
+        from fusion_bulk_export.core import Exporter
+        from fusion_bulk_export.fusion import FusionAdapter
+        states = []
+        with tempfile.TemporaryDirectory() as out:
+            Exporter(out, FusionAdapter(NS(documents=fake.Documents()))).run(
+                fake.data([fake.File('Part', 'part'), fake.File('Spec.pdf', 'spec', extension='pdf')]),
+                progress=states.append)
+        self.assertEqual([s['kind'] for s in states if s['phase'] == 'design'], ['design', 'file'])
 
     def test_bar_moves_within_a_folder_of_a_single_project(self):
         from fusion_bulk_export.command import bar

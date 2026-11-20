@@ -46,7 +46,7 @@ class AutorunTests(unittest.TestCase):
     def test_export_everything_and_consume_config(self):
         result = self.run_with()
         self.assertEqual(result['errors'], [])
-        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=1, skipped=0, failed=0))
+        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=1, files_up_to_date=0, skipped=0, failed=0))
         self.assertEqual(result['found'], 4)
         self.assertGreater(result['bytes'], 0)
         self.assertFalse(self.config.exists())
@@ -103,7 +103,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with(folders={'project-1': ['Sub']})
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
-        self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, files=1, skipped=0, failed=0))  # Sub holds only a drawing
+        self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, files=1, files_up_to_date=0, skipped=0, failed=0))  # Sub holds only a drawing
         self.assertEqual(self.files[0].calls + self.files[1].calls + self.files[3].calls, 0)
 
     def test_folder_selection_by_id_even_with_a_slash_in_its_name(self):
@@ -121,6 +121,25 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual((odd_entry['path'], odd_entry['folder_ids']), (['Sub', 'A/B'], [None, 'folder-odd']))
         self.assertEqual(listing['errors'], [])
 
+    def test_folder_id_is_found_breadth_first_letting_fusion_work(self):
+        from fusion_bulk_export import autorun
+        import adsk
+
+        class Unlisted:
+            @property
+            def count(self):
+                raise AssertionError('a folder deeper than the one wanted was listed')
+        deep = fake.folder('Deep', identity='deep')
+        deep.dataFolders = Unlisted()
+        wanted = fake.folder('Wanted', identity='wanted')
+        wanted.dataFolders = Unlisted()  # the wanted folder's own subfolders are not listed either
+        root = fake.folder('Root', folders=[fake.folder('A', folders=[deep], identity='a'), wanted])
+        events, counts = [], []
+        with patch.object(adsk, 'doEvents', lambda: events.append(1)):
+            path = autorun.find_folder(root, 'wanted', listed=counts.append)
+        self.assertEqual(path, [dict(id='wanted', name='Wanted')])
+        self.assertEqual((len(events), counts), (1, [1]))  # only the root was listed
+
     def test_folder_by_id_is_exact_beside_a_same_named_sibling(self):
         project = self.data.dataHubs.item(0).dataProjects.item(0)
         twins = [fake.folder('Twin', files=[fake.File('One', 'one')], identity='twin-1'),
@@ -134,7 +153,7 @@ class AutorunTests(unittest.TestCase):
 
     def test_designs_only(self):
         result = self.run_with(designs_only=True)
-        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=0, skipped=1, failed=0))
+        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=0, files_up_to_date=0, skipped=1, failed=0))
         self.assertFalse(result['other_files'])
         self.assertEqual(self.files[2].downloads, [])
         result = self.run_with(designs_only='yes')
@@ -165,7 +184,7 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(result['counts']['exported'], 0)
         (self.output / 'STOP').unlink()
         self.assertEqual(self.run_with()['counts']['exported'], 3)
-        self.assertEqual(self.run_with()['counts'], dict(exported=0, up_to_date=4, files=0, skipped=0, failed=0))
+        self.assertEqual(self.run_with()['counts'], dict(exported=0, up_to_date=3, files=0, files_up_to_date=1, skipped=0, failed=0))
 
     def test_unreadable_project_is_recorded_and_others_continue(self):
         class Failing:
@@ -267,6 +286,26 @@ class AutorunTests(unittest.TestCase):
         self.assertFalse(self.config.exists())
         self.assertTrue(all(file.calls == 0 for file in self.files))
         self.assertIn('autorun busy', (self.output / 'autorun.log').read_text())
+
+    def test_package_is_never_reloaded_during_an_export(self):
+        import adsk
+        import sys
+        module, events = self.start_add_in()
+        synthetic = patch.object(adsk, '_synthetic', False)  # as in real Fusion: forgetting is on
+        synthetic.start()
+        self.addCleanup(synthetic.stop)
+        modules = patch.dict(sys.modules)  # whatever is forgotten here comes back afterwards
+        modules.start()
+        self.addCleanup(modules.stop)
+        errors = sys.modules['fusion_bulk_export.errors']
+        self.addCleanup(module._busy.update, by=None)
+        for busy in ('button', 'job'):
+            module._busy['by'] = busy
+            module.forget_package()
+            self.assertIs(sys.modules.get('fusion_bulk_export.errors'), errors)
+        module._busy['by'] = None
+        module.forget_package()
+        self.assertNotIn('fusion_bulk_export.errors', sys.modules)
 
     def test_busy_job_with_unreadable_config_answers_beside_add_in(self):
         module, events = self.start_add_in()

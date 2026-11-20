@@ -10,7 +10,8 @@ Configuration (all paths absolute):
                                      by id is exactly that folder, even beside a same-named one
    "designs_only": false,            optional; true: skip other files (PDFs, drawings, uploads),
                                      which are otherwise saved as Fusion hands them out
-   "limit": 25,                      optional; export at most this many designs
+   "limit": 25,                      optional; stop after exporting this many designs (those
+                                     already up to date and other files do not count)
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
 "diagnostics" writes diagnostics.json (Fusion version, the export-related API
@@ -18,7 +19,7 @@ members and text commands this build offers) for bug reports; it reads no design
 "inventory" writes inventory.json (every hub, project and design with ids and
 versions) without opening anything. An export also writes index.html and index.csv (the
 human-readable report) into the output folder; counts in autorun-result.json are exported,
-up_to_date, files (other files saved), skipped and failed. Creating a file named STOP in the output
+up_to_date (designs), files (other files saved), files_up_to_date, skipped and failed. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
 
 A job that arrives while an export from the toolbar button is running is not started: its
@@ -102,24 +103,39 @@ def check_settings(config):
     return mode, selection, limit, timeout, not designs_only
 
 
-def find_folder(folder, identity, path=()):
+FIND_LOG_EVERY = 50  # folders listed between progress lines while a folder id is looked for
+
+
+def find_folder(folder, identity, path=(), listed=None):
     """The path below folder to the subfolder with this id, or None: a segment per folder,
     {"id": ..., "name": ...} where the folder has an id (so the path picks exactly that folder,
-    even beside a same-named sibling), else its name."""
-    for child in collection(folder.dataFolders):
-        child_id = getattr(child, 'id', None)
-        segment = child.name if child_id is None else dict(id=str(child_id), name=child.name)
-        if child_id is not None and str(child_id) == identity:
-            return list(path) + [segment]
-        found = find_folder(child, identity, list(path) + [segment])
-        if found is not None:
-            return found
+    even beside a same-named sibling), else its name.
+
+    Breadth first, so a folder near the top is found without listing the deep ones; Fusion is
+    let work (adsk.doEvents) after each listing, which can be slow. listed(count), when given,
+    is called with the number of folders listed so far."""
+    queue = [(folder, list(path))]
+    count = 0
+    while queue:
+        parent, where = queue.pop(0)
+        children = list(collection(parent.dataFolders))
+        count += 1
+        adsk.doEvents()
+        if listed is not None:
+            listed(count)
+        for child in children:
+            child_id = getattr(child, 'id', None)
+            segment = child.name if child_id is None else dict(id=str(child_id), name=child.name)
+            if child_id is not None and str(child_id) == identity:
+                return where + [segment]
+            queue.append((child, where + [segment]))
     return None
 
 
-def resolve_folder_ids(data, selection):
+def resolve_folder_ids(data, selection, log=None):
     """Add the path of every folder chosen by id, by ids from the project root down: exactly that
-    folder, whatever its name (a name may hold "/", and a sibling may have the same name)."""
+    folder, whatever its name (a name may hold "/", and a sibling may have the same name).
+    With log, a counts-only line every FIND_LOG_EVERY folders listed."""
     wanted = getattr(selection, 'folder_ids', None) or {}
     if not wanted:
         return
@@ -130,7 +146,10 @@ def resolve_folder_ids(data, selection):
         if selection.projects.get(project_id, []) is None:
             continue  # the whole project is chosen anyway
         for identity in identities:
-            path = find_folder(projects[project_id].rootFolder, identity)
+            def listed(count):
+                if log is not None and count % FIND_LOG_EVERY == 0:
+                    log.write('finding folder: %d folders listed' % count)
+            path = find_folder(projects[project_id].rootFolder, identity, listed=listed)
             if path is None:
                 raise ValueError('Folder id %s was not found in project %s' % (identity, project_id))
             selection.projects.setdefault(project_id, []).append(path)
@@ -285,7 +304,7 @@ def run_autorun(app, config_path):
             return log.result
         wait_for_hubs(app, timeout, log)
         data = app.data
-        resolve_folder_ids(data, selection)
+        resolve_folder_ids(data, selection, log)
         log.result['selection'] = selection.describe()
         if not selection.everything:
             wanted = set(selection.projects)

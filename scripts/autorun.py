@@ -22,6 +22,7 @@ Environment: FUSION_APP (app name, .app or .exe path), AUTORUN_TIMEOUT_SECONDS
 """
 import argparse
 import glob
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -32,15 +33,28 @@ import subprocess
 import sys
 import time
 
-# Files the add-in creates at run time. Never copied over an installation (and never
-# a broad glob: "autorun*" would also skip the autorun.py module itself).
-RUNTIME_FILES = shutil.ignore_patterns(
-    '__pycache__', 'autorun.json', 'autorun.json.last', 'autorun.alive', 'autorun-output',
-    'startup-error.txt', 'errors.log', 'trace', 'trace.log')
-
 REPO = Path(__file__).resolve().parent.parent
+
+
+def _installer():
+    """scripts/install.py, which owns the one list of run-time files (job files, logs, caches)."""
+    spec = importlib.util.spec_from_file_location('fusion_bulk_export_install', str(Path(__file__).with_name('install.py')))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def runtime_files(directory, names):
+    """copytree's ignore: the files the add-in creates at run time are never copied over an
+    installation (install.is_runtime decides, by exact names, never a broad glob)."""
+    is_runtime = _installer().is_runtime
+    try:
+        relative = Path(directory).resolve().relative_to((REPO / 'FusionBulkExport').resolve())
+    except ValueError:
+        relative = Path()
+    return {name for name in names if is_runtime(relative / name)}
 ALIVE_SECONDS = 20
-SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
+SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
 MANUAL_HINT = ('Fusion has not started the add-in. In Fusion press Shift+S, open the Add-Ins tab, '
                'switch FusionBulkExport on (Run) and tick Run on Startup. This command keeps waiting.')
@@ -136,7 +150,7 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         except FileNotFoundError:
             pass
     shutil.copytree(REPO / 'FusionBulkExport', installed, dirs_exist_ok=True,
-                    ignore=RUNTIME_FILES)
+                    ignore=runtime_files)
     for stale in ('startup-error.txt', 'autorun-output/autorun-result.json'):
         try:
             (installed / stale).unlink()
@@ -157,8 +171,11 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
 def count_line(counts):
     """The run's counts in words; results of versions before 0.3 had done/failed/skipped."""
     if 'exported' in counts:
-        return ('Counts: %d exported now, %d already up to date, %d other files saved, %d skipped, %d failed'
-                % tuple(counts.get(key, 0) for key in ('exported', 'up_to_date', 'files', 'skipped', 'failed')))
+        unchanged = counts.get('files_up_to_date', 0)
+        return ('Counts: %d exported now, %d already up to date, %d other files saved%s, %d skipped, %d failed'
+                % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
+                   ', %d other files already up to date' % unchanged if unchanged else '',
+                   counts.get('skipped', 0), counts.get('failed', 0)))
     return 'Counts: ' + json.dumps(counts, sort_keys=True)
 
 
@@ -181,7 +198,8 @@ def summary(output):
         lines.append('Errors: %d' % len(report.get('errors', [])))
     manifest = output / 'manifest.json'
     if manifest.is_file():
-        entries = json.loads(manifest.read_text(encoding='utf-8')).get('entries', [])
+        # With manifest.journal: the items finished since manifest.json was last written in full.
+        entries = package_checks().read_manifest(output).get('entries', [])
         size = sum(f.get('bytes', 0) for e in entries if e.get('status') == 'done' for f in e.get('files', []))
         for label, kind in (('Manifest', None), ('Designs', 'design'), ('Other files', 'file')):
             chosen = [e for e in entries if kind is None or (e.get('kind') or 'design') == kind]
@@ -251,17 +269,43 @@ def start(args):
     watching = alive(installed)
     install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
             folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False))
-    if watching:
+    try:
+        if watching:
+            return wait(installed, output, args.timeout)
+        if fusion_running(name):
+            # Open but not watching: the job is in place; starting the add-in by hand picks it up.
+            print(MANUAL_HINT, flush=True)
+            return wait(installed, output, args.timeout, hint_after=float('inf'))
+        # Whether Fusion starts the add-in is Fusion's own Run on Startup setting (kept in Fusion's
+        # settings, not in the add-in's manifest), so nothing here can switch it on. If the add-in
+        # does not come up, wait() prints MANUAL_HINT once.
+        launch_fusion(name)
         return wait(installed, output, args.timeout)
-    if fusion_running(name):
-        # Open but not watching: the job is in place; starting the add-in by hand picks it up.
-        print(MANUAL_HINT, flush=True)
-        return wait(installed, output, args.timeout, hint_after=float('inf'))
-    # Whether Fusion starts the add-in is Fusion's own Run on Startup setting (kept in Fusion's
-    # settings, not in the add-in's manifest), so nothing here can switch it on. If the add-in
-    # does not come up, wait() prints MANUAL_HINT once.
-    launch_fusion(name)
-    return wait(installed, output, args.timeout)
+    finally:
+        withdraw_job(installed)
+
+
+def withdraw_job(installed):
+    """Remove the job if the add-in never took it (this command was stopped with Ctrl-C, timed
+    out, or the add-in failed to start): a later Fusion start must not run it unattended. A job
+    the add-in took is gone already (it renames autorun.json as it starts)."""
+    try:
+        (installed / 'autorun.json').unlink()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    print('The job was not started by Fusion and has been withdrawn.', file=sys.stderr, flush=True)
+    return True
+
+
+def package_checks():
+    """The add-in's checks module (stdlib only), from this checkout."""
+    package = REPO / 'FusionBulkExport'
+    if str(package) not in sys.path:
+        sys.path.insert(0, str(package))
+    from fusion_bulk_export import checks
+    return checks
 
 
 def reset(installed):
@@ -281,10 +325,7 @@ def reset(installed):
 
 def check(output, names=False):
     """Check this folder: every exported file again, without Fusion. Counts only unless names."""
-    package = REPO / 'FusionBulkExport'
-    if str(package) not in sys.path:
-        sys.path.insert(0, str(package))
-    from fusion_bulk_export import checks
+    checks = package_checks()
     if not (output / 'manifest.json').is_file():
         print('Nothing to check: no manifest.json in ' + str(output))
         return 1

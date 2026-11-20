@@ -4,12 +4,19 @@ Expected conditions (an unusable output folder, an unreadable manifest, a full d
 signed out) are a UserError: one or two plain sentences and what to do next. Anything else is
 unexpected: its details go to errors.log beside the add-in, and the dialog says where that
 is and shows the details in a box they can be copied from for a bug report.
+
+Those details hold no names: the error's type, its message with paths and quoted text left
+out, and the lines of the add-in's own code it passed through (describe()). Paths and names
+of the user's hubs, projects and designs stay out of errors.log and of the copyable text.
 """
 import json
 import os
+import re
 import time
+import traceback
 
 from .core import Trouble, disk_full
+from .lock import FolderBusy
 
 TITLE = 'Fusion Bulk Export'
 
@@ -77,11 +84,59 @@ def friendly(error):
         return error
     if isinstance(error, Trouble):
         return trouble(error.code, error.reason)
+    if isinstance(error, FolderBusy):
+        return UserError('Another export is using this folder (in another Fusion window, or a job from the '
+                         'command line).', 'Wait for it to finish, or choose another folder.')
     if isinstance(error, OSError) and disk_full(error):
         return trouble('disk_full', 'The disk is full.')
     if isinstance(error, TimeoutError) and 'hubs' in str(error):
         return no_hubs()
     return None
+
+
+# A path (from a separator or drive letter up to a quote or the end of the line) and quoted
+# text: either may hold user, hub, project or design names.
+PATH = re.compile(r'(?:\b[A-Za-z]:)?[\\/][^\'"\n]*')
+QUOTED = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"")
+OWN_CODE = ('fusion_bulk_export', 'FusionBulkExport.py')
+
+
+def mask(text):
+    """text without paths or quoted parts (they become <path> and <...>)."""
+    return PATH.sub('<path>', QUOTED.sub('<...>', str(text)))
+
+
+def message_of(error):
+    """An error's message without names: for an OSError its number and system text only."""
+    if isinstance(error, OSError) and (error.errno is not None or error.strerror):
+        return '[Errno %s] %s' % (error.errno, error.strerror or '')
+    return mask(error)
+
+
+def own_frames(error):
+    """The lines of the add-in's own code an error passed through, as "package/file.py:line in
+    function" (no folder above the add-in, so no user name)."""
+    frames = []
+    for frame in traceback.extract_tb(error.__traceback__):
+        parts = frame.filename.replace('\\', '/').split('/')
+        for index, part in enumerate(parts):
+            if part in OWN_CODE:
+                frames.append('%s:%d in %s' % ('/'.join(parts[index:]), frame.lineno, frame.name))
+                break
+    return frames
+
+
+def describe(error):
+    """Name-free details of an unexpected error, with the errors that led to it."""
+    lines, seen = [], set()
+    while error is not None and id(error) not in seen and len(seen) < 4:
+        seen.add(id(error))
+        if lines:
+            lines.append('caused by:')
+        lines.append('%s: %s' % (type(error).__name__, message_of(error)))
+        lines += ['  at ' + frame for frame in own_frames(error)]
+        error = error.__cause__ or error.__context__
+    return '\n'.join(lines)
 
 
 def log_unexpected(log_dir, title, detail):
@@ -108,16 +163,19 @@ def message_box(ui, text, title=TITLE, warning=True):
     return ui.messageBox(text, title, buttons, icon)
 
 
-def show(ui, title, error, detail, log_dir):
-    """Tell the user about error: plainly when expected, with the logged details when not."""
+def show(ui, title, error, log_dir):
+    """Tell the user about error: plainly when expected; when not, with name-free details
+    (describe()), logged to errors.log and shown in a box they can be copied from."""
     known = friendly(error)
     if known is not None:
         message_box(ui, known.text(), title)
         return 'user'
+    detail = describe(error)
     path = log_unexpected(log_dir, title, detail)
     where = ('The details are saved in %s.' % path) if path else 'The details could not be saved to errors.log.'
-    prompt = ('Something unexpected went wrong. %s\n\nTo report it, copy the text below into a new issue '
-              '(replace your user name where it appears in paths).' % where)
+    prompt = ('Something unexpected went wrong. %s\n\nTo report it, copy the text below into a new issue. '
+              'It names no files, folders, projects or designs, and nothing is sent anywhere: it stays on this '
+              'computer unless you paste it somewhere.' % where)
     # A one-line box, so the whole text can be selected and copied.
     ui.inputBox(prompt, title, ' | '.join(line.rstrip() for line in detail.strip().splitlines()))
     return 'unexpected'

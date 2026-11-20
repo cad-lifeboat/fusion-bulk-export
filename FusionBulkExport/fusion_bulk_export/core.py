@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 
 from . import checks
 from .journal import Journal, replay
-from .names import NAME_LIMIT, Names, clean, file_kind, long_path, tag, too_long
+from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
+from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, clean, design_suffixes, long_path,
+                    too_long, windows_length)
 from .power import keep_awake
 from .staging import Staging
 
@@ -20,27 +22,38 @@ SCHEMA = 2  # manifest schema; schema-1 folders are read and saved as 2
 
 LOW_SPACE_BYTES = 1 << 30   # warn before a run below this much free space
 FULL_BYTES = 100 << 20      # after a failed write, below this the disk counts as full
-FAILURES_IN_A_ROW = 5       # this many designs failing one after another means something is wrong
+# This many designs failing one after another (offline, signed out) pauses the run. What counts
+# (see Exporter.run): an attempted design that fails, unless it had failed already in an earlier
+# run (a broken design, not a sign of trouble now). What resets the count: an item for which
+# Fusion answered from the cloud: a design exported or opened (even if it holds no design), an
+# other file downloaded. An item already up to date, or skipped without asking Fusion, neither
+# counts nor resets: it says nothing about whether Fusion can reach the account.
+FAILURES_IN_A_ROW = 5
 SAVE_EVERY_ITEMS = 50       # rewrite manifest.json after this many finished items...
 SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journal has each one)
 
 
 # Run counts, by what happened to each item this run.
-COUNT_KEYS = ('exported', 'up_to_date', 'files', 'skipped', 'failed')
+COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'failed')
 COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed'}
 FILES_SAVED = 'files'  # the count of other files (not designs) saved this run
+FILES_UP_TO_DATE = 'files_up_to_date'  # other files saved before and still unchanged
 
 
 def count_key(entry, status):
-    """The run count an item adds to: other files saved count apart from designs exported."""
-    if status == 'done' and entry is not None and entry.get('kind') == 'file':
-        return FILES_SAVED
+    """The run count an item adds to: other files count apart from designs."""
+    if entry is not None and entry.get('kind') == 'file':
+        if status == 'done':
+            return FILES_SAVED
+        if status == 'verified':
+            return FILES_UP_TO_DATE
     return COUNT_OF_STATUS[status]
 
 
 def new_counts():
-    """exported: designs written this run; up_to_date: already exported and checked; files: other
-    files (PDFs, drawings, uploads) saved this run; skipped: not saved, with a reason (a file type
+    """exported: designs written this run; up_to_date: designs already exported and checked;
+    files: other files (PDFs, drawings, uploads) saved this run; files_up_to_date: other files
+    saved before and checked; skipped: not saved, with a reason (a file type
     Fusion does not hand out, other files when only designs are wanted, a design without a design
     product); failed: will be tried again on the next run."""
     return dict((key, 0) for key in COUNT_KEYS)
@@ -255,11 +268,6 @@ def file_name_parts(file):
     return name, (clean(declared, 16) if declared else '')
 
 
-def shorten_for(base, suffix):
-    """base cut so that base + "~1a2b" + suffix stays within one name's limit."""
-    return base[:max(NAME_LIMIT - len(suffix) - 9, 1)].rstrip(' .') or '_'
-
-
 def digest(value):
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
@@ -382,8 +390,13 @@ class Exporter:
         self.replayed = replay(self.manifest, self.journal.read())
         drop_older_files(self.manifest)
         self.names = Names()
+        # Who may write where: relative path -> ids of the cloud files that hold it (recorded in
+        # the manifest, or claimed by an item in this run). A file on disk that no item holds
+        # (the user's own, or left by a run that stopped before recording it) is never written over.
+        self.holders = {}
         for entry in self.manifest['entries']:
             self.names.remember(entry)
+            self.hold(entry)
         self.saves = 0          # full manifest.json writes, for checking the cost
         self.unsaved = 0        # finished items only in the journal so far
         self.saved_at = time.monotonic()
@@ -482,9 +495,11 @@ class Exporter:
     def segments(self, hub, project, folders):
         """[(cleaned name, identity), ...] from the output root to an item's folder."""
         ids = getattr(folders, 'ids', None) or [None] * len(folders)
-        segments = [(clean(hub.name), 'hub:' + str(hub.id)), (clean(project.name), 'project:' + str(project.id))]
+        limit = self.name_limit
+        segments = [(clean(hub.name, limit), 'hub:' + str(hub.id)),
+                    (clean(project.name, limit), 'project:' + str(project.id))]
         for index, (name, identity) in enumerate(zip(folders, ids)):
-            segments.append((clean(name), 'folder:' + identity if identity is not None else
+            segments.append((clean(name, limit), 'folder:' + identity if identity is not None else
                              'path:' + json.dumps([str(project.id)] + list(folders[:index + 1]), ensure_ascii=False)))
         return segments
 
@@ -509,7 +524,53 @@ class Exporter:
             self.log('cannot create a folder, using the shortened layout: ' + str(error))
             return False
 
-    def destination(self, hub, project, folders, file, short=False):
+    @property
+    def name_limit(self):
+        """Characters in one folder or file name. Shorter on Windows, so that typical layouts
+        stay under its 260-character paths, which Explorer and many programs still need."""
+        return WINDOWS_NAME_LIMIT if self.platform == 'win32' else NAME_LIMIT
+
+    def mark_long_path(self, entry):
+        """On Windows, long_path: true on an entry with a file whose full path is over 259
+        characters: it is written (with the long-path prefix), but Explorer, many programs and
+        Fusion's own Open cannot use it. The report lists such items."""
+        entry.pop('long_path', None)
+        if self.platform != 'win32':
+            return
+        infos = list(entry.get('files') or []) + [entry.get('thumbnail') or {}]
+        if any(info.get('path') and windows_length(self.root / info['path']) > WINDOWS_LIMIT for info in infos):
+            entry['long_path'] = True
+
+    def hold(self, entry, paths=None):
+        """Record that entry's cloud file holds these relative paths (default: its recorded files
+        and thumbnail)."""
+        if paths is None:
+            paths = [info.get('path') for info in list(entry.get('files') or []) + [entry.get('thumbnail') or {}]]
+        for path in paths:
+            if path:
+                self.holders.setdefault(path, set()).add(str(entry.get('id')))
+
+    def free(self, location, name, file_id, owned=()):
+        """Whether the item with this cloud id may write location/name: nothing is there, or what
+        is there is its own (an earlier version, an earlier attempt, its record before this run)."""
+        relative = location + '/' + name if location else name
+        if relative in owned or str(file_id) in self.holders.get(relative, ()):
+            return True
+        return not os.path.lexists(long_path(self.root / relative))
+
+    def claim_names(self, segments, base, suffixes, file, owned):
+        """(relative directory parts, base) for an item: its folder, and a base name whose
+        files (base + each suffix) are free for it in the folder's single namespace of full
+        names, wherever they come from (designs, thumbnails, other files). The paths are then
+        held for this item, so a second attempt writes them again."""
+        parts = self.names.directory(segments)
+        location = '/'.join(parts)
+        base = self.names.claim_group(location, base, suffixes, 'file:' + str(file.id),
+                                      free=lambda name: self.free(location, name, file.id, owned))
+        self.hold(dict(id=str(file.id)), [location + '/' + base + suffix for suffix in suffixes])
+        return parts, base
+
+    def destination(self, hub, project, folders, file, short=False, owned=()):
         """Where a design goes: (stem path without extension, facts for its manifest entry).
 
         Real names: <hub>/<project>/<folders...>/<design> v<version>, made portable by
@@ -519,7 +580,9 @@ class Exporter:
         version = ' v' + str(int(file.versionNumber))
         if not short:
             segments = self.segments(hub, project, folders)
-            parts, base = self.names.place(segments, clean(file.name), 'file:' + str(file.id))
+            parts, base = self.claim_names(segments, clean(file.name, self.name_limit),
+                                           design_suffixes(file.versionNumber),
+                                           file, owned)
             directory = self.root.joinpath(*parts)
             stem = directory / (base + version)
             facts = dict(location='/'.join(parts), identities=[identity for _, identity in segments],
@@ -542,13 +605,8 @@ class Exporter:
         suffix = '.' + extension if extension else ''
         identity = 'file:' + str(file.id)
         segments = self.segments(hub, project, folders)
-        kind = file_kind(extension)
-        parts, base = self.names.place(segments, clean(name, NAME_LIMIT - len(suffix)), identity, kind)
+        parts, base = self.claim_names(segments, clean(name, self.name_limit - len(suffix)), [suffix], file, owned)
         location = '/'.join(parts)
-        if os.path.lexists(long_path(self.root.joinpath(*parts) / (base + suffix))) and \
-                (location + '/' + base + suffix) not in (self.paths_of(file.id) | set(owned)):
-            # Something else is there already (a design's export of that name, say): keep both.
-            base = self.names.claim(location, kind, shorten_for(base, suffix) + '~' + tag(identity), identity)
         directory = self.root.joinpath(*parts)
         target = directory / (base + suffix)
         facts = dict(location=location, identities=[identity for _, identity in segments], base=base,
@@ -561,11 +619,6 @@ class Exporter:
             raise ValueError('The export path is too long even when shortened; choose a shorter output folder.')
         os.makedirs(long_path(directory), exist_ok=True)
         return target, dict(location=None, identities=None, base=None, extension=extension, shortened=True)
-
-    def paths_of(self, file_id):
-        """Relative paths recorded for any version of this cloud file."""
-        return {info.get('path') for entry in self.manifest['entries'] if entry.get('id') == str(file_id)
-                for info in entry.get('files') or []}
 
     def drop_replaced(self, entry, entries):
         """After a newer version of another file was saved over the same path: the older
@@ -580,22 +633,38 @@ class Exporter:
             on_trouble=None, other_files=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
-        progress(state) is called while listing and before each design, with a dict:
+        limit: stop once this many designs were exported in this run (designs already up to
+        date, failures and other files do not count).
+
+        progress(state) is called while listing and before each item, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
-        project_name, path (folder names), design (designs found so far) and name; also
+        project_name, path (folder names), design (items found so far: designs and other files),
+        name and kind ('design', or 'file' for another file); also
         folder_files (the current folder's file count, or None when not known), folder_item
         (position of this design in that folder), counts (a copy of the run's counts so far),
         elapsed (seconds since the run started) and seconds_per_design (average time of the
         designs opened so far, not counting those already up to date; None before the first).
 
         When the run cannot go on (disk full, output folder gone, or FAILURES_IN_A_ROW designs
-        failing in a row, as when offline or signed out), on_trouble(reason, last_error) is
+        failing in a row, as when offline or signed out; see FAILURES_IN_A_ROW for what counts),
+        on_trouble(reason, last_error) is
         asked: 'retry' carries on (designs failed so far are retried on the next run), anything
         else stops. Without on_trouble it stops. run_info['stopped_reason'] then says why.
 
         other_files: also save the files that are not designs (PDFs, drawings, uploads) as
         Fusion hands them out; when false they are skipped as "Not a Fusion design".
+
+        The output folder is locked (export.lock) for the run: FolderBusy is raised when another
+        export is using it.
         """
+        lock = FolderLock(self.root)
+        lock.acquire()
+        try:
+            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files)
+        finally:
+            lock.release()
+
+    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files):
         self.other_files = bool(other_files)
         self.run_info['other_files'] = self.other_files
         counts = new_counts()
@@ -632,7 +701,7 @@ class Exporter:
             started = self.clock()
             timing = dict(seconds=0.0, designs=0)
             state = dict(phase='listing', project=0, projects=len(numbers), project_name=None,
-                         path=[], design=0, name=None, folder_files=None, folder_item=0)
+                         path=[], design=0, name=None, kind=None, folder_files=None, folder_item=0)
 
             def report(phase):
                 state['phase'] = phase
@@ -665,12 +734,15 @@ class Exporter:
                         continue
                     found += 1
                     place(hub, project, folders)
-                    state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1)
+                    state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1,
+                                 kind='design' if str(file.fileExtension).lower() == 'f3d' else 'file')
                     report('design')
                     if cancelled():
                         self.run_info['cancelled'] = True
                         break
                     began = self.clock()
+                    earlier = entries.get(self.item_key(hub, project, file))
+                    failed_before = earlier is not None and earlier.get('status') == 'failed'
                     try:
                         status = self.export_one(hub, project, folders, file, entries, counts)
                         problem = None
@@ -684,9 +756,9 @@ class Exporter:
                     if status != 'verified' and str(file.fileExtension).lower() == 'f3d':
                         timing['seconds'] += self.clock() - began
                         timing['designs'] += 1
-                    if status == 'done':
+                    if self.reached_cloud(status, entries.get(self.item_key(hub, project, file))):
                         failing = []
-                    elif status == 'failed':
+                    elif status == 'failed' and (problem is not None or not failed_before):
                         failing.append(str(problem.error if problem else self.last_error))
                         if problem is None and len(failing) >= FAILURES_IN_A_ROW:
                             problem = Trouble('failing', '%d designs in a row failed (offline or signed out?).'
@@ -700,7 +772,7 @@ class Exporter:
                             self.run_info.update(stopped_reason=problem.reason, stopped_code=problem.code)
                             break
                         failing = []
-                    if limit is not None and found >= limit:
+                    if limit is not None and counts['exported'] >= limit:
                         break  # a small run on a large account need not list everything
         except Exception as error:
             self.run_info['error'] = str(error)
@@ -716,15 +788,28 @@ class Exporter:
             self.log('run finished ' + json.dumps(counts))
         return counts
 
+    @staticmethod
+    def item_key(hub, project, file):
+        return json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
+
+    @staticmethod
+    def reached_cloud(status, entry):
+        """Whether this item shows that Fusion can reach the account now: a design exported or
+        opened (a skip as not a design), another file downloaded."""
+        if status == 'done':
+            return True
+        return (status == 'skipped' and entry is not None and entry.get('kind') == 'design'
+                and entry.get('attempts', 0) > 0)
+
     def export_one(self, hub, project, folders, file, entries, counts):
         """Export one design or save one other file; returns its status. Raises Trouble when
         the run must stop."""
         self.last_error = None
-        key = json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
+        key = self.item_key(hub, project, file)
         kind = 'design' if str(file.fileExtension).lower() == 'f3d' else 'file'
         entry = entries.get(key)
         if entry and self.valid(entry):
-            counts[COUNT_OF_STATUS['verified']] += 1
+            counts[count_key(entry, 'verified')] += 1
             self.log('verified ' + key)
             if self.refreshed:
                 self.record(entry)  # its files' times were recorded now; else nothing to save
@@ -736,7 +821,8 @@ class Exporter:
         # Fusion dateModified is a Unix timestamp, retained without conversion.
         owned = set()  # paths this item's earlier record held: it may write over them
         if key in entries:
-            owned = {info.get('path') for info in entries[key].get('files') or []}
+            owned = {info.get('path') for info in list(entries[key].get('files') or [])
+                     + [entries[key].get('thumbnail') or {}] if info.get('path')}
             self.manifest['entries'].remove(entries[key])
         self.manifest['entries'].append(entry)
         entries[key] = entry
@@ -747,7 +833,7 @@ class Exporter:
             else:
                 entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
-            trouble = self.export_design(hub, project, folders, file, entry, key)
+            trouble = self.export_design(hub, project, folders, file, entry, key, owned)
         counts[count_key(entry, entry['status'])] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
@@ -755,14 +841,14 @@ class Exporter:
         self.record(entry)
         return entry['status']
 
-    def export_design(self, hub, project, folders, file, entry, key):
+    def export_design(self, hub, project, folders, file, entry, key, owned=()):
         """Write a design's .f3d and STEP (two attempts); the Trouble that stops the run, or None."""
         for attempt in range(2):
             entry['attempts'] = attempt + 1
             try:
                 if hasattr(self.adapter, 'references'):
                     entry['references'] = self.adapter.references(file)
-                stem, facts = self.destination(hub, project, folders, file)
+                stem, facts = self.destination(hub, project, folders, file, owned=owned)
                 entry.update(facts)
                 written = self.adapter.export(file, stem)
                 paths = [path for path in written if not str(path).lower().endswith('.png')]
@@ -780,6 +866,7 @@ class Exporter:
                 entry.update(details)
                 entry.update(facts)
                 entry.update(status='done', error=None)
+                self.mark_long_path(entry)
                 return None
             except NonDesign as error:
                 if self.error_callback:
@@ -810,6 +897,7 @@ class Exporter:
             self.set_times([path], file)
             entry['files'] = [file_info(path, self.root)]
             entry.update(status='done', error=None)
+            self.mark_long_path(entry)
             self.drop_replaced(entry, entries)
             return None
         except NotSaved as error:
