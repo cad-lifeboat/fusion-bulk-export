@@ -3,8 +3,9 @@
 You are helping a person back up **their own** Fusion account to **their own computer**
 (macOS or Windows). This tool exports every design they can access as `.f3d` plus a
 `.step` under its real name, in the hub/project/folder layout, and saves their other files
-(PDFs, uploads) beside them; drawings as PDF only with `--drawings`, because Fusion takes
-minutes to open each drawing. Links between designs are listed in the
+(PDFs, uploads) beside them. Drawings and electronics are not supported (exporting a
+drawing through the API crashed Fusion): they are listed as such, never opened. Links
+between designs are listed in the
 manifest (`references`); Fusion's API cannot write `.f3z` bundles. It only reads from the
 account. Work on the person's machine, in a terminal, with them nearby.
 
@@ -54,10 +55,15 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
    `python3 scripts/autorun.py export OUT --project PROJECT_ID`.
    If one project holds nearly everything, add `--limit 3` instead: it stops after
    exporting 3 designs in this run (designs already up to date and other files do not
-   count); the full run reuses what it exported.
+   count; the other files of the folders it visited, the rest of the last one included,
+   are still saved); the full run reuses what it exported.
+   The command prints one line saying which add-in it uses: it installs this checkout's
+   only when none is installed or the installed one is older, never downgrades, and
+   replaces nothing while an export runs. Do not work around that; tell the person if the
+   line says an installed add-in is kept and they expected this checkout's.
 7. **Check it:** `python3 scripts/autorun.py check OUT`. Expect exit 0: every file is there
    unchanged, every archive opens, every STEP has a valid header and ending. NOTE lines
-   (a STEP solid count that differs) are not failures.
+   (a STEP missing bodies) are not failures.
 8. **The rest.**
    - **Hundreds of designs or more: one project at a time.** Tell the person, then run
      `export OUT --project ID` per project into the same OUT, and `check OUT` after each.
@@ -67,8 +73,8 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
    - Only part of the account: `--project ID` for whole projects, `--folder ID:Folder/Sub`
      or `--folder ID:id=FOLDER_ID` (ids from `folder_ids` in `inventory.json`) for single
      folders with their subfolders; both repeat. `--designs-only` leaves out the other files.
-     `--drawings` adds drawings as PDF; ask the person first, since each drawing can keep
-     Fusion busy for minutes (without it, drawings are skipped with that reason).
+     Do not pass `--drawings`: drawing export was removed (it can crash Fusion), and the flag
+     only prints a line saying so.
    - Progress: `python3 scripts/autorun.py status OUT` (counts only, including items still
      only in `manifest.journal`). Pause:
      `python3 scripts/autorun.py stop OUT`; resume by running the same export again.
@@ -76,7 +82,7 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
      computer awake.
 9. **Finish:** run `export` once more to retry any failures, then `check OUT`, then tell
    the person the counts (exported, already up to date (designs), other files saved, other
-   files already up to date, skipped, failed, total size, and any link notes from `status`), that `OUT/index.html` lists everything with reasons for any
+   files already up to date, skipped, not supported, failed, total size, slow items, and any link notes from `status`), that `OUT/index.html` lists everything with reasons for any
    failure, and where OUT is.
 
 ## Troubleshooting
@@ -84,8 +90,8 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 - **"Fusion has not started the add-in"**: ask the person to switch it on (above). The job
   waiting in `autorun.json` then starts; your command is still waiting and reports it.
 - **"Fusion is busy"**: the person is exporting with the button. Only one export runs at a
-  time; wait until their export has ended (the results dialog appears: Open report, Open
-  folder, Close), then run the same command again.
+  time; wait until their export has ended (its summary message appears), then run the same
+  command again. The busy answer never touches the running export's folder.
 - **"The add-in failed to start"** plus a traceback: the Run switch springs back off.
   Report the error type (not paths with the person's name in them) and stop.
 - **"Stopped by itself"** in `status`: the code says why. `failing` means 5 designs in a
@@ -103,9 +109,17 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 - **Folders that could not be read** (counted in `status` as `discovery_errors`): a
   project or folder the account cannot open (permissions, deleted, offline). They are
   skipped; report how many, not which.
-- **Skipped items**: other files Fusion cannot hand out (electronics and other Fusion-only
-  types), and drawings without `--drawings`, are skipped with a reason; that is expected.
-  Report the count.
+- **Not supported** ("N not supported by Fusion's export (electronics, drawings)"):
+  drawings, electronics and other Fusion-only types that Fusion's API cannot export (safely).
+  They are neither failures nor skips; report the count, and tell the person they can export
+  such files by hand in Fusion (File > Export) if they need them.
+- **Skipped items**: other files left out with `--designs-only`, or a file Fusion would not
+  hand out, with a reason. Report the count.
+- **Slow items** (`status`: "Slow: N item(s)"): Fusion took over a minute on each (a design
+  locked in another team can block it for minutes). Not a failure; report the count.
+- **Fusion crashed or was closed mid-export**: restart Fusion and rerun the same command;
+  the stale `export.lock` and `.staging` are cleared by themselves. Do not delete them by
+  hand while an export may be running.
 - **"Links: N design(s) failed with a linked design missing"** in `status`: those designs
   link to a design that was deleted, moved or cannot be read. The person fixes the links in
   Fusion, then reruns. **"N design(s) with out-of-date links"** is a note, not a failure.
@@ -114,5 +128,8 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
   them, and the design was exported anyway; report the count.
 - **Windows paths over 260 characters**: the result says how many items have one; they are
   saved, but Explorer may not open them. A shorter OUT (such as `C:\FusionExport`) avoids it.
-- **Warnings** (a STEP with no bodies, or a solid count that differs from Fusion's): the
+  OUT itself may be at most 200 characters on Windows; a longer one is refused in one line.
+- **Two hub folders in an old OUT**: resuming a folder from version 0.2 keeps the old
+  `~hash` folders and puts new items in readable folders beside them. That is expected.
+- **Warnings** (a STEP with no bodies, or fewer solids than the distinct bodies Fusion showed): the
   `.f3d` archive is still the complete copy; report the count.

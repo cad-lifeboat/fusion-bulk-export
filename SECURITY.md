@@ -11,8 +11,7 @@ reply within a week.
 
 - **Reads only.** It lists your hubs, projects and folders, opens each design and saves a copy
   (`.f3d` archive, `.step` and thumbnail) to a folder on your computer that you choose. Other
-  files are downloaded as they are, and drawings (only when you tick that option) are opened and
-  saved as PDF. It never uploads,
+  files are downloaded as they are; drawings are never opened. It never uploads,
   saves, renames, moves or deletes anything in your Fusion account. A test checks that the release
   zip contains no call that could.
 - **No network calls of its own.** All access to your account goes through Fusion's own API in the
