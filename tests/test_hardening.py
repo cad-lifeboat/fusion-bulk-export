@@ -276,5 +276,53 @@ class FusionTimingTests(Base):
         self.assertEqual((entry['status'], entry['attempts'], part.calls), ('done', 1, 1))
 
 
+class FolderLockTests(Base):
+    def lock_file(self, **facts):
+        import os
+        import socket
+        import time
+        value = dict(pid=os.getppid(), host=socket.gethostname(), started=time.time())
+        value.update(facts)
+        (self.root / 'export.lock').write_text(json.dumps(value))
+
+    def test_a_folder_in_use_by_another_process_is_refused_untouched(self):
+        from fusion_bulk_export.lock import FolderBusy
+        from fusion_bulk_export import errors
+        self.lock_file()  # the parent process: alive
+        staged = self.root / '.staging' / 'theirs.f3d'
+        staged.parent.mkdir()
+        staged.write_bytes(b'being written')
+        part = fake.File('Part', 'part')
+        with self.assertRaises(FolderBusy) as caught:
+            Exporter(self.root, self.adapter).run(fake.data([part]))
+        self.assertTrue(staged.exists())
+        self.assertEqual(part.calls, 0)
+        self.assertFalse((self.root / 'manifest.json').exists())
+        self.assertTrue((self.root / 'export.lock').exists())
+        self.assertIn('Another export is using this folder', errors.friendly(caught.exception).text())
+
+    def test_stale_locks_are_taken_over_and_the_lock_is_released(self):
+        import os
+        import subprocess
+        import sys
+        import time
+        gone = subprocess.Popen([sys.executable, '-c', 'pass'])
+        gone.wait()
+        for facts in (dict(pid=gone.pid), dict(started=time.time() - 13 * 3600), dict(pid=os.getpid()), None):
+            if facts is None:
+                (self.root / 'export.lock').write_text('{half')
+            else:
+                self.lock_file(**facts)
+            self.run_export(fake.data([fake.File('Part', 'part')]))
+            self.assertFalse((self.root / 'export.lock').exists())
+
+    def test_the_lock_is_released_when_the_run_fails(self):
+        from unittest.mock import patch
+        with patch.object(Exporter, '_run', side_effect=RuntimeError('Synthetic')):
+            with self.assertRaises(RuntimeError):
+                Exporter(self.root, self.adapter).run(fake.data([]))
+        self.assertFalse((self.root / 'export.lock').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

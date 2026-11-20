@@ -25,7 +25,7 @@ RESERVED = {'CON', 'PRN', 'AUX', 'NUL'} | {'COM%d' % i for i in range(1, 10)} | 
 # Files the add-in and its command line keep in the output folder: never a hub's folder name.
 ROOT_FILES = ('manifest.json', 'manifest.json.tmp', 'manifest.journal', 'export.log', 'autorun.log',
               'autorun-result.json', 'inventory.json', 'diagnostics.json', 'STOP', '.write-check',
-              'index.html', 'index.csv', '.staging')
+              'index.html', 'index.csv', '.staging', 'export.lock')
 
 WINDOWS_LIMIT = 259     # characters in a full path without the long-path prefix (and Fusion's limit)
 WINDOWS_LONG_LIMIT = 32000

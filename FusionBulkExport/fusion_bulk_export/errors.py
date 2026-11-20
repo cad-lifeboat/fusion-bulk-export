@@ -10,6 +10,7 @@ import os
 import time
 
 from .core import Trouble, disk_full
+from .lock import FolderBusy
 
 TITLE = 'Fusion Bulk Export'
 
@@ -77,6 +78,9 @@ def friendly(error):
         return error
     if isinstance(error, Trouble):
         return trouble(error.code, error.reason)
+    if isinstance(error, FolderBusy):
+        return UserError('Another export is using this folder (in another Fusion window, or a job from the '
+                         'command line).', 'Wait for it to finish, or choose another folder.')
     if isinstance(error, OSError) and disk_full(error):
         return trouble('disk_full', 'The disk is full.')
     if isinstance(error, TimeoutError) and 'hubs' in str(error):

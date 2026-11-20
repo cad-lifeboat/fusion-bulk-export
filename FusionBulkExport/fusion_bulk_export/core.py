@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from . import checks
 from .journal import Journal, replay
+from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
 from .names import NAME_LIMIT, Names, clean, design_suffixes, long_path, too_long
 from .power import keep_awake
 from .staging import Staging
@@ -631,7 +632,18 @@ class Exporter:
 
         other_files: also save the files that are not designs (PDFs, drawings, uploads) as
         Fusion hands them out; when false they are skipped as "Not a Fusion design".
+
+        The output folder is locked (export.lock) for the run: FolderBusy is raised when another
+        export is using it.
         """
+        lock = FolderLock(self.root)
+        lock.acquire()
+        try:
+            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files)
+        finally:
+            lock.release()
+
+    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files):
         self.other_files = bool(other_files)
         self.run_info['other_files'] = self.other_files
         counts = new_counts()
