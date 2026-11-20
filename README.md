@@ -38,7 +38,7 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
    - **Everything**: every design in every hub and project you can see.
    - **Choose projects or folders**: a tree of your hubs, projects and folders. Click a row to open it, tick a box to include it. A ticked folder includes everything inside it.
 4. Leave **Also save other files (PDFs, uploads)** ticked to save them too, or untick it for designs only. The choice is remembered.
-5. Click **Export** and wait for the summary at the end: the counts, the first failures, and the paths of the output folder and of the report (`index.html`), in a message with **OK**.
+5. Click **Export** and wait for the results at the end: the counts, the first failures and the output folder, with **Open report** (`index.html`) and **Open folder**; **Close** closes it.
 
 **Fusion can't be used while it exports.** Leave it open and signed in until the summary appears; the computer is kept awake meanwhile. **Cancel** is safe: what is finished stays finished. Run it again on the same folder to continue, to retry failures, or to pick up designs added later.
 
@@ -46,7 +46,7 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 
 ![The export dialog with the project tree (illustration)](docs/dialog.png)
 
-![The progress dialog and, on the right, the results dialog, which is switched off in this version (illustration)](docs/progress.png)
+![The progress dialog and, on the right, the results dialog (illustration)](docs/progress.png)
 
 ### The dialog
 
@@ -59,7 +59,7 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 - On Windows the output folder's own path can be at most 200 characters (the files below it may be longer). A longer one is refused, with the reason under **Save to**; choose a shorter folder such as `C:\FusionExport`.
 - While it exports, the progress text says which design (or "file N" for another file) it is on, before Fusion starts on it: if Fusion stalls, you can see on which item.
 - If the run gets into trouble (5 designs failing in a row, a full disk, the output folder gone), it pauses, shows the reason and the last error, and asks "Try again now?": **OK** carries on, **Cancel** stops. Everything exported so far is kept either way.
-- The summary at the end, in a message with **OK**: a headline (Finished, Cancelled, or Stopped with the reason), the counts (rows that are zero are left out), up to three failures by name with "and N more in the report", "Run again to retry the N failed" when something failed, notes (files Fusion's export does not support, slow items, low disk space, long Windows paths), and the paths of the folder and of `index.html`. (A results dialog with **Open report** and **Open folder** buttons is switched off in this version: on real Fusion it did not appear.)
+- The results at the end, in a dialog with **Open report** and **Open folder** and one **Close** button: a headline (Finished, Cancelled, or Stopped with the reason), the counts (rows that are zero are left out), up to three failures by name with "and N more in the report", "Run again to retry the N failed" when something failed, notes (files Fusion's export does not support, slow items, low disk space, long Windows paths), and the output folder, which can be selected. If a button gets no answer from Fusion within 2 seconds, the page shows the path with **Copy**. If Fusion cannot open the dialog at all, the same summary comes in a message with **OK** (with the paths of the folder and of `index.html`), and `results-fallback.log` beside the add-in says why.
 
 ### Big account? Go one project at a time
 
@@ -198,7 +198,7 @@ python3 scripts/autorun.py stop ~/FusionExport                           # pause
 
 - Tests: `python3 -m unittest discover -s tests` (a simulated Fusion API; no Fusion needed) and `node tests/tree_logic_test.js`. CI runs them on macOS, Windows and Linux.
 - Install a checkout into Fusion: `python3 scripts/install.py` (`--uninstall` removes it). It replaces whatever is installed and writes `install-stamp.json` (version and a hash of the files; the release zip carries the same one), which the command line compares with its checkout.
-- The results dialog is switched off (`DIALOG_ENABLED` in `fusion_bulk_export/results.py`); the summary is a plain message until it is known which way real Fusion shows it.
+- The results dialog can be switched off (`DIALOG_ENABLED` in `fusion_bulk_export/results.py`); the summary is then a plain message. Its page is written for each run into the add-in's app-data folder (beside `settings.json`) and deleted when the dialog closes or at the next start.
 - Release zip: `python3 scripts/package.py` writes `dist/FusionBulkExport-<version>.zip`. `python3 scripts/release.py prepare X.Y.Z` sets the version, moves the changelog's Unreleased section, runs the tests and builds the zip; it prints the publishing commands without running them.
 - Pictures: `python3 docs/cards.py` regenerates the banner and social preview, `python3 docs/screens.py` the dialog illustrations (both need `cairosvg` for PNGs; without it they write SVG only).
 
