@@ -1,4 +1,5 @@
 """The entry point must import with only its own file location to go on, as inside Fusion."""
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -23,8 +24,13 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 assert hasattr(module, 'run')
 ''' % (str(ROOT), str(ROOT / 'FusionBulkExport' / 'FusionBulkExport.py'))
-        result = subprocess.run([sys.executable, '-c', script], cwd='/', capture_output=True, text=True,
-                                env={'PATH': '/usr/bin:/bin'})
+        # A bare environment, but Windows' Python cannot start without SYSTEMROOT (3.9 then fails
+        # with "failed to get random numbers to initialize Python").
+        env = {'PATH': os.defpath}
+        if os.environ.get('SYSTEMROOT'):
+            env['SYSTEMROOT'] = os.environ['SYSTEMROOT']
+        result = subprocess.run([sys.executable, '-c', script], cwd=os.path.abspath(os.sep), capture_output=True,
+                                text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

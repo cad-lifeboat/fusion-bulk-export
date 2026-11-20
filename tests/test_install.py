@@ -104,7 +104,8 @@ class InstallTests(unittest.TestCase):
         (self.source / 'errors.log').write_text('later', encoding='utf-8')
         self.assertEqual(install.content_hash(self.source), stamp['sha256'])
         self.assertEqual(install.content_hash(installed), stamp['sha256'])
-        (self.source / 'FusionBulkExport.py').write_text('# entry\r\n', encoding='utf-8')  # CRLF reads as LF
+        # CRLF reads as LF. Bytes, not write_text: text mode on Windows would turn the \n into \r\n.
+        (self.source / 'FusionBulkExport.py').write_bytes(b'# entry\r\n')
         self.assertEqual(install.content_hash(self.source), stamp['sha256'])
         (self.source / 'FusionBulkExport.py').write_text('# changed\n', encoding='utf-8')
         self.assertNotEqual(install.content_hash(self.source), stamp['sha256'])
