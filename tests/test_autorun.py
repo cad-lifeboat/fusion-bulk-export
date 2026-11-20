@@ -121,6 +121,25 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual((odd_entry['path'], odd_entry['folder_ids']), (['Sub', 'A/B'], [None, 'folder-odd']))
         self.assertEqual(listing['errors'], [])
 
+    def test_folder_id_is_found_breadth_first_letting_fusion_work(self):
+        from fusion_bulk_export import autorun
+        import adsk
+
+        class Unlisted:
+            @property
+            def count(self):
+                raise AssertionError('a folder deeper than the one wanted was listed')
+        deep = fake.folder('Deep', identity='deep')
+        deep.dataFolders = Unlisted()
+        wanted = fake.folder('Wanted', identity='wanted')
+        wanted.dataFolders = Unlisted()  # the wanted folder's own subfolders are not listed either
+        root = fake.folder('Root', folders=[fake.folder('A', folders=[deep], identity='a'), wanted])
+        events, counts = [], []
+        with patch.object(adsk, 'doEvents', lambda: events.append(1)):
+            path = autorun.find_folder(root, 'wanted', listed=counts.append)
+        self.assertEqual(path, [dict(id='wanted', name='Wanted')])
+        self.assertEqual((len(events), counts), (1, [1]))  # only the root was listed
+
     def test_folder_by_id_is_exact_beside_a_same_named_sibling(self):
         project = self.data.dataHubs.item(0).dataProjects.item(0)
         twins = [fake.folder('Twin', files=[fake.File('One', 'one')], identity='twin-1'),
