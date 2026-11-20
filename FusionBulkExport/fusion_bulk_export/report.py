@@ -31,6 +31,8 @@ def next_step(status, error):
             return 'Not saved: only designs were exported. Tick "Also save other files" to save it.'
         if 'no fusion design' in text or 'not a fusion document' in text:
             return 'Nothing to do: not a 3D design.'
+        if 'unsaved changes' in text or 'close it' in text:
+            return 'Save or close it in Fusion, then export again.'
         if 'drawing pdf' in text:
             return 'Export again to retry; or open the drawing in Fusion and export its PDF by hand.'
         if 'cannot export this file type' in text:
