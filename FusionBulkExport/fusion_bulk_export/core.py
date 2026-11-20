@@ -1,5 +1,6 @@
 """Portable traversal, naming and resumable export orchestration."""
 import errno
+import gc
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ import re
 import shutil
 import sys
 import time
+import traceback
 from datetime import datetime, timezone
 
 from . import checks
@@ -37,6 +39,14 @@ SLOW_SECONDS = 60
 NO_RETRY_SECONDS = 120
 SAVE_EVERY_ITEMS = 50       # rewrite manifest.json after this many finished items...
 SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journal has each one)
+# After each item Fusion worked on (not one found up to date), Python's cycle collector runs once
+# (Exporter.collect): a Fusion API object (document, design, body) caught in a reference cycle is
+# then released at once instead of whenever Python next gets round to it. Each item gets a young
+# collection (what that item made); every FULL_COLLECT_EVERY items a full one, whose cost grows
+# with the manifest held in memory (tens of milliseconds at thousands of items, against seconds
+# per design). False switches it off (to measure the difference).
+COLLECT_AFTER_ITEM = True
+FULL_COLLECT_EVERY = 50
 
 
 # Run counts, by what happened to each item this run.
@@ -404,10 +414,23 @@ def link_reason(count):
 
 
 class Trouble(Exception):
-    """A problem that stops the whole run (not just one design)."""
+    """A problem that stops the whole run (not just one design). error is the text of the error
+    that caused it (or None): never the exception object, whose traceback would keep the frames
+    it passed through alive, with the Fusion documents and designs in their variables."""
     def __init__(self, code, reason, error=None):
         super().__init__(reason)
-        self.code, self.reason, self.error = code, reason, error
+        self.code, self.reason = code, reason
+        self.error = None if error is None else (str(error) or type(error).__name__)
+
+
+def forget_frames(error):
+    """Drop the variables of the finished frames an exception passed through (the Fusion document,
+    design and export manager of a failed export among them), so that nothing that still holds the
+    exception for a moment keeps them alive. The frame running now is left as it is."""
+    try:
+        traceback.clear_frames(error.__traceback__)
+    except Exception:
+        pass
 
 
 def atomic_write(path, value):
@@ -830,12 +853,15 @@ class Exporter:
                         status = self.export_one(hub, project, folders, file, entries, counts)
                         problem = None
                     except Trouble as error:
-                        status, problem = 'failed', error
+                        # Its traceback holds export_one's frame (the item's DataFile): not kept.
+                        status, problem = 'failed', error.with_traceback(None)
                     except OSError as error:  # writing the manifest or log
                         problem = self.trouble(error)
                         if problem is None:
                             raise
                         status = 'failed'
+                    if status != 'verified':
+                        self.collect()  # Fusion worked on this item: release what it left behind
                     if status != 'verified' and str(file.fileExtension).lower() == 'f3d':
                         timing['seconds'] += self.clock() - began
                         timing['designs'] += 1
@@ -873,6 +899,21 @@ class Exporter:
                     raise  # with a stop reason, the folder is known to be unusable
             self.log('run finished ' + json.dumps(counts))
         return counts
+
+    def collect(self):
+        """Run Python's cycle collector once (see COLLECT_AFTER_ITEM), and add its cost to
+        run_info['gc']: collections (full: how many were full), seconds, and objects it found unreachable (objects near 0
+        run after run means the add-in leaves no cycles behind)."""
+        if not COLLECT_AFTER_ITEM:
+            return
+        stats = self.run_info.setdefault('gc', dict(collections=0, full=0, seconds=0.0, objects=0))
+        full = (stats['collections'] + 1) % FULL_COLLECT_EVERY == 0
+        began = time.perf_counter()
+        found = gc.collect() if full else gc.collect(1)
+        stats['collections'] += 1
+        stats['full'] += 1 if full else 0
+        stats['seconds'] = round(stats['seconds'] + time.perf_counter() - began, 3)
+        stats['objects'] += found
 
     def item_kind(self, file):
         """What the progress text calls an item: 'design' or 'file'."""
@@ -1001,12 +1042,14 @@ class Exporter:
             except NonDesign as error:
                 if self.error_callback:
                     self.error_callback(key, error)
+                forget_frames(error)
                 entry.update(status='skipped', error=str(error))
                 entry.pop('fusion_error', None)
                 return None
             except Exception as error:
                 if self.error_callback:
                     self.error_callback(key, error)
+                forget_frames(error)
                 entry.update(status='failed', error=str(error), files=[])
                 entry.pop('fusion_error', None)
                 self.last_error = str(error)
@@ -1039,11 +1082,13 @@ class Exporter:
             self.drop_replaced(entry, entries)
             return None
         except NotSaved as error:
+            forget_frames(error)
             entry.update(status='skipped', error=str(error), files=[])
             return None
         except Exception as error:
             if self.error_callback:
                 self.error_callback(entry['key'], error)
+            forget_frames(error)
             self.log('saving failed ' + entry['key'] + ': ' + str(error))
             trouble = self.trouble(error)
             if trouble is not None:

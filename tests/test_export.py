@@ -1298,7 +1298,9 @@ class ExportTests(unittest.TestCase):
     def test_manifest_written_in_full_only_now_and_then(self):
         files = [fake.File(identity='file-%d' % n) for n in range(5000)]
         exporter = Exporter(self.root, self.adapter)
-        with patch('fusion_bulk_export.journal.os.fsync'):  # speed only: 5,000 syncs are slow on some disks
+        # Speed only: 5,000 syncs are slow on some disks, and 100 full collections of this test
+        # process's heap (test_memory covers the collector).
+        with patch('fusion_bulk_export.journal.os.fsync'), patch.object(core, 'COLLECT_AFTER_ITEM', False):
             exporter.run(fake.data(files))
         self.assertEqual(exporter.run_info['counts']['exported'], 5000)
         self.assertLess(exporter.saves, 150)

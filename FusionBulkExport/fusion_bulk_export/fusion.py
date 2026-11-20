@@ -193,8 +193,11 @@ class FusionAdapter:
         self.details = {}
         # Asked for first: Fusion fetches it while the design opens and exports; never waited for.
         future = thumbnail_future(data_file)
-        paths = self.export_design(data_file, stem)
-        picture = save_thumbnail(future, str(stem) + '.png', self.stage())
+        try:
+            paths = self.export_design(data_file, stem)
+            picture = save_thumbnail(future, str(stem) + '.png', self.stage())
+        finally:
+            future = None  # the picture Fusion fetched goes with it, whatever happened
         return paths + [picture] if picture else paths
 
     def stage(self):
@@ -214,10 +217,14 @@ class FusionAdapter:
             # is recorded (documents_left_open) and closed later when possible.
             if document is not None and opened:
                 self.close(document)
+            # Not held past this design (an exception's traceback keeps this frame alive).
+            document = None
             # Also when opening or exporting failed: linked designs may be open by now.
             self.close_opened(before)
 
     def write(self, document, data_file, stem):
+        """Export an open document. When it raises, its variables (design, export manager) are
+        dropped by the exporter (core.forget_frames) once the error is recorded."""
         design = adsk.fusion.Design.cast(read_products(document).itemByProductType('DesignProductType'))
         if not design:
             raise NonDesign('No Fusion Design product (drawing or CAM-only file)')
