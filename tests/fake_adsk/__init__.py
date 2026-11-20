@@ -174,7 +174,9 @@ class Inputs:
         return self._add(NS(id=id, name=name, value=value, isVisible=True, isEnabled=True))
 
     def addBrowserCommandInput(self, id, name, url, minimum_height, maximum_height=0):
-        return self._add(NS(id=id, name=name, htmlFileURL=url, isVisible=True))
+        sent = []
+        return self._add(NS(id=id, name=name, htmlFileURL=url, isVisible=True, sent=sent,
+                            sendInfoToHTML=lambda action, data: sent.append((action, data)) or True))
 
     def addTextBoxCommandInput(self, id, name, text, rows, read_only):
         return self._add(NS(id=id, name=name, text=text, isVisible=True))

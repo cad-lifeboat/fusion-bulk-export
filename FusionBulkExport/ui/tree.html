@@ -4,9 +4,11 @@
 <meta charset="utf-8">
 <title>Choose what to export</title>
 <style>
-  :root { --text: #e3e6ea; --muted: #9aa4b1; --hover: rgba(255, 255, 255, 0.07); --box: #8d97a4; --tick: #2f9bd8; }
+  :root { --text: #e3e6ea; --muted: #9aa4b1; --hover: rgba(255, 255, 255, 0.07); --box: #8d97a4; --tick: #2f9bd8;
+    --bad: #ff8178; --line: #4a515b; --good: #56d364; }
   @media (prefers-color-scheme: light) {
-    :root { --text: #1f2328; --muted: #5d6670; --hover: rgba(0, 0, 0, 0.06); --box: #6b7480; --tick: #0a6fc2; }
+    :root { --text: #1f2328; --muted: #5d6670; --hover: rgba(0, 0, 0, 0.06); --box: #6b7480; --tick: #0a6fc2;
+      --bad: #b42318; --line: #c4ccd5; --good: #1a7f37; }
   }
   html, body { margin: 0; background: transparent; color: var(--text);
     font: 12px -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif; user-select: none; }
@@ -26,13 +28,24 @@
   .icon.project { background: #f08a24; }
   .icon.folder { background: #c9a23f; clip-path: polygon(0 15%, 40% 15%, 50% 30%, 100% 30%, 100% 100%, 0 100%); }
   .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .empty { color: var(--muted); height: 22px; line-height: 22px; font-style: italic; }
-  .hint { color: var(--muted); margin: 4px 4px 8px; }
+  .empty, .loading { color: var(--muted); min-height: 22px; line-height: 22px; font-style: italic; }
+  .error { color: var(--bad); min-height: 22px; line-height: 22px; }
+  .retry { font: inherit; margin-left: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px;
+    background: transparent; color: var(--text); cursor: pointer; }
+  .count { color: var(--muted); flex: none; }
+  .badge { color: var(--good); flex: none; font-size: 11px; }
+  [role="treeitem"]:focus { outline: none; }
+  [role="treeitem"]:focus > .row { box-shadow: inset 0 0 0 2px var(--tick); }
+  .hint { color: var(--muted); margin: 4px 4px 6px; }
+  #filter { box-sizing: border-box; width: calc(100% - 8px); margin: 0 4px 6px; padding: 3px 6px; font: inherit;
+    color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 4px; }
 </style>
 </head>
 <body>
-  <div class="hint">Tick what to export. Ticking a folder includes everything inside it.</div>
-  <ul id="tree"><li class="empty">Loading your hubs…</li></ul>
+  <div class="hint">Tick what to export. Ticking a folder includes everything inside it.
+    Keys: arrows move and open, Space ticks, Enter opens.</div>
+  <input id="filter" type="search" placeholder="Filter projects by name" aria-label="Filter projects by name">
+  <ul id="tree" role="tree" aria-label="Hubs, projects and folders"><li class="empty">Loading your hubs…</li></ul>
   <script src="tree.js"></script>
 </body>
 </html>

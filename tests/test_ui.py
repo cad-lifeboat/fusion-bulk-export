@@ -149,10 +149,49 @@ class UItests(UIBase):
         hubs = self.page(command, 'hubs')['hubs']
         self.assertEqual([(p['id'], p['name']) for p in hubs[0]['projects']],
                          [('project-1', 'Project'), ('project-2', 'Two')])
-        self.assertEqual(self.page(command, 'folders', dict(project='project-1', path=[]))['folders'],
-                         ['Top', 'Other'])
+        reply = self.page(command, 'folders', dict(project='project-1', path=[]))
+        self.assertEqual(reply, dict(folders=[dict(id=None, name='Top'), dict(id=None, name='Other')], files=1))
         self.assertEqual(self.page(command, 'folders', dict(project='project-1', path=['Top']))['folders'],
-                         ['Sub'])
+                         [dict(id=None, name='Sub')])
+
+    def test_failing_folder_request_is_an_error_not_no_folders(self):
+        self.picker_data()
+        command = self.open_dialog()
+        self.choose(command)
+        self.page(command, 'hubs')
+        top = self.app.data.dataHubs.item(0).dataProjects.item(0).rootFolder.dataFolders.item(0)
+        top.dataFolders = None  # listing fails
+        reply = self.page(command, 'folders', dict(project='project-1', path=['Top']))
+        self.assertIn('error', reply)
+        self.assertNotIn('folders', reply)
+        reply = self.page(command, 'folders', dict(project='project-1', path=['Gone']))
+        self.assertIn('no longer there', reply['error'])
+
+    def test_same_named_folders_are_addressed_by_id(self):
+        first = fake.folder('Twin', folders=[fake.folder('Inside one')], identity='folder-a')
+        second = fake.folder('Twin', folders=[fake.folder('Inside two')], identity='folder-b')
+        self.app.data = fake.data([], [first, second])
+        command = self.open_dialog()
+        self.choose(command)
+        self.page(command, 'hubs')
+        reply = self.page(command, 'folders', dict(project='project-1', path=[]))
+        self.assertEqual(reply['folders'], [dict(id='folder-a', name='Twin'), dict(id='folder-b', name='Twin')])
+        reply = self.page(command, 'folders', dict(project='project-1', path=['Twin'], ids=['folder-b']))
+        self.assertEqual(reply['folders'], [dict(id=None, name='Inside two')])
+
+    def test_projects_already_exported_are_marked(self):
+        self.picker_data()
+        self.open_dialog().execute.handlers[0].notify(None)  # everything into the folder
+        command = self.open_dialog()
+        self.choose(command)
+        hubs = self.page(command, 'hubs')['hubs']
+        self.assertEqual([p['exported'] for p in hubs[0]['projects']], [4, 1])
+        # Browsing to an empty folder tells the page the marks are gone.
+        empty = Path(self.temp.name) / 'empty'
+        empty.mkdir()
+        self.folder.folder = str(empty)
+        self.change(command, command.commandInputs.find('fbx_browse'))
+        self.assertEqual(command.commandInputs.find('fbx_tree').sent, [('exported', '{}')])
 
     def test_ticked_folder_exports_its_subtree(self):
         self.picker_data()

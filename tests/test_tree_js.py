@@ -13,4 +13,5 @@ class TreeLogicTests(unittest.TestCase):
         result = subprocess.run(['node', str(ROOT / 'tests' / 'tree_logic_test.js')],
                                 capture_output=True, text=True, cwd=ROOT)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('tree logic ok', result.stdout)
+        for part in ('tree logic ok', 'errors and retry ok', 'keyboard ok', 'page wiring ok'):
+            self.assertIn(part, result.stdout)
