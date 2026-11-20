@@ -127,6 +127,8 @@ A design whose STEP has no bodies, or fewer solids than Fusion showed, is export
 - **Something unexpected:** the dialog says so and saves the details to `errors.log` in the add-in's folder. Copy them into an issue, with your user name and any design names replaced by `X`.
 - Still stuck? [Open an issue](../../issues/new/choose) with the counts and error messages, with any design names replaced by `X`.
 
+**Tell us how it went.** If it worked, or mostly worked, [post your numbers](../../discussions/new?category=show-and-tell) (Fusion version, how many designs, how long). Ideas and questions go in [Discussions](../../discussions) too; issues are for things that are broken.
+
 ## How resuming works
 
 Running again on the same folder skips a finished item only if its files are still there
