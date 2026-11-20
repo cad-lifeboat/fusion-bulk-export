@@ -37,7 +37,8 @@ Startup); 77 Fusion closed or crashed before the export finished (open it and ru
 export --restart-fusion (opt-in) does that by itself: after a memory stop it quits Fusion
 politely (only when no saved design or unsaved document is open in it), opens it again, waits
 for the add-in and sends the same job; after a crash it opens Fusion again. At most
---max-restarts times (default 20), never more than once per 50 designs exported.
+--max-restarts times (default 20), never more than once per 50 designs exported: a memory stop
+within 50 designs of a start ends the command with status 75 and one line saying so.
 --restart-fusion=force also ends a Fusion that does not quit within 60 s.
 """
 import argparse
@@ -533,6 +534,11 @@ def run_job(args, name, output, installed):
 
 MAX_RESTARTS = 20           # --restart-fusion restarts Fusion at most this many times in one command...
 DESIGNS_PER_RESTART = 50    # ...and only after at least this many designs were exported since the last start
+# A memory stop within DESIGNS_PER_RESTART designs of a start: restarting would not help (and could
+# loop), so the command stops there with EXIT_MEMORY and this line.
+EARLY_MEMORY_LINE = ("Not restarting Fusion: it stopped for memory after only %d %s since Fusion was started: "
+                     "Fusion's memory is high for another reason, so a restart would not help. Close other "
+                     "programs (or restart the computer), then run the same command again.")
 QUIT_SECONDS = 60           # how long Fusion gets to quit when asked politely
 KILL_SECONDS = 30           # how long a forced kill gets to take effect
 
@@ -599,6 +605,8 @@ def restart_decision(status, result, restarts, limit, exported):
         return False, ('Not restarting Fusion again: it was restarted %s in this command already.'
                        % plural(restarts, 'time'))
     if exported < DESIGNS_PER_RESTART:
+        if status == EXIT_MEMORY:
+            return False, EARLY_MEMORY_LINE % (exported, form(exported, 'design'))
         return False, ('Not restarting Fusion: only %s %s exported since it was started, so restarting '
                        'would not help.' % (plural(exported, 'design'), form(exported, 'was')))
     if status == EXIT_FUSION_GONE:

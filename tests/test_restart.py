@@ -94,7 +94,10 @@ class DecisionTests(unittest.TestCase):
         self.assertIn('restarted 20 times', line)
 
     def test_loop_guard_needs_fifty_designs_since_the_last_start(self):
-        self.assertFalse(self.decide(exported=49)[0])
+        allowed, line = self.decide(exported=49)
+        self.assertFalse(allowed)
+        self.assertEqual(line, launcher.EARLY_MEMORY_LINE % (49, 'designs'))
+        self.assertEqual(self.decide(exported=1)[1], launcher.EARLY_MEMORY_LINE % (1, 'design'))
         self.assertTrue(self.decide(exported=50)[0])
         self.assertFalse(self.decide(status=GONE, result={}, exported=10)[0])
 
@@ -184,9 +187,35 @@ class LoopTests(unittest.TestCase):
 
     def test_few_designs_per_run_ends_the_loop(self):
         run, remaining = self.runs([MEMORY] * 3, per_run=10)
-        status, out = quiet(launcher.with_restarts, run, FakeFusion(), self.output)
+        fusion = FakeFusion()
+        status, out = quiet(launcher.with_restarts, run, fusion, self.output)
         self.assertEqual((status, len(remaining)), (MEMORY, 2))
-        self.assertIn('only 10 designs were exported', out)
+        self.assertEqual(fusion.actions, [])  # Fusion is not touched
+        lines = [line for line in out.splitlines() if line.strip()]
+        self.assertEqual(lines, [launcher.EARLY_MEMORY_LINE % (10, 'designs')])
+        self.assertIn("Fusion's memory is high for another reason", lines[0])
+
+    def test_a_memory_stop_soon_after_a_restart_ends_the_loop(self):
+        # 60 designs, a restart, then a stop after 20 more: no second restart.
+        state = dict(done=0)
+        outcomes = [(60, MEMORY), (20, MEMORY), (60, 0)]
+
+        def run():
+            more, status = outcomes.pop(0)
+            state['done'] += more
+            (self.output / 'manifest.json').write_text(json.dumps(dict(entries=[
+                dict(kind='design', status='done', id=str(n)) for n in range(state['done'])])))
+            (self.output / 'autorun-result.json').write_text(json.dumps(dict(
+                stopped_code='memory', open_documents_with_work=0)))
+            return status
+        fusion = FakeFusion()
+        status, out = quiet(launcher.with_restarts, run, fusion, self.output)
+        self.assertEqual(status, MEMORY)
+        self.assertEqual(len(outcomes), 1)
+        self.assertEqual(fusion.actions, ['quit', 'launch'])
+        self.assertIn("after only 20 designs since Fusion was started: Fusion's memory is high for another reason",
+                      out)
+        self.assertIn('75', launcher.__doc__)
 
     def test_open_documents_stop_the_loop_and_fusion_is_left_alone(self):
         run, _ = self.runs([MEMORY, 0], work=1)
