@@ -209,6 +209,9 @@ console.log('exported marks ok');
     assert.strictEqual(items().length, 2);
     assert.strictEqual(items()[0].attrs['aria-level'], '1');
     assert.strictEqual(items()[0].tabIndex, 0);
+    // Each row carries the whole name as its tooltip (the label may end in an ellipsis).
+    const titles = tree.all().filter(function (e) { return e.className === 'row'; }).map(function (e) { return e.title; });
+    assert.deepStrictEqual(titles, ['Hub', 'P']);
     key('ArrowDown');
     key('Enter');           // open P: the request fails
     await settle();

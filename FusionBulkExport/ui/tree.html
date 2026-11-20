@@ -10,10 +10,14 @@
     :root { --text: #1f2328; --muted: #5d6670; --hover: rgba(0, 0, 0, 0.06); --box: #6b7480; --tick: #0a6fc2;
       --bad: #b42318; --line: #c4ccd5; --good: #1a7f37; }
   }
-  html, body { margin: 0; background: transparent; color: var(--text);
+  /* The page must read well from about 220 px to 900 px wide: never a horizontal scrollbar; long
+     names end in an ellipsis (the full name is the row's tooltip); counts and badges stay whole. */
+  html, body { margin: 0; background: transparent; color: var(--text); overflow-x: hidden; max-width: 100%;
     font: 12px -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif; user-select: none; }
+  * { box-sizing: border-box; }
   ul { list-style: none; margin: 0; padding: 0; }
-  .row { display: flex; align-items: center; gap: 6px; height: 24px; border-radius: 4px; cursor: default; }
+  .row { display: flex; align-items: center; gap: 6px; height: 24px; border-radius: 4px; cursor: default;
+    min-width: 0; overflow: hidden; }
   .row:hover { background: var(--hover); }
   .caret { width: 14px; text-align: center; color: var(--muted); cursor: pointer; flex: none; }
   .caret.leaf { cursor: default; }
@@ -27,23 +31,28 @@
   .icon.hub { background: #6b7480; border-radius: 50%; width: 12px; }
   .icon.project { background: #f08a24; }
   .icon.folder { background: #c9a23f; clip-path: polygon(0 15%, 40% 15%, 50% 30%, 100% 30%, 100% 100%, 0 100%); }
-  .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .label { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .empty, .loading { color: var(--muted); min-height: 22px; line-height: 22px; font-style: italic; }
   .error { color: var(--bad); min-height: 22px; line-height: 22px; }
   .retry { font: inherit; margin-left: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px;
     background: transparent; color: var(--text); cursor: pointer; }
-  .count { color: var(--muted); flex: none; }
-  .badge { color: var(--good); flex: none; font-size: 11px; }
+  .count { color: var(--muted); flex: none; white-space: nowrap; }
+  .badge { color: var(--good); flex: none; white-space: nowrap; font-size: 11px; padding-right: 4px; }
   [role="treeitem"]:focus { outline: none; }
   [role="treeitem"]:focus > .row { box-shadow: inset 0 0 0 2px var(--tick); }
-  .hint { color: var(--muted); margin: 4px 4px 6px; }
-  #filter { box-sizing: border-box; width: calc(100% - 8px); margin: 0 4px 6px; padding: 3px 6px; font: inherit;
+  .hint { color: var(--muted); margin: 4px 4px 6px; line-height: 1.35; }
+  #filter { display: block; width: calc(100% - 8px); min-width: 0; margin: 0 4px 6px; padding: 3px 6px; font: inherit;
     color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 4px; }
+  /* Very narrow: drop the per-row icon and the key help rather than the names. */
+  @media (max-width: 259px) {
+    .icon { display: none; }
+    .keys { display: none; }
+  }
 </style>
 </head>
 <body>
   <div class="hint">Tick what to export. Ticking a folder includes everything inside it.
-    Keys: arrows move and open, Space ticks, Enter opens.</div>
+    <span class="keys">Keys: arrows move and open, Space ticks, Enter opens.</span></div>
   <input id="filter" type="search" placeholder="Filter projects by name" aria-label="Filter projects by name">
   <ul id="tree" role="tree" aria-label="Hubs, projects and folders"><li class="empty">Loading your hubs…</li></ul>
   <script src="tree.js"></script>

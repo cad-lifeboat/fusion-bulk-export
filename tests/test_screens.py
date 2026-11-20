@@ -24,7 +24,7 @@ class ScreensTests(unittest.TestCase):
         self.assertTrue(screens.VERSION.startswith('Fusion Bulk Export '))
         page = (ROOT / 'FusionBulkExport' / 'ui' / 'tree.html').read_text(encoding='utf-8')
         hint = re.search(r'<div class="hint">(.*?)</div>', page, re.S).group(1)
-        self.assertEqual(screens.TREE_HINT, ' '.join(hint.split()))
+        self.assertEqual(screens.TREE_HINT, " ".join(re.sub(r"<[^>]+>", "", hint).split()))
         self.assertIn('placeholder="%s"' % screens.FILTER, page)
         self.assertEqual(screens.OPEN_CHOICES, command.OPEN_CHOICES.strip())
 

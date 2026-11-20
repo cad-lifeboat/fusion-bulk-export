@@ -252,6 +252,7 @@ if (typeof document !== 'undefined') {
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = n.name;
+    line.title = n.name;  // the whole name, when the row is too narrow for it
     line.append(caret, box, icon, label);
     if (n.open && n.files !== null && n.kind !== 'hub') {
       const count = document.createElement('span');
