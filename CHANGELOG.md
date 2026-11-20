@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
 
 - The STEP file is an option, on by default: the dialog's "Also save a STEP file for each design" (remembered; unticked, a note says "Without STEP you get only .f3d files, which open only in Fusion."), `--no-step` on the command line, `"step": false` in a job. Without it each design is saved as `.f3d` only; its manifest entry records `"step": "off"`, `index.html` and `index.csv` show "STEP not requested", the summary, report and `status` say "STEP files were not requested for this export.", and `check` treats it as intended. Exporting into the same folder with STEP on again adds every missing STEP (those designs are exported again); with it off, a folder that has STEP files keeps them and nothing is exported again.
 - A STEP that Fusion cannot write no longer throws the design away: its `.f3d` is kept, with the warning "Saved, but Fusion could not write its STEP file" (counted under warnings, `"step": "failed"` with the reason in the manifest), and the next export tries the STEP again. Before, the design counted as failed and its `.f3d` was discarded (or, for an incomplete STEP, left on disk unrecorded).
