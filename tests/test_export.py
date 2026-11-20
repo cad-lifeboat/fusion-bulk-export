@@ -89,6 +89,33 @@ class ExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Selection.from_config(folders={'p': ['/']})
 
+    def test_selection_by_folder_id_tells_same_named_siblings_apart(self):
+        a, b, c = fake.File('A', 'a'), fake.File('B', 'b'), fake.File('C', 'c')
+        inner = fake.folder('Inner', [c], identity='i1')
+        data = fake.data(folders=[fake.folder('Twin', [a], identity='t1'),
+                                  fake.folder('Twin', [b], [inner], identity='t2')])
+        self.run_export(data, selection=Selection({'project-1': [[{'id': 't2', 'name': 'Twin'}]]}))
+        self.assertEqual(self.exported(), ['b', 'c'])
+        self.assertEqual(a.calls, 0)
+        self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        # Own files only, mixed with a name below an id; by name alone both twins match.
+        self.run_export(data, selection=Selection({'project-1': [[{'id': 't2'}, '']]}))
+        self.assertEqual(self.exported(), ['b'])
+        self.run_export(data, selection=Selection({'project-1': [[{'id': 't2'}, 'Inner']]}))
+        self.assertEqual(self.exported(), ['b', 'c'])
+        self.run_export(data, selection=Selection({'project-1': [['Twin']]}))
+        self.assertEqual(self.exported(), ['a', 'b', 'c'])
+
+    def test_selection_by_id_does_not_list_other_folders(self):
+        other = fake.folder('Twin', [fake.File('A', 'a')], identity='t1')
+        other.dataFolders = None  # listing it would fail and be logged
+        data = fake.data(folders=[other, fake.folder('Twin', [fake.File('B', 'b')], identity='t2')])
+        exporter, _ = self.run_export(data, selection=Selection({'project-1': [[{'id': 't2'}]]}))
+        self.assertEqual(exporter.run_info['discovery_errors'], [])
+        self.assertEqual(self.exported(), ['b'])
+
     def test_streams_exports_and_reports_where_it_is(self):
         data, files = self.selection_data()
         events = []

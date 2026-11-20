@@ -41,7 +41,8 @@ class Picker:
     in the output folder), "folders" (the subfolders, with ids, and the file count of a folder
     in a project, listed only when the user opens it; addressed by folder ids where known, else
     by name path) and reports "selection" after every tick, in the Selection format
-    {project id: None | [folder name paths]}.
+    {project id: None | [folder paths]}, where each folder in a path is {"id", "name"} when its
+    id is known (so a folder is told apart from a same-named sibling) and its name otherwise.
     """
     def __init__(self, app, inputs, trace=lambda message: None):
         self.app = app

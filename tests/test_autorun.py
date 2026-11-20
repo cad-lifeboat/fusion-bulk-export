@@ -121,6 +121,17 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual((odd_entry['path'], odd_entry['folder_ids']), (['Sub', 'A/B'], [None, 'folder-odd']))
         self.assertEqual(listing['errors'], [])
 
+    def test_folder_by_id_is_exact_beside_a_same_named_sibling(self):
+        project = self.data.dataHubs.item(0).dataProjects.item(0)
+        twins = [fake.folder('Twin', files=[fake.File('One', 'one')], identity='twin-1'),
+                 fake.folder('Twin', files=[fake.File('Two', 'two')], identity='twin-2')]
+        project.rootFolder.dataFolders.item(0).dataFolders = fake.Collection(*twins)
+        result = self.run_with(folders={'project-1': [{'id': 'twin-2'}]})
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['counts']['exported'], 1)
+        manifest = json.loads((self.output / 'manifest.json').read_text())
+        self.assertEqual([e['id'] for e in manifest['entries']], ['two'])
+
     def test_unknown_folder_id_is_an_error(self):
         result = self.run_with(folders={'project-1': [{'id': 'nope'}]})
         self.assertIn('Folder id nope was not found', result['errors'][0]['error'])

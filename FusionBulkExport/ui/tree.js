@@ -87,13 +87,22 @@ function toggle(n) {
   refreshUp(n);
 }
 
+// A folder's path for the add-in: per folder {id, name} when its id is known (exactly that
+// folder, even beside a same-named sibling), else its name.
+function address(n) {
+  return n.path.map(function (name, i) {
+    const id = n.ids[i];
+    return id === null || id === undefined ? name : { id: id, name: name };
+  });
+}
+
 // {project id: null (whole project) | [folder paths]} — the add-in's Selection format.
 function selection(roots) {
   const chosen = {};
   function folders(n, out) {
-    if (n.own) out.push(n.path.concat(['']));
+    if (n.own) out.push(address(n).concat(['']));
     (n.children || []).forEach(function (c) {
-      if (c.state === ON) out.push(c.path);
+      if (c.state === ON) out.push(address(c));
       else if (c.state === SOME) folders(c, out);
     });
     return out;
@@ -170,7 +179,7 @@ function markExported(roots, counts) {
 if (typeof module !== 'undefined') {
   module.exports = { OFF: OFF, ON: ON, SOME: SOME, BRIDGE_TIMEOUT_MS: BRIDGE_TIMEOUT_MS, build: build,
                      addFolders: addFolders, startLoading: startLoading, applyFolders: applyFolders,
-                     toggle: toggle, selection: selection, matches: matches, visibleRows: visibleRows,
+                     toggle: toggle, selection: selection, address: address, matches: matches, visibleRows: visibleRows,
                      keyAction: keyAction, markExported: markExported };
 }
 

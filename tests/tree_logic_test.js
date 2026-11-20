@@ -81,9 +81,15 @@ console.log('own files ok');
   assert.strictEqual(p.error, null);
   assert.strictEqual(p.files, 7);
   assert.deepStrictEqual(p.children.map(function (c) { return c.ids; }), [['f1'], ['f2']]);
-  // Selection stays by name path (what the command line and engine use).
+  // Folders with ids are sent by id: the second twin alone, not both.
   t.toggle(p.children[1]);
-  assert.deepStrictEqual(t.selection(r), { p: [['Twin']] });
+  assert.deepStrictEqual(t.selection(r), { p: [[{ id: 'f2', name: 'Twin' }]] });
+  t.applyFolders(p.children[1], { folders: [{ id: 'f3', name: 'In' }, 'Old'], files: 1 });
+  t.toggle(p.children[1]);
+  t.toggle(p.children[1].children[1]);
+  // A folder without an id (older answer) is addressed by name below its parent's id.
+  assert.deepStrictEqual(t.selection(r), { p: [[{ id: 'f2', name: 'Twin' }, 'Old']] });
+  t.toggle(p.children[1].children[1]);
   t.applyFolders(p.children[0], { folders: [], files: 0 });
   assert.deepStrictEqual(p.children[0].children, []);
 }
@@ -218,7 +224,7 @@ console.log('exported marks ok');
     key('ArrowRight');      // to Parts
     key(' ');               // tick it
     const sent = requests.filter(function (r) { return r[0] === 'selection'; }).pop();
-    assert.deepStrictEqual(sent[1], { p: [['Parts']] });
+    assert.deepStrictEqual(sent[1], { p: [[{ id: 'f', name: 'Parts' }]] });
     filterBox.listeners.input({ target: { value: 'zzz' } });
     assert.ok(text().indexOf('No project name contains') >= 0);
     context.window.fusionJavaScriptHandler.handle('exported', '{}');

@@ -187,6 +187,18 @@ class UItests(UIBase):
         reply = self.page(command, 'folders', dict(project='project-1', path=['Twin'], ids=['folder-b']))
         self.assertEqual(reply['folders'], [dict(id=None, name='Inside two')])
 
+    def test_ticked_twin_exports_only_that_folder(self):
+        one, two = fake.File('One', 'one'), fake.File('Two', 'two')
+        self.app.data = fake.data([], [fake.folder('Twin', [one], identity='folder-a'),
+                                       fake.folder('Twin', [two], identity='folder-b')])
+        command = self.open_dialog()
+        self.choose(command)
+        self.page(command, 'hubs')
+        self.page(command, 'selection', {'project-1': [[{'id': 'folder-b', 'name': 'Twin'}]]})
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['two'])
+        self.assertEqual(one.calls, 0)
+
     def test_projects_already_exported_are_marked(self):
         self.picker_data()
         self.open_dialog().execute.handlers[0].notify(None)  # everything into the folder

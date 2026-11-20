@@ -6,7 +6,8 @@ Configuration (all paths absolute):
    "projects": ["<project id>", ...],  optional; whole projects (default: everything)
    "folders": {"<project id>": ["Folder/Subfolder", {"id": "<folder id>"}, ...]},
                                      optional; chosen folders, by name path or by id
-                                     (inventory.json lists each file's folder_ids)
+                                     (inventory.json lists each file's folder_ids); a folder
+                                     by id is exactly that folder, even beside a same-named one
    "limit": 25,                      optional; export at most this many designs
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
@@ -97,19 +98,23 @@ def check_settings(config):
 
 
 def find_folder(folder, identity, path=()):
-    """The name path below folder of the subfolder with this id, or None."""
+    """The path below folder to the subfolder with this id, or None: a segment per folder,
+    {"id": ..., "name": ...} where the folder has an id (so the path picks exactly that folder,
+    even beside a same-named sibling), else its name."""
     for child in collection(folder.dataFolders):
-        if str(getattr(child, 'id', None)) == identity:
-            return list(path) + [child.name]
-        found = find_folder(child, identity, list(path) + [child.name])
+        child_id = getattr(child, 'id', None)
+        segment = child.name if child_id is None else dict(id=str(child_id), name=child.name)
+        if child_id is not None and str(child_id) == identity:
+            return list(path) + [segment]
+        found = find_folder(child, identity, list(path) + [segment])
         if found is not None:
             return found
     return None
 
 
 def resolve_folder_ids(data, selection):
-    """Add the name path of every folder chosen by id (a name may hold "/", which a name path
-    on the command line cannot)."""
+    """Add the path of every folder chosen by id, by ids from the project root down: exactly that
+    folder, whatever its name (a name may hold "/", and a sibling may have the same name)."""
     wanted = getattr(selection, 'folder_ids', None) or {}
     if not wanted:
         return

@@ -80,7 +80,7 @@ def walk(data, on_error=None, selection=None, visiting=None):
             for file in guarded(where, lambda: collection(folder.dataFiles)):
                 yield path, file
         for child in guarded(where, lambda: collection(folder.dataFolders)):
-            if selection is None or selection.may_contain(project, path + [child.name]):
+            if selection is None or selection.may_contain(project, path.child(child)):
                 yield from folders(hub, project, child, path.child(child))
     for hub in collection(data.dataHubs):
         for project in guarded([hub.name], lambda: collection(hub.dataProjects)):
@@ -118,13 +118,32 @@ def select_projects(data, keep):
     return view
 
 
+def segment_matches(segment, name, identity):
+    """Whether one segment of a chosen folder path names this folder: {"id": ...} matches the
+    folder with that cloud id (so same-named siblings stay apart), a string matches by name."""
+    if isinstance(segment, dict):
+        return identity is not None and segment.get('id') is not None and str(segment['id']) == str(identity)
+    return segment == name
+
+
+def path_matches(segments, path):
+    """Whether segments match the first len(segments) folders of path (a FolderPath, or a list of
+    names when no ids are known)."""
+    ids = getattr(path, 'ids', None) or [None] * len(path)
+    if len(segments) > len(path):
+        return False
+    return all(segment_matches(segment, path[index], ids[index]) for index, segment in enumerate(segments))
+
+
 class Selection:
     """What to export: everything, or chosen projects, whole or by folder.
 
     projects maps a project id to None (the whole project) or to a list of folder
-    paths, each a list of folder names below the project root. A chosen folder
-    includes its subfolders. A path ending in '' means only the files directly in
-    that folder ([''] is the files at the project's root).
+    paths, each a list of segments below the project root: a folder name, or {"id": folder id}
+    (optionally with "name", which is then only informative), which picks exactly that folder
+    even when a sibling has the same name. A chosen folder includes its subfolders. A path
+    ending in '' means only the files directly in that folder ([''] is the files at the
+    project's root).
     """
     def __init__(self, projects=None):
         self.projects = None if projects is None else {
@@ -146,9 +165,9 @@ class Selection:
             return True
         for folder in paths:
             if folder and folder[-1] == '':
-                if list(path) == folder[:-1]:  # files directly in this folder only
-                    return True
-            elif list(path[:len(folder)]) == folder:
+                if len(path) == len(folder) - 1 and path_matches(folder[:-1], path):
+                    return True  # files directly in this folder only
+            elif path_matches(folder, path):
                 return True
         return False
 
@@ -160,10 +179,11 @@ class Selection:
         if paths is None:
             return True
         for folder in paths:
-            if folder and folder[-1] == '':
-                if folder[:-1][:len(path)] == list(path):
+            target = folder[:-1] if folder and folder[-1] == '' else folder
+            if len(path) <= len(target):
+                if path_matches(target[:len(path)], path):
                     return True
-            elif list(path[:len(folder)]) == folder or folder[:len(path)] == list(path):
+            elif not (folder and folder[-1] == '') and path_matches(folder, path):
                 return True
         return False
 
