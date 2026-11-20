@@ -233,5 +233,25 @@ class FailingInARowTests(Base):
         self.assertEqual(counts['failed'], 8)
 
 
+class CountTests(Base):
+    def test_limit_counts_designs_exported_in_this_run_only(self):
+        first = fake.File('First', 'first')
+        self.run_export(fake.data([first]))
+        spec = fake.File('Spec.pdf', 'spec', extension='pdf')
+        another, third = fake.File('Another', 'another'), fake.File('Third', 'third')
+        _, counts = self.run_export(fake.data([first, spec, another, third]), limit=1)
+        self.assertEqual((counts['up_to_date'], counts['files'], counts['exported']), (1, 1, 1))
+        self.assertEqual((another.calls, third.calls), (1, 0))
+
+    def test_other_files_up_to_date_are_counted_apart_from_designs(self):
+        from fusion_bulk_export import report
+        data = fake.data([fake.File('Part', 'part'), fake.File('Spec.pdf', 'spec', extension='pdf')])
+        self.run_export(data)
+        _, counts = self.run_export(data)
+        self.assertEqual((counts['up_to_date'], counts['files_up_to_date']), (1, 1))
+        self.assertIn('1 already up to date, 0 other file(s) saved, 1 other file(s) already up to date',
+                      report.count_sentence(counts))
+
+
 if __name__ == '__main__':
     unittest.main()

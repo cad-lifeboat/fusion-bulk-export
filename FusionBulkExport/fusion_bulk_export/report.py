@@ -99,9 +99,10 @@ table { border-collapse: collapse; width: 100%; } th, td { text-align: left; ver
 
 def counts_html(counts):
     return ('<div class="counts"><span>Exported now: <b>%d</b></span><span>Already up to date: <b>%d</b></span>'
-            '<span>Other files saved: <b>%d</b></span><span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b>'
+            '<span>Other files saved: <b>%d</b></span><span>Other files up to date: <b>%d</b></span>'
+            '<span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b>'
             '</span></div>' % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
-                               counts.get('skipped', 0), counts.get('failed', 0)))
+                               counts.get('files_up_to_date', 0), counts.get('skipped', 0), counts.get('failed', 0)))
 
 
 def table_html(rows, heading, column):
@@ -218,9 +219,12 @@ def failure_reasons(manifest, run_info=None, limit=3):
 
 
 def count_sentence(counts):
-    """The run's counts in one line, designs and other files apart."""
-    return ('%d exported now, %d already up to date, %d other file(s) saved, %d skipped, %d failed.'
+    """The run's counts in one line, designs and other files apart ("already up to date" is
+    designs; other files already up to date are named when there are any)."""
+    unchanged = counts.get('files_up_to_date', 0)
+    return ('%d exported now, %d already up to date, %d other file(s) saved%s, %d skipped, %d failed.'
             % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
+               ', %d other file(s) already up to date' % unchanged if unchanged else '',
                counts.get('skipped', 0), counts.get('failed', 0)))
 
 

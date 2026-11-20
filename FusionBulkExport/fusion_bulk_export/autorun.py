@@ -10,7 +10,8 @@ Configuration (all paths absolute):
                                      by id is exactly that folder, even beside a same-named one
    "designs_only": false,            optional; true: skip other files (PDFs, drawings, uploads),
                                      which are otherwise saved as Fusion hands them out
-   "limit": 25,                      optional; export at most this many designs
+   "limit": 25,                      optional; stop after exporting this many designs (those
+                                     already up to date and other files do not count)
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
 "diagnostics" writes diagnostics.json (Fusion version, the export-related API
@@ -18,7 +19,7 @@ members and text commands this build offers) for bug reports; it reads no design
 "inventory" writes inventory.json (every hub, project and design with ids and
 versions) without opening anything. An export also writes index.html and index.csv (the
 human-readable report) into the output folder; counts in autorun-result.json are exported,
-up_to_date, files (other files saved), skipped and failed. Creating a file named STOP in the output
+up_to_date (designs), files (other files saved), files_up_to_date, skipped and failed. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
 
 A job that arrives while an export from the toolbar button is running is not started: its

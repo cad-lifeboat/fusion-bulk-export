@@ -32,21 +32,26 @@ SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journa
 
 
 # Run counts, by what happened to each item this run.
-COUNT_KEYS = ('exported', 'up_to_date', 'files', 'skipped', 'failed')
+COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'failed')
 COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed'}
 FILES_SAVED = 'files'  # the count of other files (not designs) saved this run
+FILES_UP_TO_DATE = 'files_up_to_date'  # other files saved before and still unchanged
 
 
 def count_key(entry, status):
-    """The run count an item adds to: other files saved count apart from designs exported."""
-    if status == 'done' and entry is not None and entry.get('kind') == 'file':
-        return FILES_SAVED
+    """The run count an item adds to: other files count apart from designs."""
+    if entry is not None and entry.get('kind') == 'file':
+        if status == 'done':
+            return FILES_SAVED
+        if status == 'verified':
+            return FILES_UP_TO_DATE
     return COUNT_OF_STATUS[status]
 
 
 def new_counts():
-    """exported: designs written this run; up_to_date: already exported and checked; files: other
-    files (PDFs, drawings, uploads) saved this run; skipped: not saved, with a reason (a file type
+    """exported: designs written this run; up_to_date: designs already exported and checked;
+    files: other files (PDFs, drawings, uploads) saved this run; files_up_to_date: other files
+    saved before and checked; skipped: not saved, with a reason (a file type
     Fusion does not hand out, other files when only designs are wanted, a design without a design
     product); failed: will be tried again on the next run."""
     return dict((key, 0) for key in COUNT_KEYS)
@@ -606,6 +611,9 @@ class Exporter:
             on_trouble=None, other_files=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
+        limit: stop once this many designs were exported in this run (designs already up to
+        date, failures and other files do not count).
+
         progress(state) is called while listing and before each design, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
         project_name, path (folder names), design (designs found so far) and name; also
@@ -729,7 +737,7 @@ class Exporter:
                             self.run_info.update(stopped_reason=problem.reason, stopped_code=problem.code)
                             break
                         failing = []
-                    if limit is not None and found >= limit:
+                    if limit is not None and counts['exported'] >= limit:
                         break  # a small run on a large account need not list everything
         except Exception as error:
             self.run_info['error'] = str(error)
@@ -766,7 +774,7 @@ class Exporter:
         kind = 'design' if str(file.fileExtension).lower() == 'f3d' else 'file'
         entry = entries.get(key)
         if entry and self.valid(entry):
-            counts[COUNT_OF_STATUS['verified']] += 1
+            counts[count_key(entry, 'verified')] += 1
             self.log('verified ' + key)
             if self.refreshed:
                 self.record(entry)  # its files' times were recorded now; else nothing to save
