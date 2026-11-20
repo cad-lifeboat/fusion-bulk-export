@@ -9,7 +9,7 @@ Get all of your Fusion designs out, in one go.
 - Resumable: run it again on the same folder and it skips what's already done.
 - Everything stays on your computer. Nothing in your account is changed.
 
-**Tested on real Fusion** (2706.1.17) on macOS and Windows 11 with real accounts, through the toolbar button and the command line: a whole account of 59 designs exported with no failures in under 3 minutes, every archive and STEP file checked; single folders, resuming, cancelling and long paths were checked too. Runs of hundreds of designs have been reported by users on earlier versions but not yet measured by us on this one. If you hit a problem, please [open an issue](../../issues/new/choose); if it worked, [tell us how it went](../../discussions/new?category=show-and-tell).
+**Tested on real Fusion** (2706.1.17) on macOS and Windows 11 with real accounts, through the toolbar button and the command line: a whole account of 59 designs exported with no failures in under 3 minutes, every archive and STEP file checked; single folders, resuming, cancelling and long paths were checked too. Users have reported whole-account runs of 120 and 959 designs with no failures on earlier 0.3 versions (see [Discussions](../../discussions)); we have not measured a run that large ourselves. If you hit a problem, please [open an issue](../../issues/new/choose); if it worked, [tell us how it went](../../discussions/new?category=show-and-tell).
 
 ## Quick start
 
@@ -55,7 +55,7 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 - A name too long for its row ends in "…": hover over the row to read it whole.
 - If a folder cannot be listed, the tree says so with a **Retry** button.
 - The button is always there, also after an export from the command line. Only one export runs at a time.
-- **Also save a STEP file for each design** is ticked by default (remembered). Keep it: a STEP opens in almost any CAD program, while the `.f3d` opens only in Fusion. Unticked, each design is saved as `.f3d` only, and the dialog says so ("Without STEP you get only .f3d files, which open only in Fusion."). Exporting into the same folder later with it ticked adds the missing STEP files.
+- **Also save a STEP file for each design** is ticked by default (remembered). Keep it: a STEP opens in almost any CAD program, while the `.f3d` opens only in Fusion. It costs time: in our tests a design took about twice as long with its STEP as without. Unticked, each design is saved as `.f3d` only, and the dialog says so ("Without STEP you get only .f3d files, which open only in Fusion."). Exporting into the same folder later with it ticked adds the missing STEP files.
 - The dialog reads top to bottom: **Save to**, the STEP box, the other-files box, the **Export** choice, then the tree, so every control is in view when it opens; the tree scrolls inside itself.
 - On Windows the output folder's own path can be at most 200 characters (the files below it may be longer). A longer one is refused, with the reason under **Save to**; choose a shorter folder such as `C:\FusionExport`.
 - While it exports, the progress text says which design (or "file N" for another file) it is on, before Fusion starts on it: if Fusion stalls, you can see on which item.
