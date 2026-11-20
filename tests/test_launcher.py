@@ -64,6 +64,8 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('257 characters long; on Windows it can be at most 200', problem)
         self.assertIsNone(launcher.root_problem('C:\\' + 'y' * 197, 'Windows'))
         self.assertIsNone(launcher.root_problem('/' + 'z' * 300, 'Darwin'))  # no such rule on macOS
+        with patch.object(launcher.sys, 'platform', 'win32'):  # the system named decides, not the host
+            self.assertIsNone(launcher.root_problem('/' + 'z' * 300, 'Darwin'))
         args = launcher.argparse.Namespace(output=str(self.root / ('d' * 250)), command='export', project=None,
                                            limit=None, folder=None, designs_only=False, timeout=10)
         with patch.object(launcher, 'system', return_value='Windows'), \
@@ -172,7 +174,7 @@ class LauncherTests(unittest.TestCase):
         (out / 'STOP').write_text('')
         installed.mkdir(parents=True)
         launcher.install(installed, out, 'export', ['p1'], 5)
-        self.assertEqual(json.loads((installed / 'autorun.json').read_text()),
+        self.assertEqual(json.loads((installed / 'autorun.json').read_text(encoding='utf-8')),
                          dict(output=str(out), mode='export', projects=['p1'], limit=5))
         self.assertTrue((installed / 'FusionBulkExport.py').exists())
         # Every module of the add-in package is installed (a broad "autorun*" ignore once dropped one).
@@ -251,7 +253,7 @@ class LauncherTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(launcher.reset(installed), 0)
         self.assertEqual(sorted(p.name for p in installed.iterdir()), ['FusionBulkExport.manifest', 'autorun.alive'])
-        self.assertEqual((installed / 'FusionBulkExport.manifest').read_text(), manifest)
+        self.assertEqual((installed / 'FusionBulkExport.manifest').read_text(encoding='utf-8'), manifest)
         self.assertIn('button is always available', out.getvalue())
 
     def test_wait_reports_busy_fusion(self):
@@ -293,9 +295,9 @@ class LauncherTests(unittest.TestCase):
         installed.mkdir()
         with patch.object(launcher.shutil, 'copytree'):
             launcher.install(installed, out, 'export', designs_only=True)
-            self.assertTrue(json.loads((installed / 'autorun.json').read_text())['designs_only'])
+            self.assertTrue(json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))['designs_only'])
             launcher.install(installed, out, 'export')
-            self.assertNotIn('designs_only', json.loads((installed / 'autorun.json').read_text()))
+            self.assertNotIn('designs_only', json.loads((installed / 'autorun.json').read_text(encoding='utf-8')))
         seen = []
         with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.designs_only) or 0):
             launcher.main(['export', str(out), '--designs-only'])
@@ -311,7 +313,7 @@ class LauncherTests(unittest.TestCase):
                 patch.object(launcher, 'addins_dir', return_value=installed.parent), \
                 patch.object(launcher, 'alive', return_value=True), \
                 patch.object(launcher, 'wait', side_effect=lambda *a, **k: jobs.append(
-                    json.loads((installed / 'autorun.json').read_text())) or 0), \
+                    json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))) or 0), \
                 contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(launcher.start(args), 0)
         lines = [line for line in stream.getvalue().splitlines() if 'drawing' in line.lower()]
@@ -488,14 +490,14 @@ class AddInVersionTests(unittest.TestCase):
         copied, line = self.update(self.addin(self.root / 'checkout', '0.3.0'))
         self.assertTrue(copied)
         self.assertEqual(line, 'Updating the installed add-in 0.2.3 to 0.3.0 from this checkout.')
-        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# entry\n')
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(encoding='utf-8'), '# entry\n')
 
     def test_a_newer_installed_add_in_is_never_downgraded(self):
         self.installed_copy('0.3.0', '# newer\n')
         copied, line = self.update(self.addin(self.root / 'checkout', '0.2.3'))
         self.assertFalse(copied)
         self.assertIn('newer than this checkout (0.2.3) and is never downgraded', line)
-        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# newer\n')
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(encoding='utf-8'), '# newer\n')
 
     def test_the_same_version_is_kept_whether_or_not_its_files_match(self):
         source = self.addin(self.root / 'checkout', '0.3.0')
@@ -508,7 +510,7 @@ class AddInVersionTests(unittest.TestCase):
             copied, line = self.update(source)
             self.assertFalse(copied)
             self.assertIn('same version as this checkout but other files, so it is kept', line)
-            self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# test build\n')
+            self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(encoding='utf-8'), '# test build\n')
 
     def test_nothing_is_replaced_while_an_export_runs(self):
         self.installed_copy('0.2.3', '# old\n')
@@ -516,7 +518,7 @@ class AddInVersionTests(unittest.TestCase):
         copied, line = self.update(self.addin(self.root / 'checkout', '0.3.0'))
         self.assertFalse(copied)
         self.assertIn('An export is running in Fusion', line)
-        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# old\n')
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(encoding='utf-8'), '# old\n')
         # Idle (or an add-in from before the heartbeat said so): the update goes ahead.
         for heartbeat in (json.dumps(dict(time=time.time(), busy=None)), str(time.time())):
             (self.installed / 'autorun.alive').write_text(heartbeat)
@@ -529,5 +531,5 @@ class AddInVersionTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as stream:
             launcher.install(self.installed, out, 'export')
         self.assertIn('never downgraded', stream.getvalue())
-        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# newer\n')
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(encoding='utf-8'), '# newer\n')
         self.assertTrue((self.installed / 'autorun.json').is_file())  # the job is still sent

@@ -227,7 +227,7 @@ def root_problem(output, name=None):
     if str(package) not in sys.path:
         sys.path.insert(0, str(package))
     from fusion_bulk_export.names import output_root_problem
-    return output_root_problem(output, 'win32' if (name or system()) == 'Windows' else sys.platform)
+    return output_root_problem(output, 'win32' if (name or system()) == 'Windows' else 'darwin')
 
 
 def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):

@@ -86,7 +86,8 @@ class Watcher(threading.Thread):
     def poll(self):
         # The heartbeat also says whether an export is running: the command-line launcher then
         # replaces no files of this add-in.
-        (_HERE / 'autorun.alive').write_text(json.dumps(dict(time=time.time(), busy=_busy['by'])))
+        (_HERE / 'autorun.alive').write_text(json.dumps(dict(time=time.time(), busy=_busy['by'])),
+                                           encoding='utf-8')
         if (_HERE / 'autorun.json').is_file() and _busy['by'] != 'job':
             adsk.core.Application.get().fireCustomEvent(_EVENT, '')
 
