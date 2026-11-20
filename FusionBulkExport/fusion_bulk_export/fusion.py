@@ -5,12 +5,14 @@ import adsk.core
 import adsk.fusion
 from .core import NonDesign, collection
 from .names import fusion_path, long_path
+from .staging import Staging
 
 
 class FusionAdapter:
     def __init__(self, app):
         self.app = app
         self.details = {}  # facts about the last exported design, stored in its manifest entry
+        self.staging = None  # set by the Exporter: where Fusion writes before files are moved
 
     def references(self, data_file):
         """Designs this one references (linked components, derives), by cloud id and name.
@@ -73,8 +75,14 @@ class FusionAdapter:
         # Asked for first: Fusion fetches it while the design opens and exports; never waited for.
         future = thumbnail_future(data_file)
         paths = self.export_design(data_file, stem)
-        picture = save_thumbnail(future, str(stem) + '.png')
+        picture = save_thumbnail(future, str(stem) + '.png', self.stage())
         return paths + [picture] if picture else paths
+
+    def stage(self):
+        if self.staging is None:
+            import tempfile
+            self.staging = Staging(tempfile.gettempdir())
+        return self.staging
 
     def export_design(self, data_file, stem):
         before = self.open_ids()
@@ -114,15 +122,19 @@ class FusionAdapter:
         archive = str(stem) + '.f3d'
         step = str(stem) + '.step'
         manager = design.exportManager
-        # Long Windows paths go to Fusion with the \\?\ prefix (names.fusion_path decides).
-        if not manager.execute(manager.createFusionArchiveExportOptions(fusion_path(archive))):
+        # Fusion hangs on long paths: it writes to short staging paths, then the files move.
+        staging = self.stage()
+        staged_archive, staged_step = staging.path('.f3d'), staging.path('.step')
+        if not manager.execute(manager.createFusionArchiveExportOptions(fusion_path(staged_archive))):
             raise RuntimeError('Fusion archive export returned false')
-        if not os.path.isfile(long_path(archive)):
+        if not os.path.isfile(long_path(staged_archive)):
             raise RuntimeError('Fusion reported a successful archive export but wrote no file')
-        if not manager.execute(manager.createSTEPExportOptions(fusion_path(step))):
+        if not manager.execute(manager.createSTEPExportOptions(fusion_path(staged_step))):
             raise RuntimeError('STEP export returned false')
-        if not os.path.isfile(long_path(step)):
+        if not os.path.isfile(long_path(staged_step)):
             raise RuntimeError('Fusion reported a successful STEP export but wrote no file')
+        staging.place(staged_archive, archive)
+        staging.place(staged_step, step)
         return [archive, step]
 
 
@@ -173,7 +185,7 @@ def thumbnail_future(data_file):
         return None
 
 
-def save_thumbnail(future, path):
+def save_thumbnail(future, path, staging):
     """Write the thumbnail to path if it has arrived; the path, or None. Never waits and never
     raises: a thumbnail is a convenience, so anything unexpected means no thumbnail."""
     try:
@@ -185,16 +197,17 @@ def save_thumbnail(future, path):
         picture = future.dataObject
         if picture is None:
             return None
+        staged = staging.path('.png')  # Fusion writes to a short path; the file then moves
         saved = False
         if hasattr(picture, 'saveToFile'):
-            saved = picture.saveToFile(fusion_path(path))
+            saved = picture.saveToFile(fusion_path(staged))
         elif hasattr(picture, 'getAsBase64String'):
             import base64
-            with open(long_path(path), 'wb') as stream:
+            with open(long_path(staged), 'wb') as stream:
                 stream.write(base64.b64decode(picture.getAsBase64String()))
             saved = True
-        if saved and os.path.isfile(long_path(path)) and os.path.getsize(long_path(path)) > 0:
-            return path
+        if saved and os.path.isfile(long_path(staged)) and os.path.getsize(long_path(staged)) > 0:
+            return staging.place(staged, path)
     except Exception:
         pass
     try:

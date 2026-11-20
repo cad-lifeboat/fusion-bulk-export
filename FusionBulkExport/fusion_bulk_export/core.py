@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 
 from . import checks
 from .journal import Journal, replay
-from .names import WINDOWS_LIMIT, Names, clean, long_path, too_long, windows_length
+from .names import Names, clean, long_path, too_long
 from .power import keep_awake
+from .staging import Staging
 
 SCHEMA = 2  # manifest schema; schema-1 folders are read and saved as 2
 
@@ -304,6 +305,12 @@ class Exporter:
         if not os.path.isdir(long_path(self.root)):
             raise ValueError('The output folder is not a folder: %s' % self.root)
         self.adapter = adapter
+        # Fusion writes to short paths here; the files are then moved to their final names.
+        self.staging = Staging(self.root)
+        try:
+            adapter.staging = self.staging
+        except AttributeError:
+            pass
         self.error_callback = error_callback
         self.last_error = None
         self.platform = sys.platform
@@ -489,6 +496,7 @@ class Exporter:
             self.log('could not read ' + json.dumps(where, ensure_ascii=False) + ': ' + str(error))
             if self.error_callback:
                 self.error_callback('discovery ' + json.dumps(where, ensure_ascii=False), error)
+        self.staging.clean()  # anything a stopped run left half-written
         self.save()
         found = 0
         failing = []  # errors of the designs that failed one after another
@@ -579,6 +587,7 @@ class Exporter:
             self.run_info['error'] = str(error)
             raise
         finally:
+            self.staging.clean()
             self.run_info.update(finished=now(), counts=counts, found=found)
             try:
                 self.save()
@@ -612,13 +621,13 @@ class Exporter:
         if file.fileExtension.lower() != 'f3d':
             entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
-            short, stem = False, None
+            stem = None
             for attempt in range(2):
                 entry['attempts'] = attempt + 1
                 try:
                     if hasattr(self.adapter, 'references'):
                         entry['references'] = self.adapter.references(file)
-                    stem, facts = self.destination(hub, project, folders, file, short)
+                    stem, facts = self.destination(hub, project, folders, file)
                     entry.update(facts)
                     written = self.adapter.export(file, stem)
                     paths = [path for path in written if not str(path).lower().endswith('.png')]
@@ -651,9 +660,6 @@ class Exporter:
                     trouble = self.trouble(error)
                     if trouble is not None:
                         break  # a second attempt cannot succeed either
-                    # A long path Fusion may not take: try the second time in the shortened form.
-                    short = (stem is not None and self.platform == 'win32'
-                             and windows_length(str(stem) + '.step') > WINDOWS_LIMIT)
         counts[COUNT_OF_STATUS[entry['status']]] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:

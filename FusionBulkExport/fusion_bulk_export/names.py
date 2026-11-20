@@ -7,9 +7,9 @@
   suffix ("~1a2b", from the item's identity) is added only when two different items would get
   the same name, compared without regard to case. The choices are rebuilt from the manifest
   on every run, so an item keeps its name from run to run.
-- long_path() / fusion_path(): Windows' 260-character limit is avoided with the "\\\\?\\"
-  prefix for this add-in's own file access, and (switchable, see FUSION_LONG_PATHS) for the
-  paths handed to Fusion's exporter.
+- long_path(): Windows' 260-character limit is avoided with the "\\\\?\\" prefix for this
+  add-in's own file access. Fusion itself is never handed a long or prefixed path (it hangs on
+  one): fusion_path() refuses them, and Fusion writes to short staging paths (staging.py).
 """
 import hashlib
 import json
@@ -24,12 +24,9 @@ RESERVED = {'CON', 'PRN', 'AUX', 'NUL'} | {'COM%d' % i for i in range(1, 10)} | 
 # Files the add-in and its command line keep in the output folder: never a hub's folder name.
 ROOT_FILES = ('manifest.json', 'manifest.json.tmp', 'manifest.journal', 'export.log', 'autorun.log',
               'autorun-result.json', 'inventory.json', 'diagnostics.json', 'STOP', '.write-check',
-              'index.html', 'index.csv')
+              'index.html', 'index.csv', '.staging')
 
-# Whether Fusion's exporter is given "\\?\"-prefixed paths on Windows. If Fusion turns out to
-# reject them, set this to False: paths it cannot take are then written in the shortened form.
-FUSION_LONG_PATHS = True
-WINDOWS_LIMIT = 259     # characters in a full path without the long-path prefix
+WINDOWS_LIMIT = 259     # characters in a full path without the long-path prefix (and Fusion's limit)
 WINDOWS_LONG_LIMIT = 32000
 MAC_LIMIT = 1023        # bytes in a full path on macOS
 OTHER_LIMIT = 4095
@@ -123,13 +120,18 @@ def long_path(path, windows=None):
 
 
 def fusion_path(path, windows=None):
-    """The path string handed to Fusion's exporter. One place to switch the prefix off."""
-    return long_path(path, windows) if FUSION_LONG_PATHS else str(path)
+    """The path string handed to Fusion. Fusion hangs when given a path over 260 characters on
+    Windows (even with the \\\\?\\ prefix), so a long or prefixed path is refused here; Fusion
+    writes to a short staging path instead (staging.py)."""
+    text = str(path)
+    if text.startswith('\\\\?\\') or windows_length(text) > WINDOWS_LIMIT:
+        raise ValueError('Path too long to hand to Fusion (%d characters)' % windows_length(text))
+    return text
 
 
 def too_long(path, platform=None):
     """Whether Fusion and the file system can be expected to fail on this full path."""
     platform = sys.platform if platform is None else platform
     if platform == 'win32':
-        return windows_length(path) > (WINDOWS_LONG_LIMIT if FUSION_LONG_PATHS else WINDOWS_LIMIT)
+        return windows_length(path) > WINDOWS_LONG_LIMIT
     return len(str(path).encode('utf-8')) > (MAC_LIMIT if platform == 'darwin' else OTHER_LIMIT)

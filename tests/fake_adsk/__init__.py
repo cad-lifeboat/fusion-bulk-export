@@ -62,6 +62,8 @@ class Manager:
         return path
 
     def execute(self, path):
+        # Real Fusion hangs on a path over 260 characters, even with the \\?\ prefix: never give it one.
+        assert len(path) <= 259 and not path.startswith('\\\\?\\'), 'Fusion would hang on ' + path
         if self.file.failures:
             self.file.failures -= 1
             raise RuntimeError('Synthetic export failure')
@@ -78,6 +80,7 @@ PNG = b'\x89PNG\r\n\x1a\n synthetic thumbnail'
 def thumbnail(state='finished', data=PNG):
     """A DataObjectFuture: state 'finished', 'processing' or 'failed'; its dataObject saves data."""
     def save(path):
+        assert len(path) <= 259 and not path.startswith('\\\\?\\'), 'Fusion would hang on ' + path
         Path(path).write_bytes(data)
         return True
     states = dict(processing=0, finished=1, failed=2)

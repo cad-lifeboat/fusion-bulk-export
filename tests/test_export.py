@@ -571,16 +571,61 @@ class ExportTests(unittest.TestCase):
         entry = self.manifest['entries'][0]
         self.assertEqual((entry['status'], entry['shortened']), ('done', True))
 
-    def test_windows_long_path_retries_shortened_after_a_failure(self):
+    def test_fusion_writes_to_short_staging_paths_then_files_move(self):
         file = fake.File('y' * 100)
-        file.failures = 1
-        folders = [fake.folder('x' * 100, files=[file]), ]
+        folders = [fake.folder('x' * 100, files=[file])]
         folders = [fake.folder('z' * 100, folders=folders)]
-        exporter = Exporter(self.root, self.adapter)
-        exporter.platform = 'win32'
-        exporter.run(fake.data(folders=folders))
-        entry = json.loads((self.root / 'manifest.json').read_text())['entries'][0]
-        self.assertEqual((entry['status'], entry['attempts'], entry['shortened']), ('done', 2, True))
+        given = []
+        original = fake.Manager.execute
+        with patch.object(fake.Manager, 'execute', lambda m, path: given.append(path) or original(m, path)):
+            self.run_export(fake.data(folders=folders))
+        entry = self.manifest['entries'][0]
+        self.assertEqual((entry['status'], entry['shortened']), ('done', False))
+        final = self.root / entry['files'][0]['path']
+        self.assertGreater(len(str(final)), 300)
+        self.assertTrue(final.is_file())
+        self.assertTrue(all(Path(path).parent == self.root / '.staging' and len(path) < 260 for path in given))
+        self.assertTrue((self.root / entry['thumbnail']['path']).is_file())
+        self.assertFalse((self.root / '.staging').exists())  # emptied at the end of the run
+
+    def test_fake_fusion_refuses_long_or_prefixed_paths(self):
+        manager = fake.Manager(fake.File())
+        for path in ('/' + 'x' * 300 + '.step', '\\\\?\\C:\\a.step'):
+            with self.assertRaises(AssertionError):
+                manager.execute(path)
+
+    def test_deep_output_folder_stages_in_the_temporary_folder(self):
+        from fusion_bulk_export import staging
+        deep = self.root / ('d' * 120) / ('e' * 120)
+        temporary = self.root / 'tmp'
+        with patch.object(staging.tempfile, 'gettempdir', return_value=str(temporary)):
+            exporter = Exporter(deep, self.adapter)
+            self.assertEqual(exporter.staging.folder.parent, temporary)
+            exporter.run(fake.data([fake.File()]))
+        manifest = json.loads((deep / 'manifest.json').read_text())
+        self.assertEqual(manifest['entries'][0]['status'], 'done')
+        self.assertFalse(exporter.staging.folder.exists())
+
+    def test_staged_files_cross_disks_by_copy_and_leftovers_are_cleaned(self):
+        from fusion_bulk_export import staging
+        (self.root / '.staging').mkdir()
+        (self.root / '.staging' / 'left-over.f3d').write_bytes(b'from a stopped run')
+        real = os.replace
+
+        def other_disk(source, target):
+            if '.staging' in str(source):
+                raise OSError(errno.EXDEV, 'Invalid cross-device link')
+            return real(source, target)
+        with patch.object(staging.os, 'replace', other_disk):
+            self.run_export(fake.data([fake.File()]))
+        self.assertEqual(self.manifest['entries'][0]['status'], 'done')
+        self.assertFalse((self.root / '.staging').exists())
+
+    def test_fusion_path_refuses_long_and_prefixed_paths(self):
+        self.assertEqual(fusion_path('C:\\a', windows=True), 'C:\\a')
+        for bad in ('C:\\' + 'x' * 300, '\\\\?\\C:\\a'):
+            with self.assertRaises(ValueError):
+                fusion_path(bad)
 
     def test_long_path_prefix(self):
         self.assertEqual(long_path('C:\\out\\a', windows=True), '\\\\?\\C:\\out\\a')
@@ -589,11 +634,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(long_path('\\\\?\\C:\\a', windows=True), '\\\\?\\C:\\a')
         self.assertEqual(long_path('relative\\a', windows=True), 'relative\\a')
         self.assertEqual(long_path('/tmp/a', windows=False), '/tmp/a')
-        self.assertEqual(fusion_path('C:\\a', windows=True), '\\\\?\\C:\\a')
-        with patch.object(names, 'FUSION_LONG_PATHS', False):
-            self.assertEqual(fusion_path('C:\\a', windows=True), 'C:\\a')
-            self.assertTrue(names.too_long('C:\\' + 'x' * 300, 'win32'))
-        self.assertFalse(names.too_long('C:\\' + 'x' * 300, 'win32'))
+        self.assertFalse(names.too_long('C:\\' + 'x' * 300, 'win32'))  # Python writes long final paths
 
     def test_schema_1_folder_resumes_without_re_exporting(self):
         old = fake.File('Old', 'old')
