@@ -42,13 +42,6 @@ class File:
         # DataFile.download(folder, None): how the synthetic Fusion answers ('ok', 'false',
         # 'raise', 'nothing', 'two' files, or 'pdf': the file comes down as a PDF), and what.
         self.download_mode = 'ok'
-        # A drawing (.f2d): how its PDF export behaves: 'now', 'later' (written a few doEvents
-        # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false',
-        # 'partial' (a PDF that stops before its end).
-        self.pdf_mode = 'now'
-        # Seen on real Fusion: the first execute() on a freshly opened drawing returns True and
-        # writes nothing; the next one writes the PDF.
-        self.first_pdf_empty = True
         self.products_flaky = 0
         # Seen with old or linked designs: Fusion marks a document modified as it opens it
         # (a recompute, an updated reference), although nobody edited it.
@@ -161,49 +154,16 @@ def do_events():
         PENDING.pop(0)()
 
 
-class DrawingManager:
-    """DrawingExportManager of a synthetic drawing (one per opened document)."""
-    def __init__(self, file):
-        self.file = file
-        self.executes = 0
-
-    def createPDFExportOptions(self, path):
-        return NS(filename=path, openPDF=True, sheetRange=0, sheetsToExport=0, useLineWeights=True)
-
-    def execute(self, options):
-        path = options.filename
-        assert len(path) <= 259 and not path.startswith('\\\\?\\'), 'Fusion would hang on ' + path
-        assert options.openPDF is False, 'a PDF viewer would open'
-        mode = self.file.pdf_mode
-        if mode == 'false':
-            return False
-        self.executes += 1
-        if self.executes == 1 and self.file.first_pdf_empty:
-            return True  # as on real Fusion: True, and no file
-
-        def write():
-            Path(path).write_bytes(PDF if mode != 'partial' else PDF[:20])
-        if mode in ('now', 'partial'):
-            write()
-        elif mode == 'later':
-            PENDING.extend([lambda: None, lambda: None, write])
-        return True
+class FusionCrashed(BaseException):
+    """Fusion itself died. A BaseException, so no `except Exception` in the add-in can hide it."""
 
 
-class Drawing:
-    """The product of an opened drawing: class name Drawing. Reading productType raises, as on
-    real Fusion."""
-    objectType = 'adsk::drawing::Drawing'
-
-    def __init__(self, file):
-        self.exportManager = DrawingManager(file)
-
-    @property
-    def productType(self):
-        raise RuntimeError('2 : InternalValidationError : adapter')
+def crashed(*args):
+    raise FusionCrashed(DRAWING_CRASH)
 
 
-PDF = b'%PDF-1.4\n% synthetic drawing, no real content\ntrailer\n<<>>\n%%EOF\n'
+DRAWING_CRASH = ('Fusion crashed: a drawing was opened or exported through the API (seen on real Fusion: '
+                 'an access violation in its sheet export). The add-in must never do this.')
 
 
 def write_archive(path):
@@ -266,8 +226,9 @@ class Document:
             exportManager=Manager(file), rootComponent=root,
             allComponents=Collection(*components)) if file.design else None)
         if str(file.fileExtension).lower() == 'f2d':
-            # A drawing: its products hold one Drawing with a DrawingExportManager.
-            self._products = Collection(Drawing(file))
+            # A drawing the user opened: anything the add-in reads from it is a crash on export.
+            self._products = Collection(NS(exportManager=NS(
+                createPDFExportOptions=lambda path: path, execute=crashed)))
 
     @property
     def products(self):
@@ -303,6 +264,10 @@ class Documents(Collection):
     def open(self, file, visible):
         assert visible is False
         file.calls += 1
+        # On real Fusion, a drawing opened through the API took minutes and its PDF export then
+        # crashed Fusion itself: opening one is a test failure, not a modelled behaviour.
+        if str(file.fileExtension).lower() == 'f2d':
+            raise FusionCrashed(DRAWING_CRASH)
         if file.open_error:
             raise RuntimeError(file.open_error)
         for open_ in self.items:

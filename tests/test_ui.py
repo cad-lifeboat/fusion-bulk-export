@@ -507,8 +507,7 @@ class UItests(UIBase):
         self.page(command, 'selection', {'project-2': None})
         command.execute.handlers[0].notify(None)
         self.assertEqual(json.loads(self.settings.read_text()),
-                         dict(output=self.temp.name, mode='Choose projects or folders', other_files=True,
-                              drawings=False))
+                         dict(output=self.temp.name, mode='Choose projects or folders', other_files=True))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
         self.assertTrue(inputs.find('fbx_tree').isVisible)
@@ -533,34 +532,31 @@ class UItests(UIBase):
         self.assertEqual(self.results()[1]['rows'], [['Exported now', 0], ['Already up to date', 1], ['Skipped', 1]])
         self.assertFalse(self.open_dialog().commandInputs.find('fbx_files').value)
 
-    def test_drawings_checkbox_is_off_by_default_and_remembered(self):
+    def test_no_drawings_checkbox_and_drawings_are_not_supported(self):
         drawing = fake.File('Sheet', 'sheet', extension='f2d')
         self.app.data = fake.data([self.file, drawing])
+        self.settings.write_text(json.dumps(dict(drawings=True)))  # remembered by an earlier version
         command = self.open_dialog()
-        box = command.commandInputs.find('fbx_drawings')
-        self.assertEqual(box.name, 'Also export drawings as PDF (slow)')
-        self.assertIn('each drawing can take minutes', box.tooltip)
-        self.assertFalse(box.value)
-        note = command.commandInputs.find('fbx_drawings_note')
-        self.assertFalse(note.isVisible)  # the why is shown only once the box is ticked
-        box.value = True
-        self.change(command, box)
-        self.assertTrue(note.isVisible)
-        self.assertIn('each drawing can take minutes', note.text)
-        box.value = False
-        self.change(command, box)
-        self.assertFalse(note.isVisible)
+        self.assertIsNone(command.commandInputs.find('fbx_drawings'))
+        self.assertIsNone(command.commandInputs.find('fbx_drawings_note'))
+        self.assertFalse(any('drawing' in (getattr(c, 'name', '') or '').lower() for c in command.commandInputs.added))
         command.execute.handlers[0].notify(None)
-        self.assertEqual(drawing.calls, 0)  # not opened
-        self.assertIn('1 drawing(s) left out: drawing PDFs are off.', self.results()[1]['notes'])
+        self.assertEqual(drawing.calls, 0)  # never opened
+        data = self.results()[1]
+        self.assertIn("1 not supported by Fusion's export (electronics, drawings); not failures, the report lists them.",
+                      data['notes'])
+        self.assertNotIn('Failed', [label for label, _ in data['rows']])
+        self.assertNotIn('drawings', json.loads(self.settings.read_text()))  # the old setting is dropped
+
+    def test_an_entry_file_loaded_before_the_update_still_exports(self):
+        # Fusion keeps the entry file it loaded until the add-in restarts; it still passes drawings=.
+        from fusion_bulk_export import command as package
         command = self.open_dialog()
-        command.commandInputs.find('fbx_drawings').value = True
-        with patch('fusion_bulk_export.fusion.time.sleep'):
-            command.execute.handlers[0].notify(None)
-        self.assertEqual(drawing.calls, 1)
-        self.assertTrue((Path(self.temp.name) / 'Hub' / 'Project' / 'Sheet.pdf').is_file())
-        self.assertIs(json.loads(self.settings.read_text())['drawings'], True)
-        self.assertTrue(self.open_dialog().commandInputs.find('fbx_drawings').value)
+        picker = self.module._picker
+        self.assertIs(picker.drawings, False)
+        counts = package.export(self.app, picker.selection(), picker.output, show=lambda data: None,
+                                other_files=True, drawings=True)
+        self.assertEqual(counts['exported'], 1)
 
     def test_first_use_suggests_documents_folder(self):
         self.settings.unlink()
@@ -769,9 +765,8 @@ class ProgressTextTests(unittest.TestCase):
                          'Project 3 of 17, design 41: Gear 50%%\nP / A / B\n1 h 06 min · 3.4 s/design · 2 failed')
         state.update(kind='file', name='Spec.pdf')
         self.assertTrue(describe(state).startswith('Project 3 of 17, file 41: Spec.pdf\n'))
-        state.update(kind='drawing', name='Sheet')
-        self.assertTrue(describe(state).startswith(
-            'Project 3 of 17, drawing 41: Sheet\nP / A / B\nOpening the drawing: this can take minutes.\n'))
+        state.update(kind='drawing', name='Sheet')  # from no current code: shown as a design, never "opening"
+        self.assertNotIn('drawing', describe(state).lower())
 
     def test_the_engine_says_which_items_are_other_files(self):
         from fusion_bulk_export.core import Exporter
@@ -783,10 +778,10 @@ class ProgressTextTests(unittest.TestCase):
                 progress=states.append)
         self.assertEqual([s['kind'] for s in states if s['phase'] == 'design'], ['design', 'file'])
         states = []
-        with tempfile.TemporaryDirectory() as out, patch('fusion_bulk_export.fusion.time.sleep'):
+        with tempfile.TemporaryDirectory() as out:
             Exporter(out, FusionAdapter(NS(documents=fake.Documents()))).run(
-                fake.data([fake.File('Sheet', 'sheet', extension='f2d')]), progress=states.append, drawings=True)
-        self.assertEqual([s['kind'] for s in states if s['phase'] == 'design'], ['drawing'])
+                fake.data([fake.File('Sheet', 'sheet', extension='f2d')]), progress=states.append)
+        self.assertEqual([s['kind'] for s in states if s['phase'] == 'design'], ['file'])
 
     def test_bar_moves_within_a_folder_of_a_single_project(self):
         from fusion_bulk_export.command import bar

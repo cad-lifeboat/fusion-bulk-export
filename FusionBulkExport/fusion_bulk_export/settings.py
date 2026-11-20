@@ -42,11 +42,14 @@ def load(path=None):
     return values if isinstance(values, dict) else {}
 
 
-def store(values, path=None):
-    """Merge values into the settings file. Remembering is a convenience: failures are ignored."""
+def store(values, path=None, drop=()):
+    """Merge values into the settings file, removing the keys in drop (settings of earlier
+    versions that mean nothing now). Remembering is a convenience: failures are ignored."""
     path = settings_path() if path is None else Path(path)
     merged = load(path)
     merged.update(values)
+    for key in drop:
+        merged.pop(key, None)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(path.name + '.tmp')

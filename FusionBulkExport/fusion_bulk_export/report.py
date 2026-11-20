@@ -38,17 +38,12 @@ def next_step(status, error):
     if status == 'unsupported':
         return UNSUPPORTED_NEXT
     if status == 'skipped':
-        if 'drawing pdfs are off' in text:
-            return ('Tick "Also export drawings as PDF" (command line: --drawings) and export again to include '
-                    'it; each drawing can take minutes.')
         if 'not a fusion design' in text:
             return 'Not saved: only designs were exported. Tick "Also save other files" to save it.'
         if 'no fusion design' in text or 'not a fusion document' in text:
             return 'Nothing to do: not a 3D design.'
         if 'unsaved changes' in text or 'close it' in text:
             return 'Save or close it in Fusion, then export again.'
-        if 'drawing pdf' in text:
-            return 'Export again to retry; or open the drawing in Fusion and export its PDF by hand.'
         if 'cannot export this file type' in text:
             return 'If you need it, open it in Fusion and export or download it by hand.'
         if 'download' in text or 'not saved' in text:
@@ -273,12 +268,6 @@ def write(exporter, counts=None):
     return page, table
 
 
-def drawings_off(manifest):
-    """How many drawings were left out because drawing PDFs were not asked for."""
-    return sum(1 for entry in manifest.get('entries', []) if entry.get('kind') == 'file'
-               and entry.get('status') == 'skipped' and str(entry.get('error') or '').startswith('Drawing PDFs are off'))
-
-
 LONG_PATHS = ('%d item(s) have a path over 260 characters: they are saved, but Explorer and some programs '
               'cannot open them. A shorter output folder (such as C:\\FusionExport) avoids this.')
 
@@ -358,9 +347,6 @@ def summary(counts, run_info, manifest, output, page=None):
     unsupported = unsupported_count(manifest)
     if unsupported:
         notes.append((UNSUPPORTED_TEXT % unsupported) + '; not failures, the report lists them.')
-    left_out = drawings_off(manifest)
-    if left_out:
-        notes.append('%d drawing(s) left out: drawing PDFs are off.' % left_out)
     stale = links_out_of_date(manifest)
     if stale:
         notes.append('%d design(s) use older versions of linked designs (a note, not a failure).' % stale)

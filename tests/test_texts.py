@@ -54,7 +54,7 @@ class TextTests(unittest.TestCase):
         fake.install()
         from fusion_bulk_export import command, errors, picker
         texts = [errors.no_hubs().message, errors.no_hubs().next_step, picker.OLD_FUSION,
-                 picker.DRAWINGS_WHY, picker.OTHER_FILES_WHY, command.trouble_text('The disk is full.', 'x')]
+                 picker.OTHER_FILES_WHY, command.trouble_text('The disk is full.', 'x')]
         texts += list(errors.NEXT_STEP.values())
         for text in texts:
             sentences = [s for s in re.split(r'(?<=[.?!])\s+', text.replace('\n', ' ')) if s.strip()]

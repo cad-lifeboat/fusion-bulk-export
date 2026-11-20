@@ -46,10 +46,8 @@ def describe(state):
     if state['phase'] == 'listing':
         text = '%s, listing: %s\n%d item(s) so far' % (head, where, state['design'])
     else:
-        what = state.get('kind') if state.get('kind') in ('file', 'drawing') else 'design'
+        what = 'file' if state.get('kind') == 'file' else 'design'
         text = '%s, %s %d: %s\n%s' % (head, what, state['design'], state['name'], where)
-        if what == 'drawing':
-            text += '\nOpening the drawing: this can take minutes.'
 
     facts = [duration(state.get('elapsed'))]
     if state.get('seconds_per_design') is not None:
@@ -103,11 +101,12 @@ def show_results(ui, data):
     results.fallback(ui, data)
 
 
-def export(app, selection, output, show=None, other_files=True, drawings=False):
+def export(app, selection, output, show=None, other_files=True, drawings=None):
     """Export into output with progress, then write the report and hand the summary to show
     (report.summary() data plus its plain "text"; the add-in shows it in the results dialog).
-    other_files: also save the files that are not designs (the dialog's checkbox); drawings:
-    also save drawings as PDFs (the other checkbox, off by default: each can take minutes)."""
+    other_files: also save the files that are not designs (the dialog's checkbox). drawings is
+    ignored: drawings are never exported (it is still accepted from an entry file loaded before
+    an update, until Fusion restarts the add-in)."""
     ui = app.userInterface
     if not has_hubs(app):
         raise errors.no_hubs()
@@ -134,7 +133,7 @@ def export(app, selection, output, show=None, other_files=True, drawings=False):
 
         try:
             counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
-                                  other_files=other_files, drawings=drawings)
+                                  other_files=other_files)
         except Exception as error:
             known = errors.friendly(error)
             if known is None:

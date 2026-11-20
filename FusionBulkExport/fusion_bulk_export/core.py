@@ -53,7 +53,7 @@ def count_key(entry, status):
 
 def new_counts():
     """exported: designs written this run; up_to_date: designs already exported and checked;
-    files: other files (PDFs, drawings, uploads) saved this run; files_up_to_date: other files
+    files: other files (PDFs, uploads) saved this run; files_up_to_date: other files
     saved before and checked; skipped: not saved, with a reason (other files when only designs are
     wanted, a design without a design product, a download Fusion refused); unsupported: a file
     type Fusion's API cannot export at all (electronics, drawings: see UNSUPPORTED), neither a
@@ -248,12 +248,11 @@ def sanitize(value, limit=42):
     return value[:limit].rstrip(' .') or '_'
 
 
-# Other files that are saved in another format: a drawing is saved as its PDF.
-SAVED_AS = {'f2d': 'pdf'}
 DRAWING = 'f2d'
-# Opening a drawing can block Fusion for minutes (about 10 seen on real Fusion), so drawings are
-# exported only when asked for.
-DRAWINGS_OFF = "Drawing PDFs are off (tick 'Also export drawings as PDF' to include them)"
+# Drawings are never opened or exported: on real Fusion, exporting a drawing's PDF through the API
+# crashed Fusion itself (inside its sheet export, after minutes of opening the drawing). They are
+# recorded as unsupported with this reason.
+DRAWING_REASON = 'Fusion cannot export drawings safely through its API (use File > Export in Fusion)'
 
 
 def is_drawing(file):
@@ -263,7 +262,7 @@ def is_drawing(file):
 # Fusion's own types other than designs: DataFile.download refuses them ("file type not available
 # for download", seen on real Fusion for .f2d, .fsch, .fbrd and .flbr) and the API has no export
 # for them, so they are recorded as unsupported (status "unsupported") without asking Fusion.
-UNSUPPORTED = {'f2t', 'fsch', 'fbrd', 'flbr', 'fprj', 'cam360'}
+UNSUPPORTED = {'f2d', 'f2t', 'fsch', 'fbrd', 'flbr', 'fprj', 'cam360'}
 NATIVE_REASON = 'Fusion cannot export this file type through its API'
 
 
@@ -274,6 +273,8 @@ def extension_of(file):
 def unsupported_reason(file):
     """Why Fusion's API cannot export this file, or None when it can (or may)."""
     extension = extension_of(file)
+    if extension == DRAWING:
+        return DRAWING_REASON
     if extension in UNSUPPORTED:
         return '%s (.%s)' % (NATIVE_REASON, extension)
     return None
@@ -286,13 +287,9 @@ def file_name_parts(file):
     """(name, extension) of another file on disk. Fusion's DataFile.name of an uploaded file
     already ends in its real extension (and fileExtension can disagree with it), so the name is
     trusted: "Manual.PDF" stays "Manual.PDF", "notes.scr" stays so even when Fusion calls it htm.
-    A name without an extension gets fileExtension; a drawing is saved as a PDF."""
+    A name without an extension gets fileExtension."""
     name = str(file.name)
     declared = str(getattr(file, 'fileExtension', '') or '').strip().strip('.')
-    if declared.lower() in SAVED_AS:
-        if name.lower().endswith('.' + declared.lower()) and len(name) > len(declared) + 1:
-            name = name[:-(len(declared) + 1)]
-        return name, SAVED_AS[declared.lower()]
     stem, dot, suffix = name.rpartition('.')
     if dot and stem.strip() and (suffix.lower() == declared.lower() or EXTENSION.fullmatch(suffix)):
         return stem, clean(suffix, 16)
@@ -463,7 +460,6 @@ class Exporter:
         self.clock = time.monotonic
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.other_files = True
-        self.drawings = False
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
         self.manifest['runs'].append(self.run_info)
 
@@ -691,7 +687,7 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True, drawings=False):
+            on_trouble=None, other_files=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
@@ -700,8 +696,7 @@ class Exporter:
         progress(state) is called while listing and before each item, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
         project_name, path (folder names), design (items found so far: designs and other files),
-        name and kind ('design'; 'drawing' for a drawing about to be opened, which can take
-        minutes; 'file' for another file); also
+        name and kind ('design', or 'file' for another file); also
         folder_files (the current folder's file count, or None when not known), folder_item
         (position of this design in that folder), counts (a copy of the run's counts so far),
         elapsed (seconds since the run started) and seconds_per_design (average time of the
@@ -716,9 +711,7 @@ class Exporter:
         other_files: also save the files that are not designs (PDFs, uploads) as Fusion hands
         them out; when false they are skipped as "Not a Fusion design".
 
-        drawings: also save each drawing as a PDF (opening one can take Fusion minutes); when
-        false drawings are skipped with DRAWINGS_OFF, without asking Fusion. Independent of
-        other_files.
+        Drawings (.f2d) are never opened: they are recorded as unsupported (DRAWING_REASON).
 
         The output folder is locked (export.lock) for the run: FolderBusy is raised when another
         export is using it.
@@ -726,14 +719,13 @@ class Exporter:
         lock = FolderLock(self.root)
         lock.acquire()
         try:
-            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, drawings)
+            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files)
         finally:
             lock.release()
 
-    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, drawings):
+    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files):
         self.other_files = bool(other_files)
-        self.drawings = bool(drawings)
-        self.run_info.update(other_files=self.other_files, drawings=self.drawings)
+        self.run_info.update(other_files=self.other_files)
         counts = new_counts()
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
@@ -856,11 +848,8 @@ class Exporter:
         return counts
 
     def item_kind(self, file):
-        """What the progress text calls an item: 'design', 'drawing' (one that will be opened)
-        or 'file'."""
-        if str(file.fileExtension).lower() == 'f3d':
-            return 'design'
-        return 'drawing' if is_drawing(file) and self.drawings else 'file'
+        """What the progress text calls an item: 'design' or 'file'."""
+        return 'design' if str(file.fileExtension).lower() == 'f3d' else 'file'
 
     @staticmethod
     def item_key(hub, project, file):
@@ -905,9 +894,8 @@ class Exporter:
             # Never handed to Fusion: neither a failure nor something the user left out.
             entry.update(status='unsupported', error=unsupported_reason(file))
         elif kind == 'file':
-            drawing = is_drawing(file)
-            if not (self.drawings if drawing else self.other_files):
-                entry['error'] = DRAWINGS_OFF if drawing else 'Not a Fusion design: ' + file.fileExtension
+            if not self.other_files:
+                entry['error'] = 'Not a Fusion design: ' + file.fileExtension
             elif hasattr(self.adapter, 'download'):
                 trouble = self.save_file(hub, project, folders, file, entry, entries, owned)
             else:
@@ -994,7 +982,7 @@ class Exporter:
         return None
 
     def save_file(self, hub, project, folders, file, entry, entries, owned=()):
-        """Save another file (PDF, drawing, upload) as Fusion hands it out, under its own name.
+        """Save another file (PDF, upload) as Fusion hands it out, under its own name.
         Anything Fusion does not hand out is a skip with the reason (it is tried again on the next
         run); only a full disk or a lost output folder is a failure. Returns the Trouble that
         stops the run, or None."""
@@ -1030,7 +1018,7 @@ class NonDesign(Exception):
 
 
 class OpenInFusion(RuntimeError):
-    """The design (or drawing) is open in Fusion in a way that stops its export (unsaved edits,
+    """The design is open in Fusion in a way that stops its export (unsaved edits,
     another version); the message says what to do. Not a link problem."""
 
 

@@ -19,7 +19,7 @@ spec.loader.exec_module(screens)
 class ScreensTests(unittest.TestCase):
     def test_dialog_words_match_the_add_in(self):
         self.assertEqual(screens.OTHER_FILES, picker.OTHER_FILES)
-        self.assertEqual(screens.DRAWINGS, picker.DRAWINGS)
+        self.assertFalse(hasattr(screens, 'DRAWINGS'))  # drawing export was removed
         self.assertEqual(screens.CHOOSE, picker.CHOOSE)
         self.assertTrue(screens.VERSION.startswith('Fusion Bulk Export '))
         page = (ROOT / 'FusionBulkExport' / 'ui' / 'tree.html').read_text(encoding='utf-8')
@@ -40,6 +40,7 @@ class ScreensTests(unittest.TestCase):
             svg = draw()
             self.assertTrue(svg.startswith('<svg'))
             self.assertIn('Fusion Bulk Export', svg)
+            self.assertNotIn('drawings as PDF', svg)
         data = screens.summary_data()
         self.assertEqual(data['retry'], 'Run again to retry the 1 failed.')
         self.assertIn(data['headline'], screens.progress_svg())

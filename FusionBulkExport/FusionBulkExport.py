@@ -190,7 +190,7 @@ class Execute(adsk.core.CommandEventHandler):
             _busy['by'] = 'button'
             try:
                 _code['export'](app, selection, _picker.output, show=show_results,
-                                other_files=_picker.other_files, drawings=_picker.drawings)
+                                other_files=_picker.other_files)
             finally:
                 _busy['by'] = None
         except Exception:

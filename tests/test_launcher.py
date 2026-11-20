@@ -256,6 +256,31 @@ class LauncherTests(unittest.TestCase):
             launcher.main(['export', str(out)])
         self.assertEqual(seen, [True, False])
 
+    def test_drawings_flag_is_accepted_and_only_says_drawing_export_was_removed(self):
+        installed = self.root / 'AddIns' / 'FusionBulkExport'
+        args = launcher.argparse.Namespace(output=str(self.root / 'out'), command='export', project=None,
+                                           limit=None, folder=None, designs_only=False, drawings=True, timeout=10)
+        stream, jobs = io.StringIO(), []
+        with patch.object(launcher, 'system', return_value='Darwin'), \
+                patch.object(launcher, 'addins_dir', return_value=installed.parent), \
+                patch.object(launcher, 'alive', return_value=True), \
+                patch.object(launcher, 'wait', side_effect=lambda *a, **k: jobs.append(
+                    json.loads((installed / 'autorun.json').read_text())) or 0), \
+                contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(launcher.start(args), 0)
+        lines = [line for line in stream.getvalue().splitlines() if 'drawing' in line.lower()]
+        self.assertEqual(lines, [launcher.DRAWINGS_REMOVED])
+        self.assertIn('can crash Fusion', lines[0])
+        self.assertNotIn('drawings', jobs[0])
+        seen = []
+        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.drawings) or 0):
+            launcher.main(['export', str(self.root / 'out'), '--drawings'])
+        self.assertEqual(seen, [True])
+        help_text = io.StringIO()
+        with contextlib.redirect_stdout(help_text), self.assertRaises(SystemExit):
+            launcher.main(['export', '--help'])
+        self.assertNotIn('--drawings', help_text.getvalue())
+
     def test_folder_arguments(self):
         self.assertEqual(launcher.folder_map(['p1:Parts/Brackets/', 'p1:Jigs', 'p2:/X']),
                          {'p1': ['Parts/Brackets', 'Jigs'], 'p2': ['X']})

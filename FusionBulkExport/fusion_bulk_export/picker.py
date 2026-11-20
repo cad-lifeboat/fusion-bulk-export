@@ -16,8 +16,6 @@ CHOOSE = 'Choose projects or folders'
 # leaves the right-hand column (and anything in it) a sliver.
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 OTHER_FILES_WHY = 'PDFs, images and other uploaded files are copied as they are, beside the designs.'
-DRAWINGS = 'Also export drawings as PDF (slow)'
-DRAWINGS_WHY = 'Slow: Fusion opens each drawing to make its PDF, and each drawing can take minutes.'
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
@@ -148,13 +146,6 @@ class Picker:
         self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
                                               remembered.get('other_files') is not False)
         describe(self.files, OTHER_FILES_WHY, trace)
-        # Off unless the user switched it on last time: opening a drawing can take Fusion minutes.
-        self.drawing_box = inputs.addBoolValueInput('fbx_drawings', DRAWINGS, True, '',
-                                                    remembered.get('drawings') is True)
-        describe(self.drawing_box, DRAWINGS_WHY, trace)
-        self.drawing_note = inputs.addTextBoxCommandInput('fbx_drawings_note', '', DRAWINGS_WHY, 2, True)
-        full_width(self.drawing_note, trace)
-        self.drawing_note.isVisible = self.drawings
         if self.tree is not None and remembered.get('mode') == CHOOSE:
             for item in self.mode.listItems:
                 item.isSelected = item.name == CHOOSE
@@ -168,8 +159,9 @@ class Picker:
 
     @property
     def drawings(self):
-        """Whether drawings are saved as PDFs too (the second checkbox)."""
-        return bool(self.drawing_box.value)
+        """Always False: drawings are never exported. Kept for an entry file loaded before an
+        update, which still asks for it until Fusion restarts the add-in."""
+        return False
 
     @property
     def choosing(self):
@@ -212,8 +204,6 @@ class Picker:
                     self.choose_folder()
                 finally:
                     self.browsing = False
-        elif changed_input.id == self.drawing_box.id:
-            self.drawing_note.isVisible = self.drawings
         elif changed_input.id == self.mode.id and self.tree is not None:
             self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)
@@ -224,7 +214,7 @@ class Picker:
 
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
-                            else EVERYTHING, other_files=self.other_files, drawings=self.drawings))
+                            else EVERYTHING, other_files=self.other_files), drop=('drawings',))
 
     def incoming(self, action, data):
         """Answer the page; the returned string is handed back to its JavaScript. A request that

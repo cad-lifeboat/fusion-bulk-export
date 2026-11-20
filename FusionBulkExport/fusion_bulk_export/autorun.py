@@ -10,8 +10,9 @@ Configuration (all paths absolute):
                                      by id is exactly that folder, even beside a same-named one
    "designs_only": false,            optional; true: skip other files (PDFs, uploads),
                                      which are otherwise saved as Fusion hands them out
-   "drawings": false,                optional; true: also save each drawing as a PDF (opening
-                                     one can take Fusion minutes); off by default
+   "drawings": ...,                  accepted and ignored: drawings are never exported
+                                     (exporting one crashed Fusion); they are listed as
+                                     not supported
    "limit": 25,                      optional; stop after exporting this many designs (those
                                      already up to date and other files do not count)
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
@@ -105,10 +106,8 @@ def check_settings(config):
     designs_only = config.get('designs_only', False)
     if not isinstance(designs_only, bool):
         raise ValueError('designs_only must be true or false')
-    drawings = config.get('drawings', False)
-    if not isinstance(drawings, bool):
-        raise ValueError('drawings must be true or false')
-    return mode, selection, limit, timeout, not designs_only, drawings
+    # "drawings" (from launchers before drawing export was removed) is ignored.
+    return mode, selection, limit, timeout, not designs_only
 
 
 FIND_LOG_EVERY = 50  # folders listed between progress lines while a folder id is looked for
@@ -302,7 +301,7 @@ def run_autorun(app, config_path):
     started = time.monotonic()
     try:
         try:
-            output, mode, selection, limit, timeout, other_files, drawings = read_config(config_path)
+            output, mode, selection, limit, timeout, other_files = read_config(config_path)
         except Exception as error:
             output = getattr(error, 'output', None) or config_path.parent / 'autorun-output'
             raise
@@ -310,7 +309,7 @@ def run_autorun(app, config_path):
             output.mkdir(parents=True, exist_ok=True)
             log = Log(output)
         log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
-                          other_files=other_files, drawings=drawings)
+                          other_files=other_files)
         log.write('autorun start ' + mode)
         if mode == 'diagnostics':
             report = diagnostics(app)
@@ -344,7 +343,7 @@ def run_autorun(app, config_path):
             try:
                 log.result['counts'] = exporter.run(
                     data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
-                    selection=selection, other_files=other_files, drawings=drawings)
+                    selection=selection, other_files=other_files)
             finally:
                 try:
                     write_report(exporter)

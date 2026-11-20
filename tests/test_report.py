@@ -205,7 +205,6 @@ class ReportTests(unittest.TestCase):
     def test_designs_only_skip_says_how_to_save_it(self):
         self.assertIn('Also save other files', report.next_step('skipped', 'Not a Fusion design: pdf'))
         self.assertIn('not a 3D design', report.next_step('skipped', 'No Fusion Design product (drawing)'))
-        self.assertIn('export its PDF by hand', report.next_step('skipped', 'Fusion did not write the drawing PDF'))
         self.assertEqual(report.next_step('skipped', 'This drawing is open in Fusion with unsaved changes; save or '
                                                      'close it, then run again.'),
                          'Save or close it in Fusion, then export again.')

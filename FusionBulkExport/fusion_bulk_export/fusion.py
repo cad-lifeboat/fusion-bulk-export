@@ -1,5 +1,4 @@
 """Adapter using Autodesk's public Fusion API. Imported only inside Fusion."""
-import importlib
 import os
 from pathlib import Path
 import shutil
@@ -7,21 +6,15 @@ import time
 
 import adsk.core
 import adsk.fusion
-from .core import NATIVE_REASON, UNSUPPORTED, NonDesign, NotSaved, OpenInFusion, collection, disk_full
+from .core import (DRAWING_REASON, NATIVE_REASON, UNSUPPORTED, NonDesign, NotSaved, OpenInFusion, collection,
+                   disk_full, is_drawing)
 from .names import fusion_path, long_path
 from .staging import Staging
 
 # Fusion's own types other than designs (core.UNSUPPORTED): the exporter records them without
 # asking Fusion; download() refuses them too, in case it is ever handed one.
 FUSION_NATIVE = UNSUPPORTED | {'f2d'}
-# Seen on real Fusion: the first execute() on a freshly opened drawing returns True and writes
-# nothing; a second one writes the PDF at once. So: execute, wait PDF_FIRST_WAIT_SECONDS; if no
-# file, execute again and wait PDF_WAIT_SECONDS; then give up.
-PDF_FIRST_WAIT_SECONDS = 3
-PDF_WAIT_SECONDS = 10
 PRODUCT_TRIES = 5         # a just-opened document's products can fail to read the first time
-POLL_SECONDS = 0.25       # how often a file Fusion writes later is looked at
-STABLE_POLLS = 4          # a drawing's PDF is taken once its size held this many looks (1 s)
 
 
 # Cloud ids of documents this add-in opened (hidden) and Fusion did not close yet. Kept for the
@@ -34,7 +27,6 @@ class FusionAdapter:
         self.app = app
         self.details = {}  # facts about the last exported design, stored in its manifest entry
         self.staging = None  # set by the Exporter: where Fusion writes before files are moved
-        self.pdf_broken = None  # why drawings are not tried any more in this run, once one failed
         # Documents this add-in opened and could not close yet (see LEFT_OPEN). They are its own
         # (opened hidden, never shown to the user), so they may be closed or exported from
         # later even though they are open "before" a later export.
@@ -95,7 +87,7 @@ class FusionAdapter:
         """Close the documents this add-in caused to be opened since `before` (an open_ids()
         snapshot), without saving. Never raises.
 
-        Opening an assembly or a drawing makes Fusion open the designs it links to as well; left
+        Opening an assembly makes Fusion open the designs it links to as well; left
         open they pile up over a long run. They are opened hidden, so the user cannot have edited
         them: Fusion may mark them modified on open (a recompute, an updated reference), and they
         are closed all the same. Documents the user had open are in `before` and never touched;
@@ -128,7 +120,10 @@ class FusionAdapter:
         as it is and never closed (opened False): the user's, if it has no unsaved edits and is
         the same version (else blocked(plain reason) is raised, default failure); or one this
         add-in left open, which is closed and opened again. Otherwise the file is opened hidden
-        (opened True); failure(reason) when Fusion hands back nothing."""
+        (opened True); failure(reason) when Fusion hands back nothing. A drawing is never
+        opened: exporting one crashed Fusion (see core.DRAWING_REASON)."""
+        if is_drawing(data_file):
+            raise failure(DRAWING_REASON)
         blocked = blocked or failure
         identity = str(data_file.id)
         for existing in list(collection(self.app.documents)):
@@ -156,13 +151,13 @@ class FusionAdapter:
 
     def download(self, data_file, target):
         """Save a file that is not a design to target, its readable final path. Uploaded files
-        (PDF, images, STEP...) come down as they are; a drawing is saved as a PDF of its sheets;
-        electronics and other Fusion-only types cannot be had through the API and are skipped
-        without asking Fusion. Raises NotSaved with the reason when nothing could be saved.
+        (PDF, images, STEP...) come down as they are; drawings, electronics and other Fusion-only
+        types cannot be had through the API and are refused without asking Fusion (the exporter
+        records them as unsupported before getting here). Raises NotSaved with the reason when nothing could be saved.
         Reads only: nothing in the account changes."""
         extension = str(data_file.fileExtension or '').lower().strip('.')
-        if extension == 'f2d':
-            return self.drawing_pdf(data_file, target)
+        if is_drawing(data_file):
+            raise NotSaved(DRAWING_REASON)
         if extension in FUSION_NATIVE:
             raise NotSaved('%s (.%s)' % (NATIVE_REASON, extension))
         staging = self.stage()
@@ -191,51 +186,6 @@ class FusionAdapter:
             return staging.place(staged, target)
         finally:
             shutil.rmtree(long_path(folder), ignore_errors=True)
-
-    def drawing_pdf(self, data_file, target):
-        """A drawing as a PDF: opened (hidden), exported through its DrawingExportManager to a
-        short staging path, then moved to target. The file is waited for after each execute():
-        PDF_FIRST_WAIT_SECONDS after the first (which on real Fusion writes nothing), then once
-        more PDF_WAIT_SECONDS after a second execute. If one drawing's PDF
-        never appears, the others in this run are not tried (each would cost that wait). A drawing
-        already open in Fusion is exported from as it is and left open; one with unsaved edits, or
-        another version, is skipped with the reason (like a design)."""
-        if self.pdf_broken:
-            raise NotSaved(self.pdf_broken)
-        # Opening a drawing can block Fusion for minutes (about 10 seen on real Fusion); the
-        # progress text says so before this starts (drawings are opt-in for that reason).
-        before = self.open_ids()
-        document, opened = None, False
-        try:
-            try:
-                document, opened = self.acquire(data_file, 'drawing', NotSaved)
-            except NotSaved:
-                raise
-            except Exception as error:
-                raise NotSaved('Fusion could not open the drawing: %s' % (error or type(error).__name__))
-            drawing = drawing_product(document)
-            if drawing is None:
-                raise NotSaved('%s (.f2d: the opened file holds no drawing)' % NATIVE_REASON)
-            staging = self.stage()
-            staged = staging.path('.pdf')
-            # The first execute on a freshly opened drawing writes nothing (seen on real Fusion):
-            # a second one, only when the file did not come, writes it.
-            state = None
-            for wait in (PDF_FIRST_WAIT_SECONDS, PDF_WAIT_SECONDS):
-                pdf_export(drawing, staged)
-                state = wait_for_pdf(staged, wait)
-                if state != 'missing':
-                    break
-            if state == 'missing':
-                self.pdf_broken = 'Fusion did not write the drawing PDF'
-                raise NotSaved(self.pdf_broken)
-            if state != 'ok':
-                raise NotSaved('Fusion wrote an incomplete drawing PDF; not saved')
-            return staging.place(staged, target)
-        finally:
-            if document is not None and opened:
-                self.close(document)
-            self.close_opened(before)  # a drawing opens the designs it shows, too
 
     def export(self, data_file, stem):
         """Write <stem>.f3d and <stem>.step; returns their paths, plus <stem>.png when the
@@ -334,8 +284,8 @@ def visible_counts(root):
 
 
 def read_products(document):
-    """document.products. Reading it right after opening can fail ("InternalValidationError",
-    seen on a drawing) while the document loads: tried PRODUCT_TRIES times, then the error."""
+    """document.products. Reading it right after opening can fail ("InternalValidationError")
+    while the document loads: tried PRODUCT_TRIES times, then the error."""
     for attempt in range(PRODUCT_TRIES):
         try:
             return document.products
@@ -344,88 +294,6 @@ def read_products(document):
                 raise
             adsk.doEvents()
             time.sleep(0.5)
-
-
-def pdf_export(drawing, path):
-    """One PDF export of a drawing to path (fresh options each time). Raises NotSaved when Fusion
-    raises or answers False; True says nothing about the file (see drawing_pdf)."""
-    try:
-        manager = drawing.exportManager
-        options = manager.createPDFExportOptions(fusion_path(path))
-        if hasattr(options, 'openPDF'):
-            options.openPDF = False  # never open a viewer during an export (Fusion's default too)
-        result = manager.execute(options)
-    except Exception as error:
-        raise NotSaved('%s (.f2d; PDF export failed: %s)' % (NATIVE_REASON, error or type(error).__name__))
-    if result is False:
-        raise NotSaved('%s (.f2d; PDF export returned false)' % NATIVE_REASON)
-
-
-def drawing_product(document):
-    """The Drawing product of an opened drawing document, or None. Never reads productType (it
-    raises "InternalValidationError" on a Drawing on real Fusion): each product is tried with
-    adsk.drawing.Drawing.cast, then its class name, then whether it has a PDF export, each
-    guarded. Reading products right after opening can fail once while the drawing loads: tried
-    again."""
-    try:
-        products = list(collection(read_products(document)))
-    except Exception:
-        return None
-    try:
-        cast = importlib.import_module('adsk.drawing').Drawing.cast
-    except Exception:
-        cast = None
-    for product in products:
-        try:
-            drawing = cast(product) if cast else None
-        except Exception:
-            drawing = None
-        if drawing:
-            return drawing
-        try:
-            if type(product).__name__ == 'Drawing':
-                return product
-            manager = getattr(product, 'exportManager', None)
-            if manager is not None and hasattr(manager, 'createPDFExportOptions'):
-                return product
-        except Exception:
-            continue
-    return None
-
-
-def pdf_complete(path):
-    """Whether a file looks like a whole PDF: "%PDF-" at the start and "%%EOF" near the end."""
-    try:
-        with open(long_path(path), 'rb') as stream:
-            head = stream.read(5)
-            stream.seek(0, os.SEEK_END)
-            stream.seek(max(stream.tell() - 1024, 0))
-            tail = stream.read()
-    except OSError:
-        return False
-    return head == b'%PDF-' and b'%%EOF' in tail
-
-
-def wait_for_pdf(path, seconds):
-    """Wait (letting Fusion work) for a PDF Fusion writes after its export returned: 'ok' once
-    the file is a whole PDF whose size held for STABLE_POLLS looks; at the deadline, 'missing'
-    (no file) or 'incomplete'. Counted in looks, not clock time."""
-    looks = max(int(seconds / POLL_SECONDS), 1)
-    size, steady = -1, 0
-    for _ in range(looks):
-        try:
-            now_size = os.path.getsize(long_path(path))
-        except OSError:
-            now_size = -1
-        steady = steady + 1 if now_size == size and now_size > 0 else 0
-        size = now_size
-        if steady >= STABLE_POLLS - 1 and pdf_complete(path):
-            return 'ok'
-        adsk.doEvents()
-        time.sleep(POLL_SECONDS)
-    if size <= 0:
-        return 'missing'
-    return 'ok' if pdf_complete(path) else 'incomplete'
 
 
 def reason(extension, detail):

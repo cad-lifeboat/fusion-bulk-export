@@ -174,22 +174,20 @@ class AutorunTests(unittest.TestCase):
         manifest = json.loads((self.output / 'manifest.json').read_text())
         self.assertEqual([e['id'] for e in manifest['entries']], ['two'])
 
-    def test_drawings_only_when_asked_for(self):
+    def test_drawings_are_never_opened_even_when_a_job_asks(self):
         drawing = fake.File('Drawing', 'drawing', extension='f2d')
         self.data.dataHubs.item(0).dataProjects.item(1).rootFolder.dataFiles.items.append(drawing)
-        result = self.run_with()
-        self.assertFalse(result['drawings'])
-        self.assertEqual((result['counts']['skipped'], drawing.calls), (1, 0))  # not even opened
+        for asked in (None, True, 'yes'):  # "drawings" from older launchers is accepted and ignored
+            result = self.run_with(**({} if asked is None else dict(drawings=asked)))
+            self.assertEqual(result['errors'], [])
+            self.assertNotIn('drawings', result)
+            self.assertEqual((result['counts']['unsupported'], result['counts']['skipped'], drawing.calls), (1, 0, 0))
         manifest = json.loads((self.output / 'manifest.json').read_text())
         entry = next(e for e in manifest['entries'] if e['id'] == 'drawing')
-        self.assertEqual(entry['error'], "Drawing PDFs are off (tick 'Also export drawings as PDF' to include them)")
-        self.assertIn('Also export drawings as PDF', (self.output / 'index.html').read_text())
-        with patch('fusion_bulk_export.fusion.time.sleep'):
-            result = self.run_with(drawings=True, designs_only=True)  # independent of other files
-        self.assertTrue(result['drawings'])
-        self.assertEqual((result['counts']['files'], drawing.calls), (1, 1))
-        result = self.run_with(drawings='yes')
-        self.assertIn('drawings must be true or false', result['errors'][0]['error'])
+        self.assertEqual(entry['status'], 'unsupported')
+        page = (self.output / 'index.html').read_text()
+        self.assertIn('use File &gt; Export in Fusion', page)
+        self.assertNotIn('Also export drawings', page)
 
     def test_designs_only(self):
         result = self.run_with(designs_only=True)

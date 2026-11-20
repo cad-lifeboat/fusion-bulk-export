@@ -177,45 +177,14 @@ class OpenDocumentTests(Base):
         self.assertTrue(self.adapter.close(document))
         self.assertNotIn('part', fusion.LEFT_OPEN)
 
-    def test_drawing_product_is_found_without_reading_product_type(self):
+    def test_a_drawing_the_user_has_open_is_left_alone_and_not_supported(self):
         drawing = fake.File('Sheet', 'sheet', extension='f2d')
-        document = fake.Document(drawing)
-        found = fusion.drawing_product(document)
-        self.assertEqual(type(found).__name__, 'Drawing')
-        with self.assertRaises(RuntimeError):
-            found.productType  # as on real Fusion: never read by the add-in
-
-    def test_an_open_drawing_is_exported_from_and_left_open(self):
-        drawing = fake.File('Sheet', 'sheet', extension='f2d')
-        mine = self.user_has_open(drawing)
-        with patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([drawing]), drawings=True)
-        self.assertEqual(counts['files'], 1)
-        self.assertFalse(mine.closed)
-        self.assertEqual(drawing.calls, 0)
-        self.assertEqual(self.app.documents.items, [mine])
-
-    def test_an_open_drawing_with_unsaved_edits_is_never_closed(self):
-        drawing = fake.File('Sheet', 'sheet', extension='f2d')
-        later = fake.File('Other sheet', 'other', extension='f2d')
         mine = self.user_has_open(drawing, modified=True)
-        with patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([drawing, later]), drawings=True)
+        _, counts = self.run_export(fake.data([drawing]))
         self.assertFalse(mine.closed)
-        self.assertTrue(mine.isModified)
-        entry = self.manifest['entries'][0]
-        self.assertEqual(entry['status'], 'skipped')
-        self.assertIn('unsaved changes', entry['error'])
-        self.assertEqual(counts['files'], 1)  # the next drawing is still tried
-        self.assertEqual(self.app.documents.items, [mine])
-
-    def test_another_version_of_an_open_drawing_is_left_alone(self):
-        drawing = fake.File('Sheet', 'sheet', extension='f2d')
-        mine = self.user_has_open(drawing)
-        mine.dataFile = NS(id='sheet', versionNumber=2)
-        self.run_export(fake.data([drawing]), drawings=True)
-        self.assertFalse(mine.closed)
-        self.assertIn('Another version', self.manifest['entries'][0]['error'])
+        self.assertEqual(counts['unsupported'], 1)
+        self.assertEqual(self.manifest['entries'][0]['status'], 'unsupported')
+        self.assertEqual((drawing.calls, self.app.documents.items), (0, [mine]))
 
     def test_a_linked_design_marked_modified_on_open_is_closed_and_exports_later(self):
         assembly = fake.File('Assembly', 'assembly', references=1)
@@ -319,18 +288,6 @@ class CountTests(Base):
 
 
 class FusionTimingTests(Base):
-    def test_a_partial_drawing_pdf_is_not_saved(self):
-        from unittest.mock import patch
-        partial, whole = fake.File('Half', 'half', extension='f2d'), fake.File('Whole', 'whole', extension='f2d')
-        partial.pdf_mode = 'partial'
-        with patch.object(fusion, 'PDF_WAIT_SECONDS', 2), patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([partial, whole]), drawings=True)
-        entries = {e['id']: e for e in self.manifest['entries']}
-        self.assertEqual(entries['half']['status'], 'skipped')
-        self.assertIn('incomplete drawing PDF', entries['half']['error'])
-        self.assertEqual(entries['whole']['status'], 'done')  # the next drawing is still tried
-        self.assertEqual(list((self.root / 'Hub' / 'Project').glob('Half*')), [])
-
     def test_a_design_whose_products_are_not_ready_at_once_exports_first_time(self):
         from unittest.mock import patch
         part = fake.File('Part', 'part')

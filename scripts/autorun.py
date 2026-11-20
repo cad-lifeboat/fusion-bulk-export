@@ -3,12 +3,12 @@
 
   autorun.py inventory OUTPUT                       list everything, open nothing
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
-                    [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only] [--drawings]
+                    [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only]
                                                     export (rerun the same command to resume);
                                                     other files (PDFs, uploads) are saved too
-                                                    unless --designs-only; drawings are saved as
-                                                    PDFs only with --drawings (each can take
-                                                    Fusion minutes to open)
+                                                    unless --designs-only; drawings and
+                                                    electronics are listed as not supported
+                                                    (Fusion cannot export them safely)
   autorun.py status OUTPUT                          counts so far (no design names)
   autorun.py check OUTPUT                           check every exported file again (full hashes,
                                                     archives, STEP files); needs no Fusion
@@ -144,7 +144,11 @@ def folder_map(values):
     return folders or None
 
 
-def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False, drawings=False):
+DRAWINGS_REMOVED = ('--drawings does nothing now: drawing export was removed because it can crash Fusion '
+                    '(drawings are listed as not supported; export them with File > Export in Fusion).')
+
+
+def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):
     output.mkdir(parents=True, exist_ok=True)
     for stale in ('autorun-result.json', 'STOP'):
         try:
@@ -167,8 +171,6 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['limit'] = limit
     if designs_only:
         config['designs_only'] = True
-    if drawings:
-        config['drawings'] = True
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
 
 
@@ -292,9 +294,10 @@ def start(args):
     output = check_output(args.output)
     installed = addins_dir(name) / 'FusionBulkExport'
     watching = alive(installed)
+    if getattr(args, 'drawings', False):
+        print(DRAWINGS_REMOVED, flush=True)
     install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
-            folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
-            getattr(args, 'drawings', False))
+            folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False))
     try:
         if watching:
             return wait(installed, output, args.timeout)
@@ -391,9 +394,8 @@ def main(argv=None):
                                 'other files do not count)')
             p.add_argument('--designs-only', action='store_true',
                            help='skip other files (PDFs, uploads); by default they are saved too')
-            p.add_argument('--drawings', action='store_true',
-                           help='also save each drawing as a PDF (off by default: opening a drawing can take '
-                                'Fusion minutes)')
+            # Kept for one release so older instructions still run; it only prints DRAWINGS_REMOVED.
+            p.add_argument('--drawings', action='store_true', help=argparse.SUPPRESS)
     sub.add_parser('reset', help='clear stale job files (the button is always available)')
     args = parser.parse_args(argv)
     if args.command == 'reset':

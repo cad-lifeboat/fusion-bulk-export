@@ -459,10 +459,11 @@ class ExportTests(unittest.TestCase):
         files = [fake.File(identity='drawing', extension='f2d'), fake.File(identity='cam', design=False),
                  fake.File(identity='text', extension='txt')]
         _, counts = self.run_export(fake.data(files), other_files=False)
-        self.assertEqual(counts['skipped'], 3)
+        self.assertEqual((counts['skipped'], counts['unsupported']), (2, 1))
         self.assertEqual((files[0].calls, files[0].downloads), (0, []))
         self.assertEqual([e['kind'] for e in self.manifest['entries']], ['file', 'design', 'file'])
-        self.assertTrue(all(e['status'] == 'skipped' and e['error'] for e in self.manifest['entries']))
+        self.assertEqual([e['status'] for e in self.manifest['entries']], ['unsupported', 'skipped', 'skipped'])
+        self.assertTrue(all(e['error'] for e in self.manifest['entries']))
 
     def test_other_files_are_saved_under_their_own_names(self):
         # As on real Fusion, an uploaded file's name already holds its extension.
@@ -503,7 +504,6 @@ class ExportTests(unittest.TestCase):
         from fusion_bulk_export.core import file_name_parts
         self.assertEqual(file_name_parts(fake.File('Rev 1.2', extension='pdf')), ('Rev 1.2', 'pdf'))
         self.assertEqual(file_name_parts(fake.File('Notes', extension='txt')), ('Notes', 'txt'))
-        self.assertEqual(file_name_parts(fake.File('Sheet', extension='f2d')), ('Sheet', 'pdf'))
         self.assertEqual(file_name_parts(fake.File('.hidden', extension='')), ('.hidden', ''))
 
     def test_files_fusion_does_not_hand_out_are_skipped_with_the_reason(self):
@@ -536,45 +536,33 @@ class ExportTests(unittest.TestCase):
         _, counts = self.run_export(fake.data(boards), other_files=False)
         self.assertEqual((counts['skipped'], counts['unsupported']), (0, 2))
 
-    def test_a_drawing_is_saved_as_its_pdf(self):
+    def test_drawings_are_never_opened_and_are_not_supported(self):
+        # Exporting a drawing's PDF crashed Fusion on real machines: no code path may open one.
         drawing = fake.File('Sheet A', 'drawing', extension='f2d', references=2)
-        drawing.products_flaky = 1  # the first read right after opening fails, as seen on real Fusion
-        with patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([drawing]), drawings=True)
-        entry = self.manifest['entries'][0]
-        self.assertEqual((counts['files'], entry['kind'], entry['status']), (1, 'file', 'done'))
-        self.assertEqual(entry['files'][0]['path'], 'Hub/Project/Sheet A.pdf')
-        self.assertTrue((self.root / 'Hub/Project/Sheet A.pdf').read_bytes().startswith(b'%PDF'))
-        self.assertEqual(self.app.documents.items, [])  # the drawing and what it pulled in are closed
-        self.assertEqual(drawing.downloads, [])
-        self.assertEqual(drawing.documents[0]._products.item(0).exportManager.executes, 2)  # the first wrote nothing
-        _, counts = self.run_export(fake.data([drawing]), drawings=True)
-        self.assertEqual((counts['up_to_date'], counts['files_up_to_date']), (0, 1))
-
-    def test_a_drawing_pdf_written_late_is_waited_for(self):
-        drawing = fake.File('Sheet', 'drawing', extension='f2d')
-        drawing.pdf_mode = 'later'
-        with patch('fusion_bulk_export.fusion.adsk.doEvents', fake.do_events, create=True), \
-                patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([drawing]), drawings=True)
-        self.assertEqual(counts['files'], 1)
-
-    def test_a_drawing_pdf_that_never_appears_is_a_skip_and_not_retried_this_run(self):
-        from fusion_bulk_export import fusion
-        first, second = fake.File('One', 'one', extension='f2d'), fake.File('Two', 'two', extension='f2d')
-        refused = fake.File('Three', 'three', extension='f2d')
-        first.pdf_mode = second.pdf_mode = 'never'
-        with patch.object(fusion, 'PDF_WAIT_SECONDS', 0.05), patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([first, second]), drawings=True)
-        self.assertEqual(counts['skipped'], 2)
-        self.assertEqual([e['error'] for e in self.manifest['entries']], ['Fusion did not write the drawing PDF'] * 2)
-        self.assertEqual((first.calls, second.calls), (1, 0))  # the second was not opened: no wait
+        design = fake.File('Part', 'part')
+        _, counts = self.run_export(fake.data([drawing, design]))
+        entry = next(e for e in self.manifest['entries'] if e['id'] == 'drawing')
+        self.assertEqual((entry['kind'], entry['status'], entry['files']), ('file', 'unsupported', []))
+        self.assertEqual(entry['error'], 'Fusion cannot export drawings safely through its API '
+                                         '(use File > Export in Fusion)')
+        self.assertEqual((counts['exported'], counts['unsupported'], counts['skipped'], counts['failed']),
+                         (1, 1, 0, 0))
+        self.assertEqual((drawing.calls, drawing.downloads), (0, []))  # neither opened nor downloaded
         self.assertEqual(self.app.documents.items, [])
-        refused.pdf_mode = 'false'
-        self.adapter.pdf_broken = None
-        self.run_export(fake.data([refused]), drawings=True)
-        self.assertIn('Fusion cannot export this file type through its API (.f2d',
-                      self.manifest['entries'][-1]['error'])
+        # The same with only designs asked for, and on every later run.
+        _, counts = self.run_export(fake.data([drawing]), other_files=False)
+        self.assertEqual((counts['unsupported'], drawing.calls), (1, 0))
+
+    def test_the_adapter_refuses_to_open_or_download_a_drawing(self):
+        from fusion_bulk_export.core import NotSaved
+        drawing = fake.File('Sheet', 'sheet', extension='f2d')
+        with self.assertRaises(RuntimeError):
+            self.adapter.export(drawing, self.root / 'Sheet v1')
+        with self.assertRaises(NotSaved):
+            self.adapter.download(drawing, self.root / 'Sheet.pdf')
+        self.assertEqual((drawing.calls, drawing.downloads), (0, []))
+        with self.assertRaises(fake.FusionCrashed):  # what the fake does if anything ever tries
+            self.app.documents.open(drawing, False)
 
     def test_full_disk_while_saving_a_file_stops_the_run(self):
         a, b = fake.File('A.pdf', 'a', extension='pdf'), fake.File('B.pdf', 'b', extension='pdf')
@@ -1175,6 +1163,24 @@ class ExportTests(unittest.TestCase):
         self.assertEqual([f.calls for f in files], [1] * 5 + [3])
         self.assertEqual(len(self.manifest['entries']), 6)
         self.assertFalse((self.root / 'manifest.journal').exists())
+
+    def test_a_run_after_fusion_crashed_mid_export_needs_no_user_action(self):
+        # Fusion died in the middle of a run: its export.lock (the dead process's id) and a
+        # half-written .staging are left behind. The next run clears both by itself.
+        import socket
+        import time
+        dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+        dead.wait()
+        (self.root / 'export.lock').write_text(json.dumps(dict(pid=dead.pid, host=socket.gethostname(),
+                                                               started=time.time() - 60)))
+        (self.root / '.staging').mkdir()
+        (self.root / '.staging' / 'a1b2c3.f3d').write_bytes(b'half written')
+        (self.root / 'manifest.journal').write_text('{"entry": {"key": "cut sho')  # cut short by the crash
+        _, counts = self.run_export(fake.data([fake.File()]))
+        self.assertEqual(counts['exported'], 1)
+        self.assertFalse((self.root / 'export.lock').exists())
+        self.assertFalse((self.root / '.staging').exists())
+        self.assertEqual(self.manifest['entries'][0]['status'], 'done')
 
     def test_journal_replay_replaces_entries_with_the_same_key(self):
         file = fake.File()
