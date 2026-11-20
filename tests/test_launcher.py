@@ -372,6 +372,16 @@ class LauncherTests(unittest.TestCase):
                          'Counts: 0 exported now, 1 already up to date, 0 other files saved, '
                          '2 other files already up to date, 0 skipped, 0 failed')
 
+    def test_status_counts_slow_items_without_names(self):
+        out = self.root / 'out'
+        out.mkdir()
+        (out / 'manifest.json').write_text(json.dumps(dict(entries=[
+            dict(name='Secret Locked', status='done', files=[], slow_seconds=135),
+            dict(name='Secret Quick', status='done', files=[])])))
+        text = '\n'.join(launcher.summary(out))
+        self.assertIn('Slow: 1 item(s) took Fusion over a minute each (the report lists them)', text)
+        self.assertNotIn('Secret', text)
+
     def test_status_counts_unsupported_files_apart_from_failures(self):
         out = self.root / 'out'
         out.mkdir()

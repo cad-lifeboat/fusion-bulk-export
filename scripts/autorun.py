@@ -318,6 +318,9 @@ def summary(output):
         if unread:
             lines.append('Warning: %d design(s): links to other designs could not be read; the design itself '
                          'was exported' % unread)
+        slow = sum(1 for e in entries if e.get('slow_seconds'))
+        if slow:
+            lines.append('Slow: %d item(s) took Fusion over a minute each (the report lists them)' % slow)
         stale = sum(1 for e in designs if e.get('references_out_of_date'))
         if stale:
             lines.append('Note: %d design(s) with out-of-date links (exported as they are, not a failure)' % stale)

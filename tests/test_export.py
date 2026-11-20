@@ -1,4 +1,6 @@
+import csv
 import errno
+import io
 import os
 import subprocess
 import sys
@@ -1194,6 +1196,46 @@ class ExportTests(unittest.TestCase):
         self.assertFalse((self.root / 'export.lock').exists())
         self.assertFalse((self.root / '.staging').exists())
         self.assertEqual(self.manifest['entries'][0]['status'], 'done')
+
+    def test_slow_items_are_recorded_and_a_slow_failure_is_not_retried(self):
+        # Seen on real Fusion: opening a design "locked in another team" blocked it for ~135 s.
+        from fusion_bulk_export import report
+        quick, slow, stuck = fake.File('Quick', 'quick'), fake.File('Locked', 'locked'), fake.File('Stuck', 'stuck')
+        slow.open_seconds = 135
+        stuck.open_seconds, stuck.failures = 130, 2  # both attempts would fail and block as long
+        exporter = Exporter(self.root, self.adapter)
+        exporter.clock = fake.clock
+        lines = []
+        exporter.log = lambda message: lines.append(message)
+        counts = exporter.run(fake.data([quick, slow, stuck]))
+        entries = {e['id']: e for e in exporter.manifest['entries']}
+        self.assertNotIn('slow_seconds', entries['quick'])
+        self.assertEqual(entries['locked']['slow_seconds'], 135)
+        self.assertEqual(entries['locked']['status'], 'done')
+        self.assertEqual((entries['stuck']['status'], entries['stuck']['attempts'], stuck.calls), ('failed', 1, 1))
+        self.assertEqual(entries['stuck']['slow_seconds'], 130)
+        self.assertEqual(counts['failed'], 1)
+        # The line naming the item is written before Fusion is asked to open it.
+        started = [line for line in lines if line.startswith('exporting ')]
+        self.assertEqual(len(started), 3)
+        self.assertLess(lines.index(started[1]), next(i for i, line in enumerate(lines) if line.startswith('slow (135 s)')))
+        page = report.render_html(exporter.manifest, exporter.run_info, counts)
+        self.assertIn('<h2>Slow items</h2>', page)
+        self.assertLess(page.index('Locked'), page.index('Stuck', page.index('<h2>Slow items</h2>')))
+        self.assertIn('2 min 15 s', page)
+        data = report.summary(counts, exporter.run_info, exporter.manifest, self.root)
+        self.assertIn('2 item(s) took Fusion over a minute each; the report lists them under "Slow items".',
+                      data['notes'])
+        rows = {r['design']: r for r in csv.DictReader(io.StringIO(report.render_csv(exporter.manifest,
+                                                                                      exporter.run_info)))}
+        self.assertEqual((rows['Locked']['slow_seconds'], rows['Quick']['slow_seconds']), ('135', ''))
+        # A quick failure is still tried twice.
+        flaky = fake.File('Flaky', 'flaky')
+        flaky.failures = 1
+        exporter = Exporter(self.root, self.adapter)
+        exporter.clock = fake.clock
+        exporter.run(fake.data([flaky]))
+        self.assertEqual(flaky.calls, 2)
 
     def test_journal_replay_replaces_entries_with_the_same_key(self):
         file = fake.File()

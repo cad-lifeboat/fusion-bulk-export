@@ -47,6 +47,9 @@ class File:
         # (a recompute, an updated reference), although nobody edited it.
         self.modified_on_open = False
         self.close_result = True  # what Document.close returns (Fusion can answer False)
+        # Seconds Documents.open blocks Fusion for this file (on the synthetic clock, see clock()):
+        # seen on real Fusion, about 135 s for a design "locked in another team".
+        self.open_seconds = 0
         self.content = b'Synthetic file content of ' + identity.encode('utf-8')
         self.downloads = []
 
@@ -256,6 +259,14 @@ class Document:
         return True
 
 
+CLOCK = [0.0]  # the synthetic Fusion's clock: open() of a slow file moves it on
+
+
+def clock():
+    """A monotonic clock that only Fusion's slow work moves (give it to Exporter.clock)."""
+    return CLOCK[0]
+
+
 class Documents(Collection):
     """Application.documents. Opening a design also opens the designs it references (as Fusion
     does for an assembly), unless one of them is open already; all are listed until closed.
@@ -264,6 +275,7 @@ class Documents(Collection):
     def open(self, file, visible):
         assert visible is False
         file.calls += 1
+        CLOCK[0] += file.open_seconds
         # On real Fusion, a drawing opened through the API took minutes and its PDF export then
         # crashed Fusion itself: opening one is a test failure, not a modelled behaviour.
         if str(file.fileExtension).lower() == 'f2d':

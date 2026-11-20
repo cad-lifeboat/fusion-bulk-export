@@ -79,7 +79,7 @@ def items(manifest, run_info=None):
                            has_links=entry.get('has_references'), links=len(links) if links else 0,
                            links_out_of_date=bool(entry.get('references_out_of_date')),
                            links_unreadable=bool(entry.get('references_unreadable')),
-                           fusion_error=entry.get('fusion_error') or ''))
+                           fusion_error=entry.get('fusion_error') or '', slow_seconds=entry.get('slow_seconds')))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
@@ -87,7 +87,7 @@ def items(manifest, run_info=None):
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
                            next_step=next_step('unreadable', problem.get('error')), warnings=[],
                            thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
-                           fusion_error=''))
+                           fusion_error='', slow_seconds=None))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
@@ -220,6 +220,7 @@ def render_html(manifest, run_info, counts):
     long_paths = long_path_count(manifest)
     if long_paths:
         out.append('<p class="stop">%s</p>' % esc(LONG_PATHS % long_paths))
+    out += slow_html(rows)
     out += table_html(designs, 'Designs', 'Design')
     if others:
         out += table_html(others, 'Other files', 'File')
@@ -227,12 +228,40 @@ def render_html(manifest, run_info, counts):
     return '\n'.join(out) + '\n'
 
 
+SLOW_NOTE = ('Fusion took over a minute on each of these (a design locked in another team, or a large '
+             'assembly, can block it). Nothing is wrong with the export; this says where the time went.')
+
+
+def slow_html(rows):
+    """The "Slow items" list: items Fusion took over a minute on, slowest first."""
+    slow = sorted((row for row in rows if row.get('slow_seconds')), key=lambda row: -row['slow_seconds'])
+    if not slow:
+        return []
+    esc = html.escape
+    out = ['<h2>Slow items</h2><p class="muted">%s</p><ul>' % esc(SLOW_NOTE)]
+    for row in slow:
+        where = ' / '.join(part for part in (row['project'], row['folder']) if part)
+        out.append('<li>%s <span class="muted">(%s)</span>: %s</li>'
+                   % (esc(row['name']), esc(where), esc(duration_text(row['slow_seconds']))))
+    out.append('</ul>')
+    return out
+
+
+def duration_text(seconds):
+    seconds = int(seconds or 0)
+    return '%d s' % seconds if seconds < 120 else '%d min %02d s' % (seconds // 60, seconds % 60)
+
+
+def slow_count(manifest):
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('slow_seconds'))
+
+
 def render_csv(manifest, run_info):
     stream = io.StringIO()
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
-                     'links_out_of_date', 'fusion_error', 'links_unreadable'])
+                     'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '') if design else ''
@@ -242,7 +271,8 @@ def render_csv(manifest, run_info):
                          row['next_step'], '; '.join(row['warnings']), row['thumbnail'], row['kind'],
                          '' if design else (row['files'][0] if row['files'] else ''),
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
-                         row['fusion_error'], 'yes' if row['links_unreadable'] else ''])
+                         row['fusion_error'], 'yes' if row['links_unreadable'] else '',
+                         row['slow_seconds'] or ''])
     return stream.getvalue()
 
 
@@ -350,6 +380,9 @@ def summary(counts, run_info, manifest, output, page=None):
     stale = links_out_of_date(manifest)
     if stale:
         notes.append('%d design(s) use older versions of linked designs (a note, not a failure).' % stale)
+    slow = run_info.get('slow') or 0  # this run's; the report lists every one in the folder
+    if slow:
+        notes.append('%d item(s) took Fusion over a minute each; the report lists them under "Slow items".' % slow)
     unreadable = len(run_info.get('discovery_errors') or [])
     if unreadable:
         notes.append('%d folder(s) could not be read.' % unreadable)

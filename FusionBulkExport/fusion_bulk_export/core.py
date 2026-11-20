@@ -29,6 +29,12 @@ FULL_BYTES = 100 << 20      # after a failed write, below this the disk counts a
 # other file downloaded. An item already up to date, or skipped without asking Fusion, neither
 # counts nor resets: it says nothing about whether Fusion can reach the account.
 FAILURES_IN_A_ROW = 5
+# An item that takes longer than SLOW_SECONDS (Fusion can block for minutes opening a design, as
+# for one "locked in another team") gets slow_seconds on its entry and is listed in the report. A
+# design whose failed attempt took longer than NO_RETRY_SECONDS is not tried a second time in the
+# run: that would block Fusion as long again (the next run tries it again).
+SLOW_SECONDS = 60
+NO_RETRY_SECONDS = 120
 SAVE_EVERY_ITEMS = 50       # rewrite manifest.json after this many finished items...
 SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journal has each one)
 
@@ -871,6 +877,7 @@ class Exporter:
         """Export one design or save one other file; returns its status. Raises Trouble when
         the run must stop."""
         self.last_error = None
+        began = self.clock()
         key = self.item_key(hub, project, file)
         kind = 'design' if str(file.fileExtension).lower() == 'f3d' else 'file'
         entry = entries.get(key)
@@ -893,6 +900,9 @@ class Exporter:
         self.manifest['entries'].append(entry)
         entries[key] = entry
         trouble = None
+        # Written before Fusion is asked (opening can block it for minutes): the log then shows
+        # which item is slow.
+        self.log('exporting ' + key)
         if kind == 'file' and unsupported_reason(file) is not None:
             # Never handed to Fusion: neither a failure nor something the user left out.
             entry.update(status='unsupported', error=unsupported_reason(file))
@@ -905,6 +915,11 @@ class Exporter:
                 entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
             trouble = self.export_design(hub, project, folders, file, entry, key, owned)
+        took = self.clock() - began
+        if took > SLOW_SECONDS:
+            entry['slow_seconds'] = int(round(took))
+            self.run_info['slow'] = self.run_info.get('slow', 0) + 1
+            self.log('slow (%d s) %s' % (entry['slow_seconds'], key))
         counts[count_key(entry, entry['status'])] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
@@ -942,6 +957,7 @@ class Exporter:
         self.links(file, entry)
         for attempt in range(2):
             entry['attempts'] = attempt + 1
+            began = self.clock()
             try:
                 stem, facts = self.destination(hub, project, folders, file, owned=owned)
                 entry.update(facts)
@@ -982,6 +998,10 @@ class Exporter:
                     return trouble  # a second attempt cannot succeed either
                 if entry.get('has_references') and not isinstance(error, (OpenInFusion, ValueError)):
                     entry.update(error=link_reason(len(entry.get('references') or [])), fusion_error=str(error))
+                if self.clock() - began > NO_RETRY_SECONDS:
+                    # Another attempt would block Fusion as long again; the next run tries again.
+                    self.log('not retried in this run (the attempt took %d s) %s' % (self.clock() - began, key))
+                    break
         return None
 
     def save_file(self, hub, project, folders, file, entry, entries, owned=()):
