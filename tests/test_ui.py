@@ -475,9 +475,32 @@ class FriendlyErrorTests(UIBase):
         prompt, title, details = self.details[-1]
         log = self.log / 'errors.log'
         self.assertIn(str(log), prompt)
-        self.assertIn("KeyError: 'boom'", details)
+        self.assertIn('nothing is sent anywhere', prompt)
+        self.assertIn('KeyError: <...>', details)  # a key can be a name: left out
+        self.assertIn('at FusionBulkExport.py:', details)
         self.assertNotIn('\n', details)
-        self.assertIn("KeyError: 'boom'", log.read_text())
+        self.assertIn('KeyError: <...>', log.read_text())
+
+    def test_unexpected_error_details_hold_no_names(self):
+        import errno
+        command = self.open_dialog()
+        secret = '/Users/someone/FusionExport/Secret Hub/Secret Project/Secret Design v3.step'
+
+        def failing(*args, **kwargs):
+            try:
+                raise OSError(errno.EACCES, 'Permission denied', secret)
+            except OSError as error:
+                raise RuntimeError('could not move %s to "Secret Design"' % secret) from error
+        self.module._code['export'] = failing
+        command.execute.handlers[0].notify(None)
+        prompt, title, details = self.details[-1]
+        logged = (self.log / 'errors.log').read_text()
+        for text in (details, logged):
+            self.assertNotIn('Secret', text)
+            self.assertNotIn('someone', text)
+            self.assertIn('RuntimeError: could not move <path>', text)
+            self.assertIn('PermissionError: [Errno 13] Permission denied', text)
+            self.assertNotIn('test_ui.py', text)  # only the add-in's own code is listed
 
     def test_old_fusion_offers_everything_only(self):
         self.module.run(None)

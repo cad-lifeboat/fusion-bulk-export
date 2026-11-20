@@ -120,7 +120,7 @@ def report(title):
     ui = adsk.core.Application.get().userInterface
     try:
         from fusion_bulk_export import errors
-        errors.show(ui, title, error, detail, _LOG_DIR)
+        errors.show(ui, title, error, _LOG_DIR)
     except Exception:
         ui.messageBox(detail, title)  # the package itself is broken: show the raw details
 
