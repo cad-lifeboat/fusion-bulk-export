@@ -1,5 +1,6 @@
 """Synthetic documented-API surface, with no real CAD data."""
 import sys
+import weakref
 from pathlib import Path
 from types import ModuleType, SimpleNamespace as NS
 import zipfile
@@ -22,7 +23,9 @@ class File:
     together with it, like the components of an assembly."""
     def __init__(self, name='Part', identity='file-1', version=3, extension='f3d', references=False, design=True):
         self.name, self.id, self.versionNumber = name, identity, version
+        self.latestVersionNumber = version
         self.fileExtension, self.dateModified = extension, 1700000000
+        self.linked_error = None  # raised by the archive export made after links were removed
         linked = [File('Linked part', 'linked-' + identity + ('' if n == 0 else '-%d' % (n + 1)))
                   for n in range(int(references))]
         self.childReferences = Collection(*linked)
@@ -36,6 +39,12 @@ class File:
         # DataFile.thumbnail: a DataObjectFuture, finished here (see thumbnail()).
         self.thumbnail = thumbnail()
         self.root = None      # a root component (see component()) to use instead of the default
+        # A function making a fresh root component for each opened document (linked_assembly()):
+        # removing links changes the document's own copy, never the file's.
+        self.make_root = None
+        # Called with the document as Document.close(False) closes it (a test can make the
+        # synthetic account change there, as a save would).
+        self.on_close = None
         self.failures = 0
         self.calls = 0
         self.documents = []
@@ -111,9 +120,22 @@ def data(files=(), folders=()):
     return NS(dataHubs=Collection(hub))
 
 
-class Manager:
-    def __init__(self, file):
+class Weak:
+    """A document held weakly (as Fusion's API objects do not keep a closed document alive): no
+    reference cycle keeps a document in memory after the add-in lets go of it."""
+    @property
+    def document(self):
+        return None if self._document is None else self._document()
+
+    @document.setter
+    def document(self, value):
+        self._document = None if value is None else weakref.ref(value)
+
+
+class Manager(Weak):
+    def __init__(self, file, document=None):
         self.file = file
+        self.document = document
 
     def createFusionArchiveExportOptions(self, path):
         # Like Fusion: the archive is always .f3d, whatever extension is asked for.
@@ -129,7 +151,11 @@ class Manager:
             self.file.failures -= 1
             raise RuntimeError('Synthetic export failure')
         if path.endswith('.f3d'):
-            write_archive(path)
+            links = linked_left(self.document)
+            if self.document is not None and self.document.dataFile.linked_error is not None and \
+                    self.document.links_removed:
+                raise self.document.dataFile.linked_error
+            write_archive(path, links)
         else:
             Path(path).write_bytes(step_text(self.file.step_solids))
         return True
@@ -169,11 +195,107 @@ DRAWING_CRASH = ('Fusion crashed: a drawing was opened or exported through the A
                  'an access violation in its sheet export). The add-in must never do this.')
 
 
-def write_archive(path):
-    """A small zip with the members of a Fusion archive (no real CAD data)."""
+def write_archive(path, links=None):
+    """A small zip with the members of a Fusion archive (no real CAD data). links: how many
+    linked components the design still had (written into the archive, so a test can tell an
+    export with links from one made after they were removed)."""
     with zipfile.ZipFile(path, 'w') as archive:
         archive.writestr('Manifest.dat', 'synthetic')
-        archive.writestr('FusionAssetName[Active]/Synthetic', 'synthetic')
+        archive.writestr('FusionAssetName[Active]/Synthetic', 'synthetic' if links is None else 'links: %d' % links)
+
+
+def archive_links(path):
+    """The linked components an archive written by the synthetic exporter still had."""
+    with zipfile.ZipFile(str(path)) as archive:
+        text = archive.read('FusionAssetName[Active]/Synthetic').decode('ascii')
+    return int(text.split(': ')[1]) if text.startswith('links') else None
+
+
+def linked_left(document):
+    """How many occurrences of an open document are still linked components (None: no document)."""
+    if document is None:
+        return None
+    root = document.root
+    return sum(1 for index in range(root.allOccurrences.count)
+               if getattr(root.allOccurrences.item(index), 'isReferencedComponent', False))
+
+
+class AccountWrite(BaseException):
+    """The add-in called an API that writes to the Fusion account (save, saveAs, upload). A
+    BaseException: no `except Exception` in the add-in can hide it, and the test fails."""
+
+
+def account_write(*args, **kwargs):
+    raise AccountWrite('The add-in must never save, upload or change anything in the Fusion account.')
+
+
+class Occurrence(Weak):
+    """An occurrence; referenced (isReferencedComponent) for a linked component. breakLink()
+    removes its link in the document's memory, as on real Fusion: the document becomes modified,
+    and the linked components inside it (inner) appear in allOccurrences only now. break_result:
+    True, False (breakLink answers False), or an error message (breakLink raises it)."""
+    def __init__(self, part, referenced=False, parent=None, inner=(), break_result=True, visible=True, bulb=True,
+                 seconds=0):
+        self.component, self.isReferencedComponent, self.assemblyContext = part, referenced, parent
+        self.isVisible, self.isLightBulbOn, self.isValid = visible, bulb, True
+        self.inner = list(inner)
+        self.break_result = break_result
+        self.seconds = seconds  # how long breakLink blocks Fusion (synthetic clock)
+        self.document = None
+        self.breaks = 0
+
+    def breakLink(self):
+        self.breaks += 1
+        document = self.document
+        assert document is not None and not document.isVisible, 'links removed in a document the user can see'
+        CLOCK[0] += self.seconds
+        if isinstance(self.break_result, str):
+            raise RuntimeError(self.break_result)
+        if self.break_result is False:
+            return False
+        if not self.isReferencedComponent:
+            raise RuntimeError('3 : not a linked component')
+        self.isReferencedComponent = False
+        document.isModified = True
+        document.links_removed = True
+        for child in self.inner:
+            child.assemblyContext = self
+            child.document = document
+            document.root.allOccurrences.items.append(child)
+        self.inner = []
+        return True
+
+
+def linked_assembly(file, parts=3, nested=0, under_local=True, break_result=True, endless=False, seconds=0):
+    """Give file the shape of an assembly of linked designs (its documents get a fresh root each):
+    parts linked components, each below a local sub-component when under_local (as seen on real
+    Fusion), each holding nested linked components that appear once its link is removed. endless:
+    every removed link exposes another one (links that never run out)."""
+    def make():
+        local = Occurrence(component('local-sub', [body()]))
+        occurrences = [local]
+        for n in range(parts):
+            inner = [Occurrence(component('inner-%d-%d' % (n, m), [body()]), referenced=True) for m in range(nested)]
+            occurrences.append(Occurrence(component('linked-%d' % n, [body()]), referenced=True,
+                                          parent=local if under_local else None, inner=inner,
+                                          break_result=break_result, seconds=seconds))
+        root = component('root', [body()], occurrences)
+        if endless:
+            def chain(occurrence, depth=0):
+                child = Occurrence(component('deeper-%d' % depth, [body()]), referenced=True)
+                original = child.breakLink
+
+                def more():
+                    if child.isReferencedComponent and not child.inner:
+                        child.inner = [chain(child, depth + 1)]
+                    return original()
+                child.breakLink = more
+                return child
+            for occurrence in occurrences[1:]:
+                occurrence.inner.append(chain(occurrence))
+        return root
+    file.make_root = make
+    return file
 
 
 def step_text(solids=1, complete=True):
@@ -213,7 +335,20 @@ class Document:
         self.documentReferences = Collection(*([NS()] if file.references else []))
         self.isModified = False
         self.isVisible = visible
-        if file.root is not None:
+        self.links_removed = False
+        self.closes = []  # the save argument of each close() call
+        # Never called by the add-in: anything that writes to the account fails the test at once.
+        self.save = self.saveAs = self.upload = account_write
+        if file.make_root is not None:
+            root = file.make_root()
+            for index in range(root.allOccurrences.count):
+                root.allOccurrences.item(index).document = self
+            parts = {}
+            for index in range(root.allOccurrences.count):
+                part = root.allOccurrences.item(index).component
+                parts[part.id] = part
+            components = [root] + list(parts.values())
+        elif file.root is not None:
             root = file.root
             parts = {}
             for index in range(root.allOccurrences.count):
@@ -225,8 +360,10 @@ class Document:
             part = component('part', [body(shown=False)])
             root = component('root', [body(), body(solid=False)], [occurrence(part)])
             components = [root, part]
+        self.root = root
+        me = weakref.ref(self)
         self._products = NS(itemByProductType=lambda product: NS(
-            exportManager=Manager(file), rootComponent=root,
+            exportManager=Manager(file, me()), rootComponent=root,
             allComponents=Collection(*components)) if file.design else None)
         if str(file.fileExtension).lower() == 'f2d':
             # A drawing the user opened: anything the add-in reads from it is a crash on export.
@@ -242,11 +379,14 @@ class Document:
         return self._products
 
     def close(self, save):
-        assert save is False
+        self.closes.append(save)
+        assert save is False, 'a document must be closed without saving'
         if not self.isValid:
             raise RuntimeError('3 : the document is no longer valid')
         if self.dataFile.close_result is False:
             return False
+        if self.dataFile.on_close is not None:
+            self.dataFile.on_close(self)
         self.closed, self.isValid = True, False
         if self.owner is not None and self in self.owner.items:
             self.owner.items.remove(self)

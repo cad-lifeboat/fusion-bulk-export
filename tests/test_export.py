@@ -157,7 +157,7 @@ class ExportTests(unittest.TestCase):
     def test_archive_references_step_and_manifest(self):
         a, b = fake.File(), fake.File('Assembly', 'assembly', references=True)
         _, counts = self.run_export(fake.data([a, b]))
-        self.assertEqual(counts, dict(exported=2, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=0))
+        self.assertEqual(counts, dict(exported=2, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=0, linked_copies=0))
         for entry in self.manifest['entries']:
             self.assertEqual(entry['version'], 3)
             self.assertEqual(entry['date'], 1700000000)
@@ -171,7 +171,7 @@ class ExportTests(unittest.TestCase):
         # Root has one solid (plus one surface body); a visible part holds one hidden solid.
         self.assertTrue(all(entry['solid_bodies'] == 2 for entry in self.manifest['entries']))
         self.assertTrue(all(entry['visible_solid_bodies'] == 1 for entry in self.manifest['entries']))
-        self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part')])
+        self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part', path=None)])
         self.assertTrue(all(doc.closed for file in [a, b] for doc in file.documents))
 
     def test_each_step_is_checked_inline_and_warnings_stored(self):
@@ -489,7 +489,7 @@ class ExportTests(unittest.TestCase):
         design = fake.File('Part', 'part')
         data = fake.data([design], [fake.folder('Docs', [spec, manual, picture, script], identity='docs')])
         _, counts = self.run_export(data)
-        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=4, files_up_to_date=0, skipped=0, unsupported=0, failed=0))
+        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=4, files_up_to_date=0, skipped=0, unsupported=0, failed=0, linked_copies=0))
         entries = {e['id']: e for e in self.manifest['entries']}
         self.assertEqual([f['path'] for f in entries['spec']['files']], ['Hub/Project/Docs/Spec.pdf'])
         self.assertEqual(entries['manual']['files'][0]['path'], 'Hub/Project/Docs/Manual.PDF')
@@ -509,7 +509,7 @@ class ExportTests(unittest.TestCase):
                          ['Manual.PDF', 'Photo.jpg', 'Spec.pdf', 'notes.scr'])
         self.assertEqual(spec.calls, 0)  # never opened as a document
         _, counts = self.run_export(data)
-        self.assertEqual(counts, dict(exported=0, up_to_date=1, files=0, files_up_to_date=4, skipped=0, unsupported=0, failed=0))
+        self.assertEqual(counts, dict(exported=0, up_to_date=1, files=0, files_up_to_date=4, skipped=0, unsupported=0, failed=0, linked_copies=0))
         self.assertEqual(len(spec.downloads), 1)
         path.write_bytes(b'damaged')
         _, counts = self.run_export(data)
@@ -534,7 +534,7 @@ class ExportTests(unittest.TestCase):
         _, counts = self.run_export(fake.data(files + boards))
         # Electronics types are "not supported", apart from skips and failures.
         self.assertEqual(counts, dict(exported=0, up_to_date=0, files=0, files_up_to_date=0, skipped=3,
-                                      unsupported=2, failed=0))
+                                      unsupported=2, failed=0, linked_copies=0))
         entries = {e['id']: e for e in self.manifest['entries']}
         self.assertEqual((entries['board']['status'], entries['sch']['status']), ('unsupported', 'unsupported'))
         for mode, reason in cases.items():
@@ -627,7 +627,7 @@ class ExportTests(unittest.TestCase):
     def test_designs_only_skips_other_files(self):
         spec = fake.File('Spec', 'spec', extension='pdf')
         exporter, counts = self.run_export(fake.data([spec, fake.File()]), other_files=False)
-        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=0, files_up_to_date=0, skipped=1, unsupported=0, failed=0))
+        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=0, files_up_to_date=0, skipped=1, unsupported=0, failed=0, linked_copies=0))
         self.assertEqual(spec.downloads, [])
         self.assertFalse(exporter.run_info['other_files'])
         self.assertEqual(self.manifest['entries'][0]['error'], 'Not a Fusion design: pdf')
@@ -836,7 +836,7 @@ class ExportTests(unittest.TestCase):
         (self.root / 'manifest.json').write_text(json.dumps(dict(schema=1, runs=[{}], entries=[entry])))
         new = fake.File('New', 'new')
         _, counts = self.run_export(fake.data([old, new]))
-        self.assertEqual(counts, dict(exported=1, up_to_date=1, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=0))
+        self.assertEqual(counts, dict(exported=1, up_to_date=1, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=0, linked_copies=0))
         self.assertEqual(old.calls, 0)
         self.assertEqual(self.manifest['schema'], 2)
         self.assertEqual(self.manifest['entries'][0], entry)  # untouched, files where they were
@@ -1071,7 +1071,7 @@ class ExportTests(unittest.TestCase):
     def test_five_failures_in_a_row_stop_and_retry_next_run(self):
         files = self.failing_files(7)
         exporter, counts = self.run_export(fake.data(files))
-        self.assertEqual(counts, dict(exported=0, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=5))
+        self.assertEqual(counts, dict(exported=0, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=5, linked_copies=0))
         self.assertEqual([f.calls for f in files], [2] * 5 + [0, 0])
         self.assertIn('5 designs in a row failed', exporter.run_info['stopped_reason'])
         self.assertEqual(exporter.run_info['stopped_code'], 'failing')
@@ -1086,7 +1086,7 @@ class ExportTests(unittest.TestCase):
     def test_a_success_resets_the_failure_count(self):
         files = self.failing_files(4) + [fake.File(identity='good')] + self.failing_files(4)
         exporter, counts = self.run_export(fake.data(files))
-        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=8))
+        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=8, linked_copies=0))
         self.assertIsNone(exporter.run_info['stopped_reason'])
 
     def test_on_trouble_retry_carries_on_and_stop_stops(self):
@@ -1204,7 +1204,7 @@ class ExportTests(unittest.TestCase):
             stream.write('{"entry": {"key": "cut sh')  # the line being written when it crashed
         exporter, counts = self.run_export(fake.data(files))
         self.assertEqual(exporter.run_info['journal_replayed'], 6)
-        self.assertEqual(counts, dict(exported=1, up_to_date=5, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=0))
+        self.assertEqual(counts, dict(exported=1, up_to_date=5, files=0, files_up_to_date=0, skipped=0, unsupported=0, failed=0, linked_copies=0))
         self.assertEqual([f.calls for f in files], [1] * 5 + [3])
         self.assertEqual(len(self.manifest['entries']), 6)
         self.assertFalse((self.root / 'manifest.journal').exists())

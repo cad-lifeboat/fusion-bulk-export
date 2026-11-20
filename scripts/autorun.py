@@ -4,9 +4,12 @@
   autorun.py inventory OUTPUT                       list everything, open nothing
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
                     [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only]
+                    [--no-linked-copies]
                                                     export (rerun the same command to resume);
                                                     other files (PDFs, uploads) are saved too
-                                                    unless --designs-only; drawings and
+                                                    unless --designs-only; assemblies also get
+                                                    a copy with their linked parts included
+                                                    unless --no-linked-copies; drawings and
                                                     electronics are listed as not supported
                                                     (Fusion cannot export them safely)
   autorun.py status OUTPUT                          counts so far (no design names)
@@ -290,7 +293,8 @@ def root_problem(output, name=None):
     return output_root_problem(output, 'win32' if (name or system()) == 'Windows' else 'darwin')
 
 
-def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):
+def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False,
+            linked_copies=True):
     make_output(output)
     if not exporting(installed):
         # A running export may be writing to this very folder (its STOP, its result): left alone
@@ -315,6 +319,8 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['limit'] = limit
     if designs_only:
         config['designs_only'] = True
+    if not linked_copies:
+        config['linked_copies'] = False
     if not memory_guard_wanted():
         config['memory_guard'] = False
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
@@ -330,6 +336,9 @@ def memory_guard_wanted(environ=None):
     return not (value is not None and value.strip().lower() in ('off', '0', 'false', 'no'))
 
 
+ACCOUNT_CHANGED_LINE = ("Stopped by itself (account_changed): a design's version or date in the Fusion account "
+                        "changed while it was exported with its linked parts. Do not run again; check the "
+                        "design's version history in Fusion and report it (export.log in the output folder).")
 LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing other programs may speed it up.'
 
 
@@ -338,12 +347,16 @@ def count_line(counts):
     if 'exported' in counts:
         unchanged = counts.get('files_up_to_date', 0)
         unsupported = counts.get('unsupported', 0)
-        return ('Counts: %d exported now, %d already up to date, %s saved%s, %d skipped, %d failed%s'
+        copies = counts.get('linked_copies', 0)
+        return ('Counts: %d exported now, %d already up to date, %s saved%s, %d skipped, %d failed%s%s'
                 % (counts.get('exported', 0), counts.get('up_to_date', 0), plural(counts.get('files', 0), 'other file'),
                    ', %s already up to date' % plural(unchanged, 'other file') if unchanged else '',
                    counts.get('skipped', 0), counts.get('failed', 0),
                    ("; %s can't be exported by an add-in (drawings, electronics)" % plural(unsupported, 'file')
-                    if unsupported else '')))
+                    if unsupported else ''),
+                   ('; %s also saved with %s linked parts included' % (plural(copies, 'assembly'),
+                                                                       form(copies, 'its', 'their'))
+                    if copies else '')))
     return 'Counts: ' + json.dumps(counts, sort_keys=True)
 
 
@@ -391,6 +404,8 @@ def summary(output):
         if report.get('stopped_code') == 'memory':
             lines.append('Stopped by itself (memory): Fusion is using a lot of memory. Restart Fusion, then run '
                          'export again to carry on.')
+        elif report.get('stopped_code') == 'account_changed':
+            lines.append(ACCOUNT_CHANGED_LINE)
         elif report.get('stopped_reason'):
             lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
         if report.get('low_memory') and report.get('stopped_code') != 'memory':
@@ -447,6 +462,17 @@ def summary(output):
         if slow:
             lines.append('Slow: %s took Fusion over a minute%s (the report lists %s)'
                          % (plural(slow, 'item'), '' if slow == 1 else ' each', form(slow, 'it', 'them')))
+        copies = sum(1 for e in designs if e.get('status') == 'done' and any(
+            f.get('role') == 'archive_with_linked_parts' for f in e.get('files') or []))
+        if copies:
+            lines.append('Linked parts: %s also saved with %s linked parts included'
+                         % (plural(copies, 'assembly'), form(copies, 'its', 'their')))
+        older = sum(1 for e in designs if e.get('status') == 'done' and e.get('has_references')
+                    and 'linked_occurrences' not in e)
+        if older:
+            lines.append('Note: %s %s exported before copies with linked parts existed; export into a new folder '
+                         'to get %s' % (plural(older, 'assembly'), form(older, 'was', 'were'),
+                                       form(older, 'its copy', 'their copies')))
         stale = sum(1 for e in designs if e.get('references_out_of_date'))
         if stale:
             lines.append('Note: %s with out-of-date links (exported as %s, not a failure)'
@@ -540,6 +566,8 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
     if report.get('stopped_code') == 'memory':
         print(MEMORY_LINE, flush=True)
         return EXIT_MEMORY
+    if report.get('stopped_code') == 'account_changed':
+        return 1
     return 0
 
 
@@ -563,7 +591,8 @@ def run_job(args, name, output, installed):
     """Send the job to the add-in (opening Fusion if it is closed) and wait for its result."""
     watching = alive(installed)
     install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
-            folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False))
+            folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
+            not getattr(args, 'no_linked_copies', False))
     try:
         if watching:
             return wait(installed, output, args.timeout)
@@ -831,6 +860,9 @@ def main(argv=None):
                                 'was exported; later designs and folders are left for the next run')
             p.add_argument('--designs-only', action='store_true',
                            help='skip other files (PDFs, uploads); by default they are saved too')
+            p.add_argument('--no-linked-copies', action='store_true',
+                           help='do not also save each assembly with its linked parts included (a second, '
+                                'larger .f3d beside the one that keeps the links)')
             p.add_argument('--restart-fusion', nargs='?', const='polite', choices=('polite', 'force'),
                            metavar='force',
                            help='when the export stops for memory or Fusion closes during it, this closes and reopens '

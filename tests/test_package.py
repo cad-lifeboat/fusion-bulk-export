@@ -130,6 +130,12 @@ class PackageTests(unittest.TestCase):
     def test_nothing_in_the_zip_can_change_the_fusion_account(self):
         self.assertEqual(self.violations(), {})
 
+    def test_links_are_removed_in_one_guarded_place_only(self):
+        # Occurrence.breakLink changes the open document in memory (never the account): called
+        # only from fusion.break_links, which only FusionAdapter.linked_copy calls.
+        calls = [name for name, text in self.text_files() if re.search(r'\.breakLink\s*\(', text)]
+        self.assertEqual(calls, [self.top + 'FusionBulkExport/fusion_bulk_export/fusion.py'])
+
 
 class ForbiddenCallTests(unittest.TestCase):
     def test_catches_each_forbidden_call(self):

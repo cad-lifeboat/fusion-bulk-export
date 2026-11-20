@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from . import checks, memory
 from .journal import Journal, replay
 from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
-from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, absolute_path, clean, design_suffixes,
-                    long_path, output_root_problem, too_long, windows_length)
+from .names import (LINKED_SUFFIX, NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, absolute_path, clean,
+                    design_suffixes, long_path, output_root_problem, too_long, windows_length)
 from .power import inside_fusion, keep_awake
 from .staging import Staging
 from .words import plural
@@ -205,8 +205,10 @@ def memory_test_limit(environ=None):
     return int(megabytes * (1 << 20)) if megabytes > 0 else None
 
 
-# Run counts, by what happened to each item this run.
-COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'unsupported', 'failed')
+# Run counts, by what happened to each item this run (linked_copies: designs exported this run that
+# also got their copy with linked parts; they are counted in exported as well).
+COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'unsupported', 'failed',
+              'linked_copies')
 COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed',
                    'unsupported': 'unsupported'}
 FILES_SAVED = 'files'  # the count of other files (not designs) saved this run
@@ -229,7 +231,8 @@ def new_counts():
     saved before and checked; skipped: not saved, with a reason (other files when only designs are
     wanted, a design without a design product, a download Fusion refused); unsupported: a file
     type Fusion's API cannot export at all (electronics, drawings: see UNSUPPORTED), neither a
-    failure nor the user's choice; failed: will be tried again on the next run."""
+    failure nor the user's choice; failed: will be tried again on the next run; linked_copies:
+    designs exported this run that also got their copy with linked parts (also in exported)."""
     return dict((key, 0) for key in COUNT_KEYS)
 
 
@@ -494,6 +497,35 @@ def file_info(path, root):
             'mtime_ns': stat.st_mtime_ns}
 
 
+# What each recorded file of an entry is: files[i]['role']. Entries written before roles existed
+# have none; checks.file_role() tells them apart by extension.
+ROLE_ARCHIVE, ROLE_STEP, ROLE_LINKED, ROLE_THUMBNAIL, ROLE_FILE = (
+    'archive', 'step', 'archive_with_linked_parts', 'thumbnail', 'file')
+
+
+def design_role(path):
+    """The role of a file a design export wrote, from its path."""
+    text = str(path).lower()
+    if text.endswith(LINKED_SUFFIX.lower()):
+        return ROLE_LINKED
+    if text.endswith('.png'):
+        return ROLE_THUMBNAIL
+    return ROLE_STEP if checks.is_step(text) else ROLE_ARCHIVE
+
+
+def cloud_state(file):
+    """(versionNumber, latestVersionNumber, dateModified) of a cloud file, read from the DataFile
+    in hand (properties, nothing is listed or opened); None when they cannot be read."""
+    try:
+        return (file.versionNumber, getattr(file, 'latestVersionNumber', None), file.dateModified)
+    except Exception:
+        return None
+
+
+ACCOUNT_CHANGED = ("A design's version or date in your Fusion account changed while it was exported "
+                   "with its linked parts; the export stopped to be safe.")
+
+
 def drop_older_files(manifest):
     """Remove entries of another file's older versions saved where a newer version has been
     saved since (it replaced them on disk). Normally done as the newer one is saved; this
@@ -509,6 +541,39 @@ def drop_older_files(manifest):
     manifest['entries'] = [e for e in manifest['entries'] if not (
         e.get('kind') == 'file' and e.get('status') == 'done' and id(e) not in keep
         and any((e.get('id'), info.get('path')) in newest for info in e.get('files') or []))]
+
+
+def complete(entry):
+    """Whether a finished entry records the files its kind needs: another file one file; a
+    design its archive and its STEP, plus at most a copy with linked parts. By role, and for entries
+    written before roles existed by extension (checks.file_role), in any order."""
+    files = entry.get('files') or []
+    if entry.get('kind') == 'file':
+        return len(files) == 1
+    roles = [checks.file_role(info) for info in files]
+    return (roles.count(ROLE_ARCHIVE) == 1 and roles.count(ROLE_STEP) == 1
+            and roles.count(ROLE_LINKED) <= 1 and len(roles) == 2 + roles.count(ROLE_LINKED))
+
+
+def link_paths(manifest):
+    """The link map: on every design's references, path is the relative path of that linked
+    design's exported archive in this folder (its newest exported version), or None when it is not
+    exported here. Run at the end of every run, since a linked design is often exported after the
+    assembly that uses it."""
+    archives = {}
+    for entry in manifest.get('entries') or []:
+        if entry.get('kind', 'design') != 'design' or entry.get('status') != 'done':
+            continue
+        archive = next((info.get('path') for info in entry.get('files') or []
+                        if checks.file_role(info) == ROLE_ARCHIVE), None)
+        known = archives.get(str(entry.get('id')))
+        if archive and (known is None or (entry.get('version') or 0) >= known[0]):
+            archives[str(entry.get('id'))] = (entry.get('version') or 0, archive)
+    for entry in manifest.get('entries') or []:
+        for reference in entry.get('references') or []:
+            if isinstance(reference, dict):
+                found = archives.get(str(reference.get('id')))
+                reference['path'] = found[1] if found else None
 
 
 def free_bytes(path):
@@ -671,6 +736,11 @@ class Exporter:
         self.clock = time.monotonic
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.other_files = True
+        # Also save assemblies with their linked parts included (a second .f3d; see
+        # FusionAdapter.linked_copy). The dialog's checkbox, the job's "linked_copies".
+        self.linked_copies = True
+        # Set when the account guard (export_checked) saw a design change in the account.
+        self.alarm = None
         # Fusion's memory, sampled between items (memory.sample inside Fusion; tests set a fake).
         self.memory_sampler = memory.sample if inside_fusion() else None
         # False switches the memory guard off for this exporter (a job's "memory_guard": false);
@@ -733,8 +803,11 @@ class Exporter:
         it is hashed only once; self.refreshed then says the entry changed. Full hashing of
         everything is checks.check_folder ("Check this folder")."""
         self.refreshed = False
-        if entry.get('status') != 'done' or len(entry.get('files', [])) != (1 if entry.get('kind') == 'file' else 2):
+        if entry.get('status') != 'done' or not complete(entry):
             return False
+        copy = entry.get('linked_copy') or {}
+        if self.linked_copies and copy.get('retry'):
+            return False  # the copy with linked parts was left out for now (the design was open)
         try:
             for expected in entry['files']:
                 # normpath, not resolve(): no file-system call, so long Windows paths are fine.
@@ -863,11 +936,11 @@ class Exporter:
             stem = directory / (base + version)
             facts = dict(location='/'.join(parts), identities=[identity for _, identity in segments],
                          base=base, shortened=False)
-            if not too_long(str(stem) + '.step', self.platform) and self.make_directory(directory):
+            if not too_long(str(stem) + LINKED_SUFFIX, self.platform) and self.make_directory(directory):
                 return stem, facts
         directory = self.short_directory(hub, project, folders)
         stem = directory / (sanitize(file.name, 12) + '~' + digest(str(file.id))[:24] + version)
-        if too_long(str(stem) + '.step', self.platform):
+        if too_long(str(stem) + LINKED_SUFFIX, self.platform):
             raise ValueError('The export path is too long even when shortened; choose a shorter output folder.')
         os.makedirs(long_path(directory), exist_ok=True)
         return stem, dict(location=None, identities=None, base=None, shortened=True)
@@ -906,7 +979,7 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True):
+            on_trouble=None, other_files=True, linked_copies=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
@@ -932,6 +1005,11 @@ class Exporter:
         other_files: also save the files that are not designs (PDFs, uploads) as Fusion hands
         them out; when false they are skipped as "Not a Fusion design".
 
+        linked_copies: for a design with linked components, also write a second archive with the
+        linked parts included (FusionAdapter.linked_copy). A design whose account version or date
+        changes meanwhile (which must never happen) stops the run at once, without asking
+        on_trouble: stopped_code 'account_changed'.
+
         Drawings (.f2d) are never opened: they are recorded as unsupported (DRAWING_REASON).
 
         The output folder is locked (export.lock) for the run: FolderBusy is raised when another
@@ -940,13 +1018,14 @@ class Exporter:
         lock = FolderLock(self.root)
         lock.acquire()
         try:
-            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files)
+            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies)
         finally:
             lock.release()
 
-    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files):
+    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=True):
         self.other_files = bool(other_files)
-        self.run_info.update(other_files=self.other_files)
+        self.linked_copies = bool(linked_copies)
+        self.run_info.update(other_files=self.other_files, linked_copies=self.linked_copies)
         counts = new_counts()
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
@@ -1066,7 +1145,9 @@ class Exporter:
                     if problem is not None:
                         last = str(problem.error) if problem.error is not None else ''
                         self.log('trouble: ' + problem.reason + ' ' + last)
-                        answer = on_trouble(problem.reason, last) if on_trouble else 'stop'
+                        # The account changed: never carried on, whatever anyone would answer.
+                        answer = (on_trouble(problem.reason, last) if on_trouble and problem.code != 'account_changed'
+                                  else 'stop')
                         if answer != 'retry':
                             stopping = problem
                             self.run_info.update(stopped_reason=problem.reason, stopped_code=problem.code)
@@ -1097,6 +1178,7 @@ class Exporter:
             if tracker is not None:
                 tracker.finish()
             self.staging.clean()
+            link_paths(self.manifest)  # every link to its exported file, now that the run's exports are known
             self.run_info.update(finished=now(), counts=counts, found=found)
             try:
                 self.save()
@@ -1186,6 +1268,8 @@ class Exporter:
             self.run_info['slow'] = self.run_info.get('slow', 0) + 1
             self.log('slow (%d s) %s' % (entry['slow_seconds'], key))
         counts[count_key(entry, entry['status'])] += 1
+        if entry['status'] == 'done' and (entry.get('linked_copy') or {}).get('status') == 'saved':
+            counts['linked_copies'] = counts.get('linked_copies', 0) + 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
             raise trouble  # the run's final save keeps this entry if the disk still allows
@@ -1223,35 +1307,41 @@ class Exporter:
         for attempt in range(2):
             entry['attempts'] = attempt + 1
             began = self.clock()
+            for fact in ('linked_occurrences', 'linked_copy', 'links_broken'):
+                entry.pop(fact, None)  # an earlier attempt's
             try:
                 stem, facts = self.destination(hub, project, folders, file, owned=owned)
                 entry.update(facts)
-                written = self.adapter.export(file, stem)
-                paths = [path for path in written if not str(path).lower().endswith('.png')]
-                pictures = [path for path in written if str(path).lower().endswith('.png')]
+                written = self.export_checked(file, stem, entry)
+                roles = [(path, design_role(path)) for path in written]
+                paths = [path for path, role in roles if role in (ROLE_ARCHIVE, ROLE_STEP)]
+                linked = [path for path, role in roles if role == ROLE_LINKED]
+                pictures = [path for path, role in roles if role == ROLE_THUMBNAIL]
                 details = dict(getattr(self.adapter, 'details', None) or {})
                 # Quick checks now: a broken file is retried; an empty STEP is a warning.
                 facts = checks.inline(paths, details.get('visible_solid_bodies'),
                                       details.get('visible_solid_bodies_distinct'))
+                linked = self.check_linked(linked, details)
                 # Files get the design's date first, then are recorded with that time.
-                self.set_times(paths + pictures, file)
-                entry['files'] = [file_info(Path(path), self.root) for path in paths]
+                self.set_times(paths + linked + pictures, file)
+                entry['files'] = [dict(file_info(Path(path), self.root), role=design_role(path))
+                                  for path in paths + linked]
                 entry.pop('thumbnail', None)
                 if pictures:
-                    entry['thumbnail'] = file_info(Path(pictures[0]), self.root)
+                    entry['thumbnail'] = dict(file_info(Path(pictures[0]), self.root), role=ROLE_THUMBNAIL)
                 entry.update(details)
                 entry.update(facts)
                 entry.update(status='done', error=None)
                 entry.pop('fusion_error', None)
                 self.mark_long_path(entry)
-                return None
+                return self.alarm
             except NonDesign as error:
                 if self.error_callback:
                     self.error_callback(key, error)
                 forget_frames(error)
                 entry.update(status='skipped', error=str(error))
                 entry.pop('fusion_error', None)
-                return None
+                return self.alarm
             except Exception as error:
                 if self.error_callback:
                     self.error_callback(key, error)
@@ -1260,6 +1350,8 @@ class Exporter:
                 entry.pop('fusion_error', None)
                 self.last_error = str(error)
                 self.log('attempt failed ' + key + ': ' + str(error))
+                if self.alarm is not None:
+                    return self.alarm  # never tried again: the run stops
                 trouble = self.trouble(error)
                 if trouble is not None:
                     return trouble  # a second attempt cannot succeed either
@@ -1270,6 +1362,52 @@ class Exporter:
                     self.log('not retried in this run (the attempt took %d s) %s' % (self.clock() - began, key))
                     break
         return None
+
+    def export_checked(self, file, stem, entry):
+        """adapter.export(file, stem), guarded: when the adapter removed links in memory
+        (details['links_broken']), the cloud file's version numbers and date (cloud_state, read
+        before and after) must be the same; if not, the entry gets account_changed: true, the log
+        an error, and self.alarm the Trouble that stops the run. Nothing is ever saved, so this
+        should never happen; if it does, the run must not go on."""
+        try:
+            self.adapter.linked_copies = self.linked_copies
+        except AttributeError:
+            pass
+        before = cloud_state(file)
+        try:
+            return self.adapter.export(file, stem)
+        finally:
+            details = getattr(self.adapter, 'details', None) or {}
+            if details.get('links_broken'):
+                after = cloud_state(file)
+                if before is not None and after is not None and tuple(after) != tuple(before):
+                    entry['account_changed'] = True
+                    self.alarm = Trouble('account_changed', ACCOUNT_CHANGED)
+                    self.log('ERROR account changed after removing links in memory %s: before %s, after %s'
+                             % (entry.get('key'), json.dumps(list(before)), json.dumps(list(after))))
+                    if self.error_callback:
+                        self.error_callback(entry.get('key'), RuntimeError(ACCOUNT_CHANGED))
+
+    def check_linked(self, linked, details):
+        """The copy with linked parts, if it opens as an archive; a broken one is removed and the
+        reason recorded (the design's own files stand)."""
+        kept = []
+        for path in linked:
+            try:
+                problems, _, _ = checks.archive_facts(path, full=False)
+            except OSError as error:
+                problems = ['archive is not a zip: ' + str(error)]
+            broken = [problem for problem in problems if problem.startswith('archive is not a zip')]
+            if not broken:
+                kept.append(path)
+                continue
+            try:
+                os.unlink(long_path(path))
+            except OSError:
+                pass
+            copy = details.setdefault('linked_copy', {})
+            copy.update(status='skipped', reason='The copy with linked parts was damaged: ' + broken[0])
+        return kept
 
     def save_file(self, hub, project, folders, file, entry, entries, owned=()):
         """Save another file (PDF, upload) as Fusion hands it out, under its own name.

@@ -18,13 +18,18 @@ CHOOSE = 'Choose projects or folders'
 # leaves the right-hand column (and anything in it) a sliver.
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 OTHER_FILES_WHY = 'PDFs, images and other uploaded files are copied as they are, beside the designs.'
+LINKED_PARTS = 'Include linked parts in assemblies'
+LINKED_PARTS_WHY = ('An assembly made of linked designs is saved as it is (an .f3d that keeps its links) and also '
+                    'as a second .f3d with the linked parts inside, which opens on its own. The links are removed '
+                    'only in Fusion\'s memory for that copy; nothing in your Fusion account changes.')
+LINKED_PARTS_NOTE = 'Adds a second, larger .f3d for each assembly, with its linked parts inside.'
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
-# 600 high: on a screen 1080 points high every control is in view at first (the tree is last).
-DIALOG_SIZE = (520, 600)
+# 640 high: on a screen 1080 points high every control is in view at first (the tree is last).
+DIALOG_SIZE = (520, 640)
 DIALOG_MINIMUM = (380, 460)
 # The tree's height in Fusion's units, set explicitly on the HTML input when it is made and again
 # each time it is shown (on macOS, test builds showed the tree collapsed to a ~40-unit strip when
@@ -140,6 +145,13 @@ class Picker:
         self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
                                               remembered.get('other_files') is not False)
         describe(self.files, OTHER_FILES_WHY, trace)
+        # On unless the user switched it off last time; the note under it shows while it is ticked.
+        self.linked = inputs.addBoolValueInput('fbx_linked', LINKED_PARTS, True, '',
+                                               remembered.get('linked_copies') is not False)
+        describe(self.linked, LINKED_PARTS_WHY, trace)
+        self.linked_note = inputs.addTextBoxCommandInput('fbx_linked_note', '', LINKED_PARTS_NOTE, 1, True)
+        full_width(self.linked_note, trace)
+        self.linked_note.isVisible = bool(self.linked.value)
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
@@ -179,6 +191,11 @@ class Picker:
     def other_files(self):
         """Whether files that are not designs are saved too (the checkbox)."""
         return bool(self.files.value)
+
+    @property
+    def linked_copies(self):
+        """Whether assemblies are also saved with their linked parts included (the checkbox)."""
+        return bool(self.linked.value)
 
     @property
     def drawings(self):
@@ -232,6 +249,8 @@ class Picker:
                     self.choose_folder()
                 finally:
                     self.browsing = False
+        elif changed_input.id == self.linked.id:
+            self.linked_note.isVisible = self.linked_copies
         elif changed_input.id == self.mode.id and self.tree is not None:
             self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)
@@ -242,7 +261,8 @@ class Picker:
 
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
-                            else EVERYTHING, other_files=self.other_files), drop=('drawings',))
+                            else EVERYTHING, other_files=self.other_files, linked_copies=self.linked_copies),
+                       drop=('drawings',))
 
     def incoming(self, action, data):
         """Answer the page; the returned string is handed back to its JavaScript. A request that

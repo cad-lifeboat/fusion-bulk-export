@@ -10,6 +10,8 @@ Configuration (all paths absolute):
                                      by id is exactly that folder, even beside a same-named one
    "designs_only": false,            optional; true: skip other files (PDFs, uploads),
                                      which are otherwise saved as Fusion hands them out
+   "linked_copies": true,            optional; false: do not also save assemblies with
+                                     their linked parts included (a second .f3d per assembly)
    "drawings": ...,                  accepted and ignored: drawings are never exported
                                      (exporting one crashed Fusion); they are listed as
                                      not supported
@@ -117,11 +119,14 @@ def check_settings(config):
     designs_only = config.get('designs_only', False)
     if not isinstance(designs_only, bool):
         raise ValueError('designs_only must be true or false')
+    linked_copies = config.get('linked_copies', True)
+    if not isinstance(linked_copies, bool):
+        raise ValueError('linked_copies must be true or false')
     memory_guard = config.get('memory_guard', True)
     if not isinstance(memory_guard, bool):
         raise ValueError('memory_guard must be true or false')
     # "drawings" (from launchers before drawing export was removed) is ignored.
-    return mode, selection, limit, timeout, not designs_only, memory_guard
+    return mode, selection, limit, timeout, not designs_only, linked_copies, memory_guard
 
 
 FIND_LOG_EVERY = 50  # folders listed between progress lines while a folder id is looked for
@@ -360,7 +365,7 @@ def run_autorun(app, config_path):
     try:
         unusable = None
         try:
-            output, mode, selection, limit, timeout, other_files, memory_guard = read_config(config_path)
+            output, mode, selection, limit, timeout, other_files, linked_copies, memory_guard = read_config(config_path)
         except Exception as error:
             output = getattr(error, 'output', None) or beside
             raise
@@ -373,7 +378,7 @@ def run_autorun(app, config_path):
         if unusable is not None:
             raise ValueError(unusable)
         log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
-                          other_files=other_files)
+                          other_files=other_files, linked_copies=linked_copies)
         log.write('autorun start ' + mode)
         if mode == 'diagnostics':
             report = diagnostics(app)
@@ -408,7 +413,7 @@ def run_autorun(app, config_path):
             try:
                 log.result['counts'] = exporter.run(
                     data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
-                    selection=selection, other_files=other_files)
+                    selection=selection, other_files=other_files, linked_copies=linked_copies)
             finally:
                 try:
                     write_report(exporter)

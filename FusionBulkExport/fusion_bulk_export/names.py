@@ -77,9 +77,14 @@ def fold(name):
     return unicodedata.normalize('NFC', name).casefold()
 
 
-# A design's files: "<stem> v<version>" plus these. All three are claimed together, so an
-# uploaded "Bracket v3.step" or "Bracket v3.png" and a design's export can never share a path.
-DESIGN_SUFFIXES = ('.f3d', '.step', '.png')
+# The second archive of an assembly with linked components: "<stem> v<version> (with linked
+# parts).f3d", a copy whose links were removed in memory so the linked parts' geometry is inside.
+# The suffix comes after the design's cleaned (and, on Windows, capped) name, so it is never cut.
+LINKED_PARTS = ' (with linked parts)'
+LINKED_SUFFIX = LINKED_PARTS + '.f3d'
+# A design's files: "<stem> v<version>" plus these. All are claimed together, so an uploaded
+# "Bracket v3.step" or "Bracket v3.png" and a design's export can never share a path.
+DESIGN_SUFFIXES = ('.f3d', '.step', '.png', LINKED_SUFFIX)
 
 
 def design_suffixes(version):
@@ -123,7 +128,10 @@ class Names:
         other item (and free(full name) is true, when given: the disk check). base itself, else
         base~tag with a tag from the identity. All the names are then taken for identity."""
         taken = self.taken.setdefault(directory, {})
-        longest = max(len(suffix) for suffix in suffixes)
+        # Room for the longest suffix when a name is shortened for its tag. The linked-parts copy's
+        # suffix is left out of it: counting it would change the tagged names of designs exported
+        # before it existed (names stay within the per-name limits with it all the same).
+        longest = max([len(suffix) for suffix in suffixes if not suffix.endswith(LINKED_SUFFIX)] or [0])
         for length in (0, 4, 8, 64):
             candidate = base if not length else (
                 shorten(base, max(NAME_LIMIT - longest - length - 1, 1)) + '~' + tag(identity, length))

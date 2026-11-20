@@ -102,13 +102,18 @@ def show_results(ui, data):
     results.fallback(ui, data)
 
 
-def export(app, selection, output, show=None, other_files=True, drawings=None):
+def export(app, selection, output, show=None, other_files=True, drawings=None, linked_copies=None):
     """Export into output with progress, then write the report and hand the summary to show
     (report.summary() data plus its plain "text"; the add-in shows it in the results dialog).
-    other_files: also save the files that are not designs (the dialog's checkbox). drawings is
+    other_files: also save the files that are not designs (the dialog's checkbox). linked_copies:
+    also save assemblies with their linked parts included (the dialog's other checkbox); None
+    takes the remembered choice (an entry file loaded before an update does not pass it). drawings is
     ignored: drawings are never exported (it is still accepted from an entry file loaded before
     an update, until Fusion restarts the add-in)."""
     ui = app.userInterface
+    if linked_copies is None:
+        from . import settings
+        linked_copies = settings.load().get('linked_copies') is not False
     if not has_hubs(app):
         raise errors.no_hubs()
     exporter = open_exporter(output, FusionAdapter(app))
@@ -134,7 +139,7 @@ def export(app, selection, output, show=None, other_files=True, drawings=None):
 
         try:
             counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
-                                  other_files=other_files)
+                                  other_files=other_files, linked_copies=linked_copies)
         except Exception as error:
             known = errors.friendly(error)
             if known is None:

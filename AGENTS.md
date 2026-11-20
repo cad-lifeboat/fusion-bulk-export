@@ -5,9 +5,11 @@ You are helping a person back up **their own** Fusion account to **their own com
 `.step` under its real name, in the hub/project/folder layout, and saves their other files
 (PDFs, uploads) beside them. Drawings and electronics are not supported (exporting a
 drawing through the API crashed Fusion): they are listed as such, never opened. Links
-between designs are listed in the
-manifest (`references`); Fusion's API cannot write `.f3z` bundles. It only reads from the
-account. Work on the person's machine, in a terminal, with them nearby.
+between designs are mapped in the manifest (`references`, each with the `path` of the
+linked design's exported `.f3d`, or null). An assembly of linked designs is also saved as
+`<name> v<N> (with linked parts).f3d`: its links removed in Fusion's memory only, then
+closed without saving, so that copy opens on its own (off with `--no-linked-copies`).
+Fusion's API cannot write `.f3z` bundles. It only reads from the account. Work on the person's machine, in a terminal, with them nearby.
 
 ## Rules
 
@@ -157,5 +159,15 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
   OUT itself may be at most 200 characters on Windows; a longer one is refused in one line.
 - **Two hub folders in an old OUT**: resuming a folder from version 0.2 keeps the old
   `~hash` folders and puts new items in readable folders beside them. That is expected.
+- **Assemblies, two files**: `status` says "Linked parts: N assemblies also saved with
+  their linked parts included". If the person's tool shows an assembly's `.f3d` as nearly
+  empty (one screw), point them to the `(with linked parts).f3d` beside it. An entry's
+  `linked_copy.reason` says why an assembly has no copy (open in Fusion: close it and
+  rerun; a link Fusion would not remove). "exported before copies with linked parts
+  existed" is a note: a new OUT gets them.
+- **"Stopped by itself (account_changed)"** (exit status 1): a design's version or date in
+  the account changed while its links were removed in memory. This must never happen. Do
+  not rerun; tell the person to check that design's version history in Fusion and report it
+  (`export.log` names it; keep the name private).
 - **Warnings** (a STEP with no bodies, or fewer solids than the distinct bodies Fusion showed): the
   `.f3d` archive is still the complete copy; report the count.

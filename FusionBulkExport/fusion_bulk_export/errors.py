@@ -42,6 +42,8 @@ NEXT_STEP = {
                'the failed designs are tried again.',
     'memory': 'Close Fusion, open it again and run the export on the same folder. '
               'It carries on where it stopped.',
+    'account_changed': ("Check the design's version history in Fusion before exporting again, and report this "
+                        '(export.log in the output folder says which design).'),
 }
 SIGN_IN = 'Sign in to Fusion (top right), wait until the Data Panel shows your projects, then try again.'
 

@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace as NS
 
 spec = importlib.util.spec_from_file_location('autorun_launcher', Path(__file__).parent.parent / 'scripts' / 'autorun.py')
 launcher = importlib.util.module_from_spec(spec)
@@ -363,6 +364,51 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         lines = stream.getvalue().splitlines()[1:]
         self.assertEqual(lines, ['Fusion is busy: An export started from the toolbar button is running'])
+
+    def test_status_names_linked_copies_and_an_account_change_fails_the_command(self):
+        out = self.root / 'out'
+        out.mkdir()
+        entries = [dict(kind='design', status='done', has_references=True, linked_occurrences=1, files=[
+            dict(path='a v1.f3d', role='archive', bytes=1), dict(path='a v1.step', role='step', bytes=1),
+            dict(path='a v1 (with linked parts).f3d', role='archive_with_linked_parts', bytes=1)]),
+            dict(kind='design', status='done', has_references=True, files=[dict(path='b v1.f3d', bytes=1),
+                                                                          dict(path='b v1.step', bytes=1)])]
+        (out / 'manifest.json').write_text(json.dumps(dict(schema=2, runs=[], entries=entries)), encoding='utf-8')
+        result = dict(mode='export', counts=dict(exported=2, linked_copies=1), stopped_code='account_changed',
+                      stopped_reason='changed', errors=[])
+        (out / 'autorun-result.json').write_text(json.dumps(result), encoding='utf-8')
+        lines = launcher.summary(out)
+        self.assertIn('1 assembly also saved with its linked parts included', lines[1])
+        self.assertIn('Linked parts: 1 assembly also saved with its linked parts included', lines)
+        self.assertIn(launcher.ACCOUNT_CHANGED_LINE, lines)
+        self.assertTrue(any(line.startswith('Note: 1 assembly was exported before copies with linked parts existed')
+                            for line in lines))
+        installed = self.root / 'installed'
+        installed.mkdir()
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
+        self.assertEqual(status, 1)
+
+    def test_no_linked_copies_flag_reaches_the_job(self):
+        installed, out = self.root / 'installed', self.root / 'out'
+        installed.mkdir()
+        with patch.object(launcher.shutil, 'copytree'):
+            launcher.install(installed, out, 'export', linked_copies=False)
+            self.assertIs(json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))['linked_copies'], False)
+            launcher.install(installed, out, 'export')
+            self.assertNotIn('linked_copies', json.loads((installed / 'autorun.json').read_text(encoding='utf-8')))
+        seen = []
+        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.no_linked_copies) or 0):
+            launcher.main(['export', str(out), '--no-linked-copies'])
+            launcher.main(['export', str(out)])
+        self.assertEqual(seen, [True, False])
+        jobs = []
+        with patch.object(launcher, 'install', side_effect=lambda *a: jobs.append(a)), \
+                patch.object(launcher, 'alive', return_value=True), patch.object(launcher, 'wait', return_value=0):
+            args = NS(command='export', project=None, limit=None, folder=None, designs_only=False,
+                      no_linked_copies=True, timeout=10)
+            launcher.run_job(args, 'Darwin', out, installed)
+        self.assertIs(jobs[0][-1], False)
 
     def test_designs_only_flag_reaches_the_job(self):
         installed, out = self.root / 'installed', self.root / 'out'

@@ -8,7 +8,7 @@ import adsk.core
 import adsk.fusion
 from .core import (DRAWING_REASON, UNSUPPORTED, native_reason, NonDesign, NotSaved, OpenInFusion, collection,
                    disk_full, is_drawing)
-from .names import fusion_path, long_path
+from .names import LINKED_SUFFIX, fusion_path, long_path
 from .staging import Staging
 
 # Fusion's own types other than designs (core.UNSUPPORTED): the exporter records them without
@@ -20,6 +20,16 @@ PRODUCT_TRIES = 5         # a just-opened document's products can fail to read t
 # Cloud ids of documents this add-in opened (hidden) and Fusion did not close yet. Kept for the
 # whole Fusion session, not one run, so a later run still knows they are the add-in's own.
 LEFT_OPEN = set()
+# Cloud ids of documents whose links this add-in removed in memory (see linked_copy) and that are
+# not closed yet. Such a document is never exported from again: its export would not be the
+# design as it is in the account.
+BROKEN = set()
+
+# The copy of an assembly with its linked parts included (linked_copy).
+LINK_PASSES = 10          # at most this many passes over the occurrences (breaking one can expose more)
+LINK_SLOW_SECONDS = 120   # removing the links of one design taking longer is recorded as slow
+OPEN_IN_FUSION = 'open in Fusion; close it to get the copy with linked parts'
+LINKS_UNKNOWN = "Fusion could not list this design's linked components"
 
 
 class FusionAdapter:
@@ -31,6 +41,11 @@ class FusionAdapter:
         # (opened hidden, never shown to the user), so they may be closed or exported from
         # later even though they are open "before" a later export.
         self.left_open = LEFT_OPEN
+        self.broken = BROKEN
+        # Also write "<stem> (with linked parts).f3d" for a design with linked components (the
+        # Exporter sets this from the dialog's checkbox or the job).
+        self.linked_copies = False
+        self.clock = time.monotonic
 
     def references(self, data_file):
         """Designs this one references (linked components, derives), by cloud id and name.
@@ -81,6 +96,8 @@ class FusionAdapter:
                 closed = not valid(document)
         if identity is not None:
             (self.left_open.discard if closed else self.left_open.add)(identity)
+            if closed:
+                self.broken.discard(identity)
         return closed
 
     def close_opened(self, before):
@@ -129,6 +146,12 @@ class FusionAdapter:
         for existing in list(collection(self.app.documents)):
             if document_id(existing) != identity:
                 continue
+            if identity in self.broken and not visible(existing):
+                # This add-in's own hidden copy, with its links removed: never exported from.
+                if self.close(existing):
+                    break  # opened afresh below
+                raise blocked('Fusion could not close a hidden copy of this %s that had its links removed; '
+                              'restart Fusion, then run again.' % what)
             if identity in self.left_open and not visible(existing):
                 if self.close(existing):
                     break  # opened afresh below
@@ -211,20 +234,25 @@ class FusionAdapter:
         document, opened = None, False
         try:
             document, opened = self.acquire(data_file, 'design', RuntimeError, OpenInFusion)
-            return self.write(document, data_file, stem)
+            return self.write(document, data_file, stem, opened)
         finally:
             # Never raises: a document Fusion would not close does not undo a good export; it
-            # is recorded (documents_left_open) and closed later when possible.
+            # is recorded (documents_left_open) and closed later when possible. Always without
+            # saving (close(False)), also after its links were removed: nothing is ever saved.
             if document is not None and opened:
-                self.close(document)
+                if not self.close(document) and self.details.get('links_broken'):
+                    copy = self.details.setdefault('linked_copy', {})
+                    copy['close_failed'] = True
             # Not held past this design (an exception's traceback keeps this frame alive).
             document = None
             # Also when opening or exporting failed: linked designs may be open by now.
             self.close_opened(before)
 
-    def write(self, document, data_file, stem):
-        """Export an open document. When it raises, its variables (design, export manager) are
-        dropped by the exporter (core.forget_frames) once the error is recorded."""
+    def write(self, document, data_file, stem, opened=False):
+        """Export an open document: <stem>.f3d and <stem>.step as the design is, then, for a design
+        with linked components, the copy with its linked parts (linked_copy). When it raises, its
+        variables (design, export manager) are dropped by the exporter (core.forget_frames) once
+        the error is recorded."""
         design = adsk.fusion.Design.cast(read_products(document).itemByProductType('DesignProductType'))
         if not design:
             raise NonDesign('No Fusion Design product (drawing or CAM-only file)')
@@ -249,7 +277,140 @@ class FusionAdapter:
             raise RuntimeError('Fusion reported a successful STEP export but wrote no file')
         staging.place(staged_archive, archive)
         staging.place(staged_step, step)
-        return [archive, step]
+        # Only now, after the design's own files are written: from here on the document in memory
+        # is no longer the design as it is in the account.
+        return [archive, step] + self.linked_copy(document, opened, design, stem)
+
+    def linked_copy(self, document, opened, design, stem):
+        """For a design with linked components (occurrences with isReferencedComponent): remove
+        every link in memory (Occurrence.breakLink, outermost first, at most LINK_PASSES passes)
+        and write the now self-contained design as "<stem> (with linked parts).f3d". Returns
+        [its path], or [] with the reason in details['linked_copy'].
+
+        Safety: only on a hidden document this add-in opened for this export (opened, never one
+        the user has open, which would be left modified); nothing is saved (the document is
+        closed with close(False) by export_design, whatever happens here; links_broken tells the
+        exporter to check that the account is unchanged). A failure here never undoes the
+        design's own files: only a full disk is raised."""
+        try:
+            found = referenced_occurrences(design)
+        except Exception:
+            self.details['linked_occurrences'] = None
+            if self.linked_copies:
+                self.details['linked_copy'] = dict(status='skipped', reason=LINKS_UNKNOWN)
+            return []
+        self.details['linked_occurrences'] = len(found)
+        if not found:
+            return []
+        found = None
+        if not self.linked_copies:
+            self.details['linked_copy'] = dict(status='off')
+            return []
+        if not opened or visible(document):
+            # The user's open document: removing its links would leave it modified in front of them.
+            self.details['linked_copy'] = dict(status='skipped', reason=OPEN_IN_FUSION, retry=True)
+            return []
+        copy = self.details['linked_copy'] = dict(status='skipped', reason=None)
+        self.details['links_broken'] = True  # from the first breakLink on: the exporter checks the account
+        identity = document_id(document)
+        if identity is not None:
+            self.broken.add(identity)
+        began = self.clock()
+        problem, passes, broken = break_links(design)
+        seconds = self.clock() - began
+        copy.update(passes=passes, broken=broken, seconds=round(seconds, 1))
+        if seconds > LINK_SLOW_SECONDS:
+            copy['slow'] = True
+        if problem:
+            copy['reason'] = problem
+            return []
+        target = str(stem) + LINKED_SUFFIX
+        staging = self.stage()
+        staged = staging.path('.f3d')
+        try:
+            manager = design.exportManager
+            if not manager.execute(manager.createFusionArchiveExportOptions(fusion_path(staged))):
+                copy['reason'] = 'Fusion did not write the copy with linked parts (its export returned false)'
+                return []
+            if not os.path.isfile(long_path(staged)):
+                copy['reason'] = 'Fusion reported the copy with linked parts written but wrote no file'
+                return []
+            staging.place(staged, target)
+        except Exception as error:
+            if disk_full(error):
+                raise
+            copy['reason'] = 'Fusion could not write the copy with linked parts: %s' % (str(error) or type(error).__name__)
+            return []
+        finally:
+            if copy['reason'] is not None:
+                try:
+                    os.unlink(long_path(staged))
+                except OSError:
+                    pass
+        copy.update(status='saved', reason=None)
+        return [target]
+
+
+def referenced_occurrences(design):
+    """Every occurrence in the design, nested ones included (rootComponent.allOccurrences), that is
+    a linked component (isReferencedComponent). On real Fusion the links of an assembly can all
+    sit below local sub-components, so the top-level occurrences alone are not enough."""
+    return [occurrence for occurrence in collection(design.rootComponent.allOccurrences)
+            if getattr(occurrence, 'isReferencedComponent', False)]
+
+
+def outermost(occurrences):
+    """The linked occurrences with no linked occurrence above them (their assemblyContext
+    chain): removing an outer link can change what is inside it, so the inner ones are left for
+    the next pass, read afresh."""
+    chosen = []
+    for occurrence in occurrences:
+        if not valid(occurrence):
+            continue
+        parent, inner = getattr(occurrence, 'assemblyContext', None), False
+        while parent is not None:
+            if getattr(parent, 'isReferencedComponent', False):
+                inner = True
+                break
+            parent = getattr(parent, 'assemblyContext', None)
+        if not inner:
+            chosen.append(occurrence)
+    return chosen
+
+
+def break_links(design, passes=None):
+    """Remove every link of an open design in memory: (problem or None, passes made, links
+    removed). Pass after pass (Fusion gets adsk.doEvents between them) until no linked
+    occurrence is left, at most LINK_PASSES; a breakLink that raises or returns False ends it
+    with the reason. Never raises. Nothing is saved: only the document in memory changes."""
+    passes = LINK_PASSES if passes is None else passes
+    removed = 0
+    for number in range(1, passes + 1):
+        try:
+            left = outermost(referenced_occurrences(design))
+        except Exception as error:
+            return 'Fusion could not list the linked components: %s' % (str(error) or type(error).__name__), \
+                number - 1, removed
+        if not left:
+            return None, number - 1, removed
+        for occurrence in left:
+            try:
+                result = occurrence.breakLink()
+            except Exception as error:
+                return 'Fusion could not remove a link: %s' % (str(error) or type(error).__name__), number, removed
+            if result is False:
+                return 'Fusion did not remove a link (breakLink returned false)', number, removed
+            removed += 1
+        left = None
+        adsk.doEvents()
+    try:
+        remaining = len(referenced_occurrences(design))
+    except Exception as error:
+        return 'Fusion could not list the linked components: %s' % (str(error) or type(error).__name__), \
+            passes, removed
+    if remaining:
+        return '%d links were still there after %d passes' % (remaining, passes), passes, removed
+    return None, passes, removed
 
 
 def shown_solids(component):

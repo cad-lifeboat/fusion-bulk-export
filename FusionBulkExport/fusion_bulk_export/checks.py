@@ -127,6 +127,23 @@ def is_archive(path):
     return str(path).lower().endswith(('.f3d', '.f3z'))
 
 
+def file_role(info):
+    """What a recorded file of a manifest entry is: its 'role' ('archive', 'step',
+    'archive_with_linked_parts', 'thumbnail', 'file'), or, for entries written before roles
+    existed (which never held a copy with linked parts), what its extension says."""
+    role = (info or {}).get('role')
+    if role:
+        return role
+    path = str((info or {}).get('path') or '')
+    if is_archive(path):
+        return 'archive'
+    if is_step(path):
+        return 'step'
+    if path.lower().endswith('.png'):
+        return 'thumbnail'
+    return 'file'
+
+
 def inline(paths, expected=None, distinct=None):
     """Quick checks right after a design's export: {'step_solids': n, 'warnings': [...]}.
     Raises BadExport when a file is broken."""
@@ -172,7 +189,7 @@ def read_manifest(root):
 
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
               'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
-              'failed_checks', 'members_not_crc_checked')
+              'failed_checks', 'members_not_crc_checked', 'linked_copies')
 
 
 def check_folder(root, strict=False, show=None):
@@ -225,8 +242,14 @@ def check_folder(root, strict=False, show=None):
             line = 'other file, ' + plural(len(files), 'file')
         else:
             totals['designs'] += 1
-            archive = next((root / f['path'] for f in files if is_archive(f.get('path', ''))), None)
-            step = next((root / f['path'] for f in files if is_step(f.get('path', ''))), None)
+            archive = next((root / f['path'] for f in files if file_role(f) == 'archive'), None)
+            step = next((root / f['path'] for f in files if file_role(f) == 'step'), None)
+            for linked in [root / f['path'] for f in files if file_role(f) == 'archive_with_linked_parts']:
+                totals['linked_copies'] += 1
+                if os.path.isfile(long_path(linked)):
+                    linked_problems, _, unchecked = archive_facts(linked)
+                    problems += ['copy with linked parts: ' + problem for problem in linked_problems]
+                    totals['members_not_crc_checked'] += unchecked
             if archive is None or step is None:
                 problems.append('archive or STEP not recorded')
             else:
@@ -259,10 +282,12 @@ def check_folder(root, strict=False, show=None):
                             # is the complete copy.
                             totals['solids_differ'] += 1
                             (problems if strict else notes).append(warning)
-                    line = '%s, %s, STEP %d bytes, %s%s' % (
+                    line = '%s, %s, STEP %d bytes, %s%s%s' % (
                         archive.suffix, plural(members, 'member design'), os.stat(long_path(step)).st_size,
                         plural(solids, 'solid'),
-                        '' if expected is None else ' (Fusion: %d)' % expected)
+                        '' if expected is None else ' (Fusion: %d)' % expected,
+                        ', and a copy with linked parts' if any(file_role(f) == 'archive_with_linked_parts'
+                                                                for f in files) else '')
         if entry.get('warnings'):
             totals['warnings'] += 1
         if show:

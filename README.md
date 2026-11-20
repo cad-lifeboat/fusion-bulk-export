@@ -55,7 +55,8 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 - A name too long for its row ends in "…": hover over the row to read it whole.
 - If a folder cannot be listed, the tree says so with a **Retry** button.
 - The button is always there, also after an export from the command line. Only one export runs at a time.
-- The dialog reads top to bottom: **Save to**, the other-files box, the **Export** choice, then the tree, so every control is in view when it opens; the tree scrolls inside itself.
+- **Include linked parts in assemblies** (on by default, remembered): each assembly made of linked designs is also saved as a second, larger `.f3d` with its linked parts inside (see [What you get](#what-you-get)). Untick it to save only the usual files.
+- The dialog reads top to bottom: **Save to**, the two boxes, the **Export** choice, then the tree, so every control is in view when it opens; the tree scrolls inside itself.
 - On Windows the output folder's own path can be at most 200 characters (the files below it may be longer). A longer one is refused, with the reason under **Save to**; choose a shorter folder such as `C:\FusionExport`.
 - While it exports, the progress text says which design (or "file N" for another file) it is on, before Fusion starts on it: if Fusion stalls, you can see on which item.
 - If the run gets into trouble (5 designs failing in a row, a full disk, the output folder gone), it pauses, shows the reason and the last error, and asks "Try again now?": **OK** carries on, **Cancel** stops. Everything exported so far is kept either way.
@@ -97,6 +98,8 @@ FusionExport/
   My Hub/Robot Arm/Brackets/Base plate v3.f3d     the full design: history, sketches, everything
   My Hub/Robot Arm/Brackets/Base plate v3.step    geometry for any other CAD program
   My Hub/Robot Arm/Brackets/Base plate v3.png     the design's thumbnail
+  My Hub/Robot Arm/Arm assembly v7.f3d            an assembly as it is: its links to other designs
+  My Hub/Robot Arm/Arm assembly v7 (with linked parts).f3d    the same assembly with its linked parts inside
   My Hub/Robot Arm/Brackets/Datasheet.pdf         another file, under its own name
   index.html                                      the report: every item, its status and links to its files
   index.csv                                       the same as a table
@@ -113,7 +116,7 @@ FusionExport/
 - **Other files** (PDFs, images, uploaded STEP files and so on) are saved as they are, under their own names. A newer version of such a file replaces the older one.
 - **Drawings and electronics are not supported.** Exporting a drawing through Fusion's API crashed Fusion itself, so drawings are never opened: each is listed as "Drawing not exported: Fusion's drawing export crashes when an add-in runs it." Electronics files are listed as "Electronics file not exported: Fusion offers no export for it to add-ins." Both are counted as **can't be exported by an add-in**, apart from failures and skips; to keep a copy, open them in Fusion and use File > Export.
 - Only each design's current version is exported, not its older versions. A newer version of a design gets its own files next to the old ones (`v4` beside `v3`).
-- **Linked designs:** Fusion's API can only save a design on its own, not as a `.f3z` bundle with the designs it links to. Every linked design is exported in its own right, so nothing is lost, and `manifest.json` lists each design's links under `references`. Re-linking after import is manual. If you need one self-contained `.f3z`, use **File → Export** in Fusion for that design.
+- **Linked designs (assemblies) come as two files.** `<name> v7.f3d` is the assembly exactly as it is in Fusion: it keeps its links to the designs it uses, and on its own it holds only the assembly's own bodies. `<name> v7 (with linked parts).f3d` is a copy whose links were removed in Fusion's memory before it was saved, so the linked parts' geometry is inside: it opens on its own and is larger. Use the copy with linked parts to open the assembly anywhere, or to hand it to someone; use the plain `.f3d` (together with the linked designs, each exported in its own right) to keep the links. Nothing in your Fusion account changes: the assembly is closed without saving, and the export checks afterwards that its version and date in the account are unchanged (if they ever differ, the export stops). A design you have open in Fusion gets no copy (removing its links would change your open document): close it and export again. `manifest.json` maps every link to its exported file: each design's `references` lists the linked designs, each with the `path` of its exported `.f3d` in this folder (or `null` when it is not exported here), and each file has a `role` (`archive`, `step`, `archive_with_linked_parts`). An add-in still cannot write a `.f3z` bundle; for one, use **File → Export** in Fusion. Untick **Include linked parts in assemblies** (or use `--no-linked-copies`) to skip the copies; assemblies exported before this option existed are not exported again just to add one: export into a new folder to get them.
 - **Broken or out-of-date links:** if a design with links fails, the reason reads "A linked design is missing or cannot be opened (N links)", with Fusion's own message beside it in `index.html` and `index.csv`; open it in Fusion and fix its links. A design whose links point to older versions of other designs is exported as it is, with a note (not a failure), counted in the summary, `index.html` and `status`. `inventory.json` marks designs with links (`has_references`, `references_out_of_date`), so you can fix them first. If Fusion cannot read a design's links at all, the design is still exported, with the warning "Links to other designs could not be read; the design itself was exported".
 - If you rename or move a design or folder in Fusion, files already exported stay where they are; new exports use the new names.
 - **Export folders from version 0.2 or older** keep their short names with a `~hash`: what is already there is not exported again or renamed, and new items go in readable folders beside them, so such a folder holds both layouts. `index.html` says so: "Older exports keep their old folder names; new items go in readable folders".
@@ -128,6 +131,8 @@ The counts, in the summary, in `index.html` and from `autorun.py status`:
 - **skipped**: not saved, with the reason (other files when you chose designs only, or a file Fusion would not hand out);
 - **can't be exported by an add-in (drawings, electronics)**: file types an add-in cannot export; not failures, and not something you left out (status `unsupported` in `index.csv`);
 - **failed**: tried twice and did not work; they are tried again next time.
+
+The summary also says how many assemblies were saved with their linked parts included ("12 assemblies also saved with their linked parts included").
 
 A design whose STEP has no bodies, or fewer solids than the distinct bodies Fusion showed, is exported with a **warning**. Other differences in the count (a STEP may write a part used twice once or twice) are only recorded. The `.f3d` is still the complete copy; the warning is in the summary and in the report.
 
@@ -149,6 +154,8 @@ A design whose STEP has no bodies, or fewer solids than the distinct bodies Fusi
 ## Questions
 
 **Is there a Linux version?** It is not needed: this is an add-in that runs inside Fusion, and Fusion itself runs only on Windows and macOS. If you run Fusion on Linux through Wine, the Windows installer may work, but it has not been tested; please tell us in [Discussions](../../discussions) if you try.
+
+**Why is my assembly's .f3d almost empty?** Its parts are linked designs, which that `.f3d` only points to, so another program sees just the assembly's own bodies (sometimes a single screw). Open `<name> (with linked parts).f3d` beside it instead: it holds the linked parts too.
 
 **Why not just export by hand?** For a few designs, File → Export in Fusion is fine. This is for when you have dozens or thousands: it keeps your project and folder layout, saves STEP files too, and can stop and pick up where it left off.
 
@@ -195,7 +202,7 @@ python3 scripts/autorun.py stop ~/FusionExport                           # pause
 ```
 
 - Project ids, and each file's folder ids, are in `inventory.json`. A folder id also works for a folder whose name contains `/`.
-- `--designs-only` leaves the other files out. `--limit N` stops after exporting N designs in this run, for a small trial: designs already up to date and other files do not count, and the other files in every folder visited up to then (the rest of the folder where the Nth design was exported included) are still saved. `--drawings` does nothing any more (drawing export was removed because it can crash Fusion); it only says so.
+- `--designs-only` leaves the other files out. `--no-linked-copies` leaves out the second `.f3d` with linked parts for each assembly. `--limit N` stops after exporting N designs in this run, for a small trial: designs already up to date and other files do not count, and the other files in every folder visited up to then (the rest of the folder where the Nth design was exported included) are still saved. `--drawings` does nothing any more (drawing export was removed because it can crash Fusion); it only says so.
 - `status` prints counts only: the last result, the manifest including items still only in `manifest.journal`, warnings, link problems and out-of-date links.
 - The output folder can be anywhere. On Windows its own path can be at most 200 characters (the files below it may be longer); a longer one is refused in one line.
 - If Fusion is closed, the command opens it. The add-in must be switched on in Fusion once (Step 2 above); until it is, the command says what to click and keeps waiting.

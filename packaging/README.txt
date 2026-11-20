@@ -41,7 +41,12 @@ Startup first, then switch Run on, as above.
 Open the Utilities tab and click Fusion Bulk Export (the orange cube in the
 ADD-INS group). Check "Save to" (Browse... picks another folder; it is remembered),
 choose Everything or tick projects and folders, and click Export. "Also save other
-files (PDFs, uploads)" is on by default. Fusion cannot be used while it exports:
+files (PDFs, uploads)" is on by default, and so is "Include linked parts in
+assemblies": an assembly made of linked designs is saved as it is (an .f3d that
+keeps its links) and also as "<name> v7 (with linked parts).f3d", a larger copy with
+the linked parts inside that opens on its own. The links are removed only in
+Fusion's memory for that copy; the assembly is closed without saving. A design you
+have open in Fusion gets no copy: close it and export again. Fusion cannot be used while it exports:
 leave it open and signed in until the summary appears. It gives the counts and the
 paths of the output folder and of index.html, a report of everything saved and
 anything that failed. Drawings and electronics are counted as "can't be exported
