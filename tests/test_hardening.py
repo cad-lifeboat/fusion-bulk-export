@@ -22,6 +22,8 @@ class Base(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.app = NS(documents=fake.Documents())
         self.adapter = FusionAdapter(self.app)
+        fusion.LEFT_OPEN.clear()
+        self.addCleanup(fusion.LEFT_OPEN.clear)
 
     def run_export(self, data, **kwargs):
         exporter = Exporter(self.root, self.adapter)
@@ -111,6 +113,75 @@ class SharedNamesTests(Base):
             self.assertIsNone(fusion.save_thumbnail(future, str(target), staging))
             self.assertEqual(target.read_bytes(), b'already here')
         self.assertEqual(list(staging.folder.glob('*')), [])
+
+
+class OpenDocumentTests(Base):
+    def user_has_open(self, file, modified=False):
+        document = fake.Document(file, self.app.documents)
+        document.isModified = modified
+        self.app.documents.items.append(document)
+        return document
+
+    def test_an_open_drawing_is_exported_from_and_left_open(self):
+        drawing = fake.File('Sheet', 'sheet', extension='f2d')
+        mine = self.user_has_open(drawing)
+        _, counts = self.run_export(fake.data([drawing]))
+        self.assertEqual(counts['files'], 1)
+        self.assertFalse(mine.closed)
+        self.assertEqual(drawing.calls, 0)
+        self.assertEqual(self.app.documents.items, [mine])
+
+    def test_an_open_drawing_with_unsaved_edits_is_never_closed(self):
+        drawing = fake.File('Sheet', 'sheet', extension='f2d')
+        later = fake.File('Other sheet', 'other', extension='f2d')
+        mine = self.user_has_open(drawing, modified=True)
+        _, counts = self.run_export(fake.data([drawing, later]))
+        self.assertFalse(mine.closed)
+        self.assertTrue(mine.isModified)
+        entry = self.manifest['entries'][0]
+        self.assertEqual(entry['status'], 'skipped')
+        self.assertIn('unsaved changes', entry['error'])
+        self.assertEqual(counts['files'], 1)  # the next drawing is still tried
+        self.assertEqual(self.app.documents.items, [mine])
+
+    def test_another_version_of_an_open_drawing_is_left_alone(self):
+        drawing = fake.File('Sheet', 'sheet', extension='f2d')
+        mine = self.user_has_open(drawing)
+        mine.dataFile = NS(id='sheet', versionNumber=2)
+        self.run_export(fake.data([drawing]))
+        self.assertFalse(mine.closed)
+        self.assertIn('Another version', self.manifest['entries'][0]['error'])
+
+    def test_a_linked_design_marked_modified_on_open_is_closed_and_exports_later(self):
+        assembly = fake.File('Assembly', 'assembly', references=1)
+        child = assembly.childReferences.item(0)
+        child.modified_on_open = True
+        _, counts = self.run_export(fake.data([assembly, child]))
+        self.assertEqual(counts['exported'], 2, self.manifest['entries'])
+        self.assertEqual(self.app.documents.items, [])
+
+    def test_a_document_fusion_will_not_close_keeps_the_export_and_is_closed_later(self):
+        part, other = fake.File('Part', 'part'), fake.File('Other', 'other')
+        part.close_result = False
+        _, counts = self.run_export(fake.data([part]))
+        self.assertEqual(counts['exported'], 1)
+        entry = self.manifest['entries'][0]
+        self.assertEqual((entry['status'], entry['documents_left_open']), ('done', 1))
+        self.assertEqual(part.calls, 1)
+        part.close_result = True
+        self.adapter = FusionAdapter(self.app)  # each run has its own adapter
+        part.versionNumber = 4  # a new version: the add-in's own old document is closed and reopened
+        self.run_export(fake.data([part, other]))
+        self.assertEqual([e['status'] for e in self.manifest['entries']], ['done', 'done', 'done'])
+        self.assertEqual(self.app.documents.items, [])
+
+    def test_a_document_left_open_is_exported_from_on_the_second_attempt(self):
+        part = fake.File('Part', 'part')
+        part.close_result = False
+        part.failures = 1
+        self.run_export(fake.data([part]))
+        self.assertEqual(self.manifest['entries'][0]['status'], 'done')
+        self.assertEqual(part.calls, 1)  # attempt 2 used the document attempt 1 left open
 
 
 if __name__ == '__main__':

@@ -41,6 +41,10 @@ class File:
         # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false'.
         self.pdf_mode = 'now'
         self.products_flaky = 0
+        # Seen with old or linked designs: Fusion marks a document modified as it opens it
+        # (a recompute, an updated reference), although nobody edited it.
+        self.modified_on_open = False
+        self.close_result = True  # what Document.close returns (Fusion can answer False)
         self.content = b'Synthetic file content of ' + identity.encode('utf-8')
         self.downloads = []
 
@@ -185,12 +189,15 @@ def occurrence(part, visible=True, bulb=True, parent=None):
 
 
 class Document:
-    def __init__(self, file, owner=None):
+    """An open document. Made directly in a test it is one the user opened (shown in Fusion);
+    Documents.open makes hidden ones, as the add-in asks for."""
+    def __init__(self, file, owner=None, visible=True):
         self.dataFile = file
         self.closed = False
         self.owner = owner  # the Documents collection it is listed in, once opened there
         self.documentReferences = Collection(*([NS()] if file.references else []))
         self.isModified = False
+        self.isVisible = visible
         if file.root is not None:
             root = file.root
             parts = {}
@@ -221,6 +228,8 @@ class Document:
 
     def close(self, save):
         assert save is False
+        if self.dataFile.close_result is False:
+            return False
         self.closed = True
         if self.owner is not None and self in self.owner.items:
             self.owner.items.remove(self)
@@ -229,18 +238,26 @@ class Document:
 
 class Documents(Collection):
     """Application.documents. Opening a design also opens the designs it references (as Fusion
-    does for an assembly), unless one of them is open already; all are listed until closed."""
+    does for an assembly), unless one of them is open already; all are listed until closed.
+    Opening a file that is open already returns that document (as the add-in assumes Fusion
+    does). Documents opened here are hidden, and modified at once if the file says so."""
     def open(self, file, visible):
         assert visible is False
         file.calls += 1
-        document = Document(file, self)
-        file.documents.append(document)
-        self.items.append(document)
+        for open_ in self.items:
+            if open_.dataFile is not None and open_.dataFile.id == file.id:
+                return open_
+        document = self.opened(file)
         for linked in collection_items(file.childReferences):
             if not any(open_.dataFile is not None and open_.dataFile.id == linked.id for open_ in self.items):
-                reference = Document(linked, self)
-                linked.documents.append(reference)
-                self.items.append(reference)
+                self.opened(linked)
+        return document
+
+    def opened(self, file):
+        document = Document(file, self, visible=False)
+        document.isModified = bool(file.modified_on_open)
+        file.documents.append(document)
+        self.items.append(document)
         return document
 
 

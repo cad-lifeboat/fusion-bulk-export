@@ -871,25 +871,27 @@ class ExportTests(unittest.TestCase):
         self.assertFalse(mine.closed)
         self.assertEqual(self.app.documents.items, [mine])
 
-    def test_linked_documents_closed_when_export_fails_and_edited_ones_left(self):
+    def test_linked_documents_closed_when_export_fails_and_shown_ones_left(self):
         assembly = fake.File('Assembly', 'assembly', references=2)
+        assembly.childReferences.item(1).modified_on_open = True  # marked modified by Fusion, hidden
         original = fake.Documents.open
+        shown = fake.Document(fake.File('Opened meanwhile', 'meanwhile'), None)
+        shown.isModified = True
 
-        def open_and_edit(documents, file, visible):
-            first = file.calls == 0
+        def open_and_user_opens_one(documents, file, visible):
             document = original(documents, file, visible)
-            if first:
-                documents.items[-1].isModified = True  # the second linked design shows edits
+            if shown not in documents.items:
+                shown.owner = documents
+                documents.items.append(shown)  # the user opened a design during the export
             return document
         with patch.object(fake.Manager, 'execute', return_value=False), \
-                patch.object(fake.Documents, 'open', open_and_edit):
+                patch.object(fake.Documents, 'open', open_and_user_opens_one):
             self.run_export(fake.data([assembly]))
         entry = self.manifest['entries'][0]
         self.assertEqual(entry['status'], 'failed')
         self.assertEqual(assembly.calls, 2)  # two attempts
-        self.assertEqual(len(self.app.documents.items), 1)
-        self.assertTrue(self.app.documents.items[0].isModified)
-        self.assertEqual(self.app.documents.items[0].dataFile.id, 'linked-assembly-2')
+        self.assertEqual(self.app.documents.items, [shown])
+        self.assertFalse(shown.closed)
 
     def test_open_design_with_unsaved_changes_or_other_version_is_refused(self):
         for change, message in [(dict(isModified=True), 'unsaved changes'),

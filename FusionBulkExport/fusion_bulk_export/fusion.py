@@ -11,9 +11,6 @@ from .core import NonDesign, NotSaved, collection, disk_full
 from .names import fusion_path, long_path
 from .staging import Staging
 
-# Fusion's own file types other than designs. Fusion has no API call that writes them as files
-# (a drawing's PDF export needs the drawing opened in its workspace, not available here), so
-# when downloading one does not work either, the skip says so plainly.
 # Fusion's own types other than designs and drawings: DataFile.download refuses them ("file
 # type not available for download", seen on real Fusion for .f2d, .fsch, .fbrd and .flbr) and
 # there is no export for them in the API, so they are skipped without asking.
@@ -23,12 +20,21 @@ PDF_WAIT_SECONDS = 20     # how long a drawing's PDF is waited for after Fusion'
 PRODUCT_TRIES = 5         # a just-opened drawing's products can fail to read the first time
 
 
+# Cloud ids of documents this add-in opened (hidden) and Fusion did not close yet. Kept for the
+# whole Fusion session, not one run, so a later run still knows they are the add-in's own.
+LEFT_OPEN = set()
+
+
 class FusionAdapter:
     def __init__(self, app):
         self.app = app
         self.details = {}  # facts about the last exported design, stored in its manifest entry
         self.staging = None  # set by the Exporter: where Fusion writes before files are moved
         self.pdf_broken = None  # why drawings are not tried any more in this run, once one failed
+        # Documents this add-in opened and could not close yet (see LEFT_OPEN). They are its own
+        # (opened hidden, never shown to the user), so they may be closed or exported from
+        # later even though they are open "before" a later export.
+        self.left_open = LEFT_OPEN
 
     def references(self, data_file):
         """Designs this one references (linked components, derives), by cloud id and name.
@@ -64,25 +70,72 @@ class FusionAdapter:
                 ids.add(identity)
         return ids
 
-    def close_opened(self, before):
-        """Close the documents opened since `before` (an open_ids() snapshot) that hold no edits.
+    def close(self, document):
+        """Close a document this add-in opened, without saving. Never raises; False when Fusion
+        did not close it (it is then remembered in left_open and tried again later)."""
+        identity = document_id(document)
+        try:
+            closed = document.close(False) is not False
+        except Exception:
+            closed = False
+        if identity is not None:
+            (self.left_open.discard if closed else self.left_open.add)(identity)
+        return closed
 
-        Opening an assembly makes Fusion open the designs it links to as well; left open they
-        pile up over a long run. Documents the user had open are in `before` and are never
-        touched; one that shows unsaved edits is left alone too. Returns how many stay open."""
-        left = 0
-        for document in list(collection(self.app.documents)):
-            identity = document_id(document)
-            if identity is None or identity in before:
+    def close_opened(self, before):
+        """Close the documents this add-in caused to be opened since `before` (an open_ids()
+        snapshot), without saving. Never raises.
+
+        Opening an assembly or a drawing makes Fusion open the designs it links to as well; left
+        open they pile up over a long run. They are opened hidden, so the user cannot have edited
+        them: Fusion may mark them modified on open (a recompute, an updated reference), and they
+        are closed all the same. Documents the user had open are in `before` and never touched;
+        a visible document that appeared meanwhile (the user opened it) is left alone too.
+        Returns how many documents this add-in opened are still open."""
+        try:
+            for document in list(collection(self.app.documents)):
+                identity = document_id(document)
+                if identity is None or (identity in before and identity not in self.left_open):
+                    continue
+                if visible(document):
+                    continue  # shown in Fusion: the user's, whatever its state
+                self.close(document)
+            still = self.open_ids() & self.left_open
+        except Exception:
+            still = set(self.left_open)
+        self.left_open &= still
+        if still:
+            self.details['documents_left_open'] = len(still)
+        return len(still)
+
+    def acquire(self, data_file, what, failure):
+        """(document, opened) for exporting data_file. A document already open for it is used
+        as it is and never closed (opened False): the user's, if it has no unsaved edits and is
+        the same version (else failure(plain reason) is raised); or one this add-in left open,
+        which is closed and opened again. Otherwise the file is opened hidden (opened True)."""
+        identity = str(data_file.id)
+        for existing in list(collection(self.app.documents)):
+            if document_id(existing) != identity:
                 continue
-            try:
-                if document.isModified or document.close(False) is False:
-                    left += 1
-            except Exception:
-                left += 1
-        if left:
-            self.details['documents_left_open'] = left
-        return left
+            if identity in self.left_open and not visible(existing):
+                if self.close(existing):
+                    break  # opened afresh below
+                if same_version(existing, data_file):
+                    return existing, True  # still this add-in's own; closing is tried again after
+                raise failure('Fusion could not close an older version of this %s; restart Fusion, '
+                              'then run again.' % what)
+            if existing.isModified:
+                raise failure('This %s is open in Fusion with unsaved changes; save or close it, then run again.'
+                              % what)
+            if not same_version(existing, data_file):
+                raise failure('Another version of this %s is open in Fusion; close it, then run again.' % what)
+            return existing, False
+        before = self.open_ids()
+        document = self.app.documents.open(data_file, False)
+        if not document:
+            raise failure('Fusion could not open the %s' % what)
+        # Fusion may hand back a document that was open already: that one is not closed.
+        return document, identity not in before or identity in self.left_open
 
     def download(self, data_file, target):
         """Save a file that is not a design to target, its readable final path. Uploaded files
@@ -126,18 +179,20 @@ class FusionAdapter:
         """A drawing as a PDF: opened (hidden), exported through its DrawingExportManager to a
         short staging path, then moved to target. Fusion may write the PDF a little after
         execute() returns, so the file is waited for (PDF_WAIT_SECONDS). If one drawing's PDF
-        never appears, the others in this run are not tried (each would cost that wait)."""
+        never appears, the others in this run are not tried (each would cost that wait). A drawing
+        already open in Fusion is exported from as it is and left open; one with unsaved edits, or
+        another version, is skipped with the reason (like a design)."""
         if self.pdf_broken:
             raise NotSaved(self.pdf_broken)
         before = self.open_ids()
-        document = None
+        document, opened = None, False
         try:
             try:
-                document = self.app.documents.open(data_file, False)
+                document, opened = self.acquire(data_file, 'drawing', NotSaved)
+            except NotSaved:
+                raise
             except Exception as error:
                 raise NotSaved('Fusion could not open the drawing: %s' % (error or type(error).__name__))
-            if not document:
-                raise NotSaved('Fusion could not open the drawing')
             drawing = drawing_product(document)
             if drawing is None:
                 raise NotSaved('%s (.f2d: no drawing found in the opened file)' % NATIVE_REASON)
@@ -158,12 +213,8 @@ class FusionAdapter:
                 raise NotSaved(self.pdf_broken)
             return staging.place(staged, target)
         finally:
-            if document:
-                try:
-                    if document.close(False) is False:
-                        self.details['documents_left_open'] = 1
-                except Exception:
-                    pass
+            if document is not None and opened:
+                self.close(document)
             self.close_opened(before)  # a drawing opens the designs it shows, too
 
     def export(self, data_file, stem):
@@ -184,27 +235,15 @@ class FusionAdapter:
 
     def export_design(self, data_file, stem):
         before = self.open_ids()
-        # Opening an already open document may return that same document. Export from it
-        # without closing it, unless it holds unsaved edits or another version.
-        for existing in collection(self.app.documents):
-            if document_id(existing) == str(data_file.id):
-                if existing.isModified:
-                    raise RuntimeError('This design is open in Fusion with unsaved changes; '
-                                       'save or close it, then run again.')
-                if int(existing.dataFile.versionNumber) != int(data_file.versionNumber):
-                    raise RuntimeError('Another version of this design is open in Fusion; '
-                                       'close it, then run again.')
-                return self.write(existing, data_file, stem)
+        document, opened = None, False
         try:
-            document = self.app.documents.open(data_file, False)
-            if not document:
-                raise RuntimeError('Fusion could not open the design')
-            try:
-                return self.write(document, data_file, stem)
-            finally:
-                if document.close(False) is False:
-                    raise RuntimeError('Fusion could not close the exported document')
+            document, opened = self.acquire(data_file, 'design', RuntimeError)
+            return self.write(document, data_file, stem)
         finally:
+            # Never raises: a document Fusion would not close does not undo a good export; it
+            # is recorded (documents_left_open) and closed later when possible.
+            if document is not None and opened:
+                self.close(document)
             # Also when opening or exporting failed: linked designs may be open by now.
             self.close_opened(before)
 
@@ -372,6 +411,22 @@ def save_thumbnail(future, path, staging):
     except OSError:
         pass
     return None
+
+
+def visible(document):
+    """Whether a document is shown in Fusion (so the user may be working in it). Unknown counts
+    as shown: such a document is never closed."""
+    try:
+        return bool(getattr(document, 'isVisible', True))
+    except Exception:
+        return True
+
+
+def same_version(document, data_file):
+    try:
+        return int(document.dataFile.versionNumber) == int(data_file.versionNumber)
+    except Exception:
+        return False
 
 
 def document_id(document):
