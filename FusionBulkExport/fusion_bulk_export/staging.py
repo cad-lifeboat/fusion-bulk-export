@@ -5,19 +5,23 @@ characters on Windows, even with the "\\\\?\\" prefix. So Fusion is never given 
 path: it writes to a short file in a staging folder, and this add-in then moves the file to its
 readable final path, which may be as long as the file system allows (names.long_path).
 
-The staging folder is ".staging" at the output root, or, when the output folder is itself so deep
-that even that would be long, a folder in the system's temporary folder (moved across disks with
-a copy when it is on another one). It is emptied when a run starts and when it ends.
+The staging folder is ".staging" at the output root, or a folder in the system's temporary folder
+when the output folder is itself so deep that even that would be long, or is a Windows network
+path (\\\\server\\share\\...: Fusion is only ever handed local short paths; a mapped drive letter
+such as X: is used like any drive). From the temporary folder a file is copied to the output
+folder under a temporary name and then renamed, so a final file is never half-written. The
+staging folder is emptied when a run starts and when it ends.
 """
 import errno
 import hashlib
 import os
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import uuid
 
-from .names import long_path
+from .names import is_unc, long_path
 
 NAME = '.staging'
 MAX_FOLDER = 200    # characters in the staging folder's path; a staged file adds about 20
@@ -25,10 +29,11 @@ FUSION_LIMIT = 259  # Fusion is never given a longer path (nor a "\\?\" one)
 
 
 class Staging:
-    def __init__(self, root, temporary=None):
+    def __init__(self, root, temporary=None, windows=None):
+        windows = sys.platform == 'win32' if windows is None else windows
         root = Path(root)
         folder = root / NAME
-        if len(str(folder)) > MAX_FOLDER:
+        if len(str(folder)) > MAX_FOLDER or (windows and is_unc(root)):
             base = Path(temporary or tempfile.gettempdir())
             folder = base / ('FusionBulkExport-' + hashlib.sha256(str(root).encode('utf-8')).hexdigest()[:10])
         self.folder = folder
@@ -54,8 +59,19 @@ class Staging:
         except OSError as error:
             if error.errno != errno.EXDEV and getattr(error, 'winerror', None) != 17:
                 raise
-            # The temporary folder is on another disk: copy, then remove.
-            shutil.move(long_path(staged), long_path(final))
+            # The temporary folder is on another disk or a network share: copy beside the final
+            # file, rename it into place, then remove the staged one.
+            partial = str(final) + '.partial'
+            try:
+                shutil.copyfile(long_path(staged), long_path(partial))
+                os.replace(long_path(partial), long_path(final))
+            except BaseException:
+                try:
+                    os.unlink(long_path(partial))
+                except OSError:
+                    pass
+                raise
+            os.unlink(long_path(staged))
         return str(final)
 
     def clean(self):

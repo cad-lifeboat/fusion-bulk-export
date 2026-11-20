@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from . import checks, memory
 from .journal import Journal, replay
 from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
-from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, clean, design_suffixes, long_path,
-                    output_root_problem, too_long, windows_length)
+from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, absolute_path, clean, design_suffixes,
+                    long_path, output_root_problem, too_long, windows_length)
 from .power import inside_fusion, keep_awake
 from .staging import Staging
 
@@ -393,10 +393,13 @@ def free_bytes(path):
     """Free space on the disk holding path (or its nearest existing parent), or None."""
     path = Path(path)
     for candidate in [path] + list(path.parents):
-        try:
-            return shutil.disk_usage(long_path(candidate)).free
-        except OSError:
-            continue
+        # The long-path form first; a network share (\\\\server\\share) can refuse it, so then the
+        # plain one.
+        for form in dict.fromkeys((long_path(candidate), str(candidate))):
+            try:
+                return shutil.disk_usage(form).free
+            except OSError:
+                continue
     return None
 
 
@@ -492,7 +495,9 @@ def atomic_write(path, value):
 
 class Exporter:
     def __init__(self, output, adapter, error_callback=None):
-        self.root = Path(output).resolve()
+        # Absolute, never resolved: a mapped drive (X:) keeps its letter in the manifest, the
+        # report's paths and the summary (resolve() turned it into its \\\\server\\share path).
+        self.root = Path(absolute_path(output))
         problem = output_root_problem(self.root, sys.platform)
         if problem:
             raise ValueError(problem)

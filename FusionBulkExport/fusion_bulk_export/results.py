@@ -178,7 +178,7 @@ class Results:
         add_browser = getattr(command.commandInputs, 'addBrowserCommandInput', None)
         if add_browser is None:
             raise RuntimeError('this Fusion has no HTML inputs in command dialogs')
-        self.page = add_browser('fbx_results', '', Path(page).resolve().as_uri(), 240, 0)
+        self.page = add_browser('fbx_results', '', Path(os.path.abspath(str(page))).as_uri(), 240, 0)
         trace('results: browser input added')
         try:
             self.page.isFullWidth = True

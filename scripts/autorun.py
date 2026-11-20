@@ -211,9 +211,10 @@ def update_addin(installed, source=None):
 
 
 def check_output(output):
-    """The output folder as an absolute path. Its length is not limited: the add-in writes
-    long paths itself (and says so if a folder cannot be used)."""
-    return Path(output).expanduser().resolve()
+    """The output folder as an absolute path, never resolved: a mapped network drive (X:) keeps
+    its letter (resolve() gives its \\\\server\\share path on Windows). Its length is not limited:
+    the add-in writes long paths itself (and says so if a folder cannot be used)."""
+    return Path(os.path.normpath(os.path.abspath(os.path.expanduser(str(output)))))
 
 
 def folder_map(values):

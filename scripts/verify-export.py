@@ -13,6 +13,7 @@ The checks live in the add-in package (fusion_bulk_export/checks.py) and need no
 script runs them from a checkout of the repository. `autorun.py check OUTPUT_FOLDER` does the same.
 """
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -40,7 +41,7 @@ def printer(names):
 def main(argv):
     if not argv or argv[0].startswith('-'):
         raise SystemExit(__doc__)
-    root = Path(argv[0]).resolve()
+    root = Path(os.path.abspath(argv[0]))  # not resolved: a mapped drive keeps its letter
     totals = checks.check_folder(root, strict='--strict' in argv, show=printer('--names' in argv))
     print(json.dumps(totals))
     return 0 if totals['done'] and not totals['failed_checks'] else 1

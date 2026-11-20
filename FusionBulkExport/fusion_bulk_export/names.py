@@ -158,6 +158,22 @@ class Names:
             taken.setdefault(fold(name), 'file:' + str(entry['id']))
 
 
+def absolute_path(path, pathmodule=None):
+    """path made absolute without following links or drives: a mapped network drive keeps its
+    letter (X:\\Exports, never the \\\\server\\share it maps to, as Path.resolve() gives on
+    Windows), a symbolic link keeps its own path, "." and ".." are folded. pathmodule: os.path
+    (default), or ntpath / posixpath in tests."""
+    import os
+    pathmodule = pathmodule or os.path
+    return pathmodule.normpath(pathmodule.abspath(pathmodule.expanduser(str(path))))
+
+
+def is_unc(path):
+    """Whether path is a Windows network path (\\\\server\\share\\...), not a drive letter."""
+    text = str(path).replace('/', '\\')
+    return text.startswith('\\\\') and not text.startswith('\\\\?\\') and not text.startswith('\\\\.\\')
+
+
 def windows_length(path):
     return len(str(path).encode('utf-16-le')) // 2
 
