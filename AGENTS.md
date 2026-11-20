@@ -84,7 +84,8 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 - **"Fusion has not started the add-in"**: ask the person to switch it on (above). The job
   waiting in `autorun.json` then starts; your command is still waiting and reports it.
 - **"Fusion is busy"**: the person is exporting with the button. Only one export runs at a
-  time; wait until their dialog is done, then run the same command again.
+  time; wait until their export has ended (the results dialog appears: Open report, Open
+  folder, Close), then run the same command again.
 - **"The add-in failed to start"** plus a traceback: the Run switch springs back off.
   Report the error type (not paths with the person's name in them) and stop.
 - **"Stopped by itself"** in `status`: the code says why. `failing` means 5 designs in a

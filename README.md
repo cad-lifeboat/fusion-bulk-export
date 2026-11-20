@@ -38,15 +38,15 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
    - **Everything**: every design in every hub and project you can see.
    - **Choose projects or folders**: a tree of your hubs, projects and folders. Click a row to open it, tick a box to include it. A ticked folder includes everything inside it.
 4. Leave **Also save other files (PDFs, uploads)** ticked to save them too, or untick it for designs only. Tick **Also export drawings as PDF** only if you need your drawings: Fusion takes minutes to open each one. Both choices are remembered.
-5. Click **Export** and wait for the last dialog. It shows the counts and the first failures, and opens the report or the folder for you.
+5. Click **Export** and wait for the results dialog. It shows the counts, the first failures and the output folder, with the buttons **Open report**, **Open folder** and **Close**.
 
-**Fusion can't be used while it exports.** Leave it open and signed in until the last dialog appears; the computer is kept awake meanwhile. **Cancel** is safe: what is finished stays finished. Run it again on the same folder to continue, to retry failures, or to pick up designs added later.
+**Fusion can't be used while it exports.** Leave it open and signed in until the results dialog appears; the computer is kept awake meanwhile. **Cancel** is safe: what is finished stays finished. Run it again on the same folder to continue, to retry failures, or to pick up designs added later.
 
 *The pictures below are illustrations drawn from made-up names, not screenshots of a real account.*
 
 ![The export dialog with the project tree (illustration)](docs/dialog.png)
 
-![Progress and end-of-run dialogs (illustration)](docs/progress.png)
+![Progress and results dialogs (illustration)](docs/progress.png)
 
 ### The dialog
 
@@ -56,14 +56,15 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 - If a folder cannot be listed, the tree says so with a **Retry** button.
 - The button is always there, also after an export from the command line. Only one export runs at a time.
 - While it exports, the progress text says which design (or "file N" for another file) it is on. A drawing says it is opening, which can take minutes.
-- If the run gets into trouble (5 designs failing in a row, a full disk, the output folder gone), it pauses and asks: **OK** tries again and carries on, **Cancel** stops.
+- If the run gets into trouble (5 designs failing in a row, a full disk, the output folder gone), it pauses, shows the reason and the last error, and asks "Try again now?": **OK** carries on, **Cancel** stops. Everything exported so far is kept either way.
+- The results dialog at the end: a headline (Finished, Cancelled, or Stopped with the reason), the counts (rows that are zero are left out), up to three failures by name with "and N more in the report", "Run again to retry the N failed" when something failed, notes on low disk space or long Windows paths, and the folder (its path can be selected and copied). **Open report** opens `index.html`, **Open folder** the folder, **Close** (or Enter, or Escape) closes it. On a Fusion that cannot show it, the same text appears in a plain message with OK, with the folder and report paths.
 
 ### Big account? Go one project at a time
 
 If you have hundreds or thousands of designs, start small:
 
 1. Pick **Choose projects or folders** and tick **one** project or folder.
-2. Export it and look at the result: open `index.html` in the output folder, open a couple of the `.f3d` files in Fusion and check the counts in the last dialog.
+2. Export it and look at the result: open `index.html` in the output folder, open a couple of the `.f3d` files in Fusion and check the counts in the results dialog.
 3. Then do the next project, or the rest, into **the same output folder**. Finished designs are checked and skipped, so nothing is done twice.
 
 What to expect: the export starts right away and works folder by folder: it lists a folder, exports what it finds, then moves on, so the first files appear within seconds. The progress dialog shows the project, folder and design it is on, how long it has been running, the average time per design and how many failed. Drawings, if you ticked them, take minutes each. In our small tests a design took about 3.5 seconds, so 1,000 designs would be roughly an hour. **Your time will vary**: large assemblies, many bodies and heavy history take much longer than simple parts, and listing a large project is slow in Fusion itself, so treat these numbers as a rough guide and time your first project.
@@ -102,18 +103,18 @@ FusionExport/
 - **`.f3d`** opens in Fusion with **Upload** or **File → Open → Open from my computer**.
 - **`.step`** holds the visible bodies, without history. Most CAD programs open it.
 - **Names are the real ones**, in any language. Only characters Windows or macOS cannot store are replaced, and a name is cut at 100 characters (64 on Windows). A short `~1a2b` suffix is added only when two items in one folder would get the same name. There is no limit on how deep the folders go.
-- **Windows paths over 260 characters:** deep folders can still make a full path longer than that. Such files are saved, but Explorer and some programs cannot open them; the last dialog and `index.html` say how many. A short output folder such as `C:\FusionExport` avoids it.
+- **Windows paths over 260 characters:** deep folders can still make a full path longer than that. Such files are saved, but Explorer and some programs cannot open them; the results dialog and `index.html` say how many. A short output folder such as `C:\FusionExport` avoids it.
 - Exported files carry the design's modified date, so sorting by date means something.
 - **Other files** (PDFs, images, uploaded STEP files and so on) are saved as they are, under their own names. A newer version of such a file replaces the older one.
 - **Drawings** are saved as PDF only when you tick **Also export drawings as PDF** (command line: `--drawings`), because Fusion takes minutes to open each drawing. Otherwise they are listed as skipped, with that reason. Electronics and other Fusion-only file types cannot be exported through Fusion's API: they are listed as skipped, with the reason.
 - Only each design's current version is exported, not its older versions. A newer version of a design gets its own files next to the old ones (`v4` beside `v3`).
 - **Linked designs:** Fusion's API can only save a design on its own, not as a `.f3z` bundle with the designs it links to. Every linked design is exported in its own right, so nothing is lost, and `manifest.json` lists each design's links under `references`. Re-linking after import is manual. If you need one self-contained `.f3z`, use **File → Export** in Fusion for that design.
-- **Broken or out-of-date links:** if a design with links fails, the reason reads "A linked design is missing or cannot be opened (N links)", with Fusion's own message beside it in `index.html` and `index.csv`; open it in Fusion and fix its links. A design whose links point to older versions of other designs is exported as it is, with a note (not a failure), counted in the last dialog, `index.html` and `status`. `inventory.json` marks designs with links (`has_references`, `references_out_of_date`), so you can fix them first. If Fusion cannot read a design's links at all, the design is still exported, with the warning "Links to other designs could not be read; the design itself was exported".
+- **Broken or out-of-date links:** if a design with links fails, the reason reads "A linked design is missing or cannot be opened (N links)", with Fusion's own message beside it in `index.html` and `index.csv`; open it in Fusion and fix its links. A design whose links point to older versions of other designs is exported as it is, with a note (not a failure), counted in the results dialog, `index.html` and `status`. `inventory.json` marks designs with links (`has_references`, `references_out_of_date`), so you can fix them first. If Fusion cannot read a design's links at all, the design is still exported, with the warning "Links to other designs could not be read; the design itself was exported".
 - If you rename or move a design or folder in Fusion, files already exported stay where they are; new exports use the new names.
 - **Export folders from version 0.2 or older** keep their short names with a `~hash`: what is already there is not exported again or renamed, and new designs get readable names.
 - While an export runs, the folder also holds `manifest.journal` (a quick record of each finished item), a `.staging` folder (Fusion writes there first) and `export.lock` (one export at a time per folder). All are tidied up when the run ends. A second export into the same folder, from another Fusion or the command line, is refused with "Another export is using this folder".
 
-The counts, in the last dialog, in `index.html` and from `autorun.py status`:
+The counts, in the results dialog, in `index.html` and from `autorun.py status`:
 - **exported now**: designs written in this run;
 - **already up to date**: designs exported before and checked, so left alone;
 - **other files saved**: PDFs, uploads and (when ticked) drawings saved in this run;
@@ -121,7 +122,7 @@ The counts, in the last dialog, in `index.html` and from `autorun.py status`:
 - **skipped**: not saved, with the reason (a file type Fusion cannot export, drawings when they are not ticked, or other files when you chose designs only);
 - **failed**: tried twice and did not work; they are tried again next time.
 
-A design whose STEP has no bodies, or fewer solids than Fusion showed, is exported with a **warning**. The `.f3d` is still the complete copy; the warning is in the last dialog and in the report.
+A design whose STEP has no bodies, or fewer solids than Fusion showed, is exported with a **warning**. The `.f3d` is still the complete copy; the warning is in the results dialog and in the report.
 
 `manifest.json`, `index.html`, `index.csv` and the logs contain your project and design names. Keep them private, and don't attach them to issues.
 
@@ -131,7 +132,7 @@ A design whose STEP has no bodies, or fewer solids than Fusion showed, is export
 - **"Open in Fusion with unsaved changes":** save or close that design (or drawing), then run again. A design or drawing you have open without changes is exported as it is and left open.
 - **"A linked design is missing or cannot be opened":** open the design in Fusion, fix or remove the broken link, then run again.
 - **"Another export is using this folder":** another Fusion or a command-line job is exporting into it. Wait for it to finish, or choose another folder.
-- **Many designs fail in a row, or the disk is full:** the export stops itself after 5 designs fail one after another (offline or signed out, usually) or when the disk is full or the output folder is gone. From the button it pauses and asks: **OK** tries again and carries on, **Cancel** stops. Fix the cause, then run again: it carries on where it stopped. It also warns when less than 1 GB is free.
+- **Many designs fail in a row, or the disk is full:** the export stops itself after 5 designs fail one after another (offline or signed out, usually) or when the disk is full or the output folder is gone. From the button it pauses and asks "Try again now?": **OK** carries on, **Cancel** stops. Fix the cause, then run again: it carries on where it stopped. It also warns when less than 1 GB is free.
 - **Cancel:** finished designs are kept, so run again to continue.
 - **Something unexpected:** the dialog says so and saves the details to `errors.log` in the add-in's folder, ready to copy. The details hold no paths or project and design names, so they are safe to paste into an issue; read them once before posting all the same.
 - Still stuck? [Open an issue](../../issues/new/choose) with the counts and error messages, with any design names replaced by `X`.

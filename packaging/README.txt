@@ -39,15 +39,16 @@ ADD-INS group). Check "Save to" (Browse... picks another folder; it is remembere
 choose Everything or tick projects and folders, and click Export. "Also save other
 files (PDFs, uploads)" is on by default. "Also export drawings as PDF" is off: tick it
 only if you need your drawings, since Fusion takes minutes to open each one. Fusion
-cannot be used while it exports: leave it open and signed in until the last dialog.
-That dialog opens index.html, a report of everything saved and anything that failed.
+cannot be used while it exports: leave it open and signed in until the results
+dialog appears. Its Open report button opens index.html, a report of everything
+saved and anything that failed; Open folder opens the output folder.
 If the run gets into trouble (designs failing in a row, a full disk) it pauses and
-asks: OK tries again and carries on, Cancel stops. Run it again on the same folder to
+asks "Try again now?": OK carries on, Cancel stops. Run it again on the same folder to
 continue, retry failures or pick up new designs.
 
 On Windows, keep the output folder short (such as C:\FusionExport): names are cut at
 64 characters, and a file whose full path is still over 260 characters is saved but
-may not open from Explorer; the last dialog and index.html say how many there are.
+may not open from Explorer; the results dialog and index.html say how many there are.
 
 
 Big account?

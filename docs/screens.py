@@ -7,8 +7,9 @@ They follow the real dialogs: the inputs picker.py adds, in its order (version l
 with Browse…, the folder and its note, the Export choice, the tree across the whole dialog, what
 is chosen, the two checkboxes), the tree page (ui/tree.html and
 ui/tree.js: hint, filter box, hubs, projects and folders with tri-state boxes, file counts and
-"N exported" marks), the progress text of command.describe() and the end-of-run text of
-report.summary_text(). tests/test_screens.py checks that the words drawn here are the ones the
+"N exported" marks), the progress text of command.describe() and the results dialog at the end
+(results.py with ui/summary.html: the data of report.summary(), Open report and Open folder on the
+page, Close below). tests/test_screens.py checks that the words drawn here are the ones the
 add-in uses. Every hub, project, folder and design name is invented.
 
 Fonts: Noto Sans (falls back to the system sans-serif).
@@ -25,6 +26,7 @@ FONT = "'Noto Sans', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
 BACK, BACK2 = '#0f1720', '#16212d'
 DIALOG, HEADER, LINE, INK, MUTED = '#f4f5f7', '#e4e7eb', '#c4ccd5', '#1f2328', '#5d6670'
 FIELD, TICK, GOOD, ACCENT, BOX = '#ffffff', '#0a6fc2', '#1a7f37', '#f08a24', '#6b7480'
+BAD = '#b42318'
 
 # The words the add-in shows (checked against the code by tests/test_screens.py).
 VERSION = 'Fusion Bulk Export 0.3.0'
@@ -63,7 +65,7 @@ PROGRESS_STATE = dict(phase='design', project=1, projects=1, project_name='Robot
                       elapsed=250, seconds_per_design=3.4)
 PROGRESS_TEXT = 'Project 1 of 1, design 14: Base plate\nRobot Arm / Brackets\n4 min · 3.4 s/design · 1 failed'
 
-# The end of a run, as report.summary_text() writes it for this made-up manifest.
+# The end of a run, as report.summary() gives it for this made-up manifest.
 SUMMARY_COUNTS = dict(exported=17, up_to_date=9, files=3, skipped=1, failed=1)
 SUMMARY_MANIFEST = dict(entries=[
     dict(status='failed', name='Gearbox housing', hub='My Hub', project='Robot Arm', path=['Gripper'],
@@ -71,7 +73,10 @@ SUMMARY_MANIFEST = dict(entries=[
     dict(status='skipped', kind='file', name='Motor board', hub='My Hub', project='Robot Arm', path=['Wiring'],
          error='Fusion cannot export this file type through its API (.fbrd)'),
 ])
-OPEN_CHOICES = 'Yes: open the report (index.html).  No: open the folder.  Cancel: close.'
+RESULTS_TITLE = 'Fusion Bulk Export results'
+PAGE_BUTTONS = ('Open report', 'Open folder')
+CLOSE = 'Close'
+SAVED_IN = 'Saved in'
 
 
 def package():
@@ -80,12 +85,11 @@ def package():
         sys.path.insert(0, str(PACKAGE))
 
 
-def summary_lines():
-    """The summary dialog's text, written by the add-in's own code."""
+def summary_data():
+    """What the results page shows, from the add-in's own code."""
     package()
     from fusion_bulk_export import report
-    text = report.summary_text(SUMMARY_COUNTS, {}, SUMMARY_MANIFEST, OUTPUT)
-    return (text + '\n\n' + OPEN_CHOICES).split('\n')
+    return report.summary(SUMMARY_COUNTS, {}, SUMMARY_MANIFEST, OUTPUT, OUTPUT + '/index.html')
 
 
 def folder_note():
@@ -249,25 +253,57 @@ def progress_svg():
     inner.append(button(x + w - 18 - 80, bar_y + 26, 80, 'Cancel'))
     h = bar_y + 26 + 26 + 18 - y
     parts.append(frame(x, y, w, h, 'Fusion Bulk Export') + ''.join(inner))
-    # End-of-run summary.
+    # The results dialog: the page (ui/summary.html) across the dialog, Close below it.
     sx, sy, sw = 500, 40, 600
+    data = summary_data()
     inner = []
-    tx = sx + 64
-    line_y = sy + 34 + 26
-    inner.append(f'<circle cx="{sx + 34}" cy="{line_y + 4}" r="14" fill="{TICK}"/>')
-    inner.append(text(sx + 34, line_y + 10, 'i', 17, '#ffffff', 700, 'middle'))
-    for line in summary_lines():
-        if not line:
-            line_y += 8
-            continue
-        for part in wrap(line, sw - 64 - 20, 12):
-            inner.append(text(tx, line_y + 8, part, 12, INK, 600 if part.startswith('Export ') else 400))
-            line_y += 17
-    line_y += 12
-    for index, label in enumerate(('Yes', 'No', 'Cancel')):
-        inner.append(button(sx + sw - 18 - (3 - index) * 76 + 4, line_y, 72, label, primary=index == 0))
-    sh = line_y + 26 + 16 - sy
-    parts.append(frame(sx, sy, sw, sh, 'Fusion Bulk Export') + ''.join(inner))
+    px, pw = sx + 18, sw - 36
+    line_y = sy + 34 + 30
+    inner.append(text(px, line_y, data['headline'], 15, GOOD, 600))
+    line_y += 14
+    # Counts: label and number pairs in columns at least 170 wide, as the page's grid.
+    columns = max(int((pw + 18) // (170 + 18)), 1)
+    cell = (pw - 18 * (columns - 1)) / columns
+    for index, (label, value) in enumerate(data['rows']):
+        cx = px + (index % columns) * (cell + 18)
+        cy = line_y + (index // columns) * 22
+        inner.append(text(cx, cy + 14, label, 12, MUTED))
+        inner.append(text(cx + cell, cy + 14, str(value), 12, BAD if label == 'Failed' else INK, 600, 'end'))
+        inner.append(f'<path d="M{cx:.0f},{cy + 20} h{cell:.0f}" stroke="{LINE}"/>')
+    line_y += ((len(data['rows']) + columns - 1) // columns) * 22 + 14
+    for failure in data['failures']:
+        name = failure['name'] + ':'
+        inner.append(text(px, line_y + 12, name, 12, INK, 600))
+        offset = len(name) * 7.0 + 6
+        for number, part in enumerate(wrap(failure['reason'], pw - offset, 12)):
+            inner.append(text(px + offset, line_y + 12 + number * 17, part, 12, MUTED))
+            line_y += 17 if number else 0
+        line_y += 19
+    if data['more']:
+        inner.append(text(px, line_y + 12, 'and %d more in the report' % data['more'], 12, MUTED))
+        line_y += 19
+    if data['retry']:
+        inner.append(text(px, line_y + 12, data['retry'], 12, INK, 600))
+        line_y += 19
+    for note in data['notes']:
+        inner.append(text(px, line_y + 12, note, 12, MUTED))
+        line_y += 19
+    line_y += 6
+    inner.append(text(px, line_y + 12, SAVED_IN, 12, MUTED))
+    line_y += 18
+    inner.append(f'<rect x="{px}" y="{line_y}" width="{pw}" height="24" rx="4" fill="{FIELD}" stroke="{LINE}"/>')
+    inner.append(f'<text x="{px + 8}" y="{line_y + 16}" font-family="Menlo, Consolas, monospace" font-size="11" '
+                 f'fill="{INK}">{escape(OUTPUT)}</text>')
+    line_y += 36
+    left = px
+    for label in PAGE_BUTTONS:
+        inner.append(button(left, line_y, 100, label))
+        left += 108
+    line_y += 26 + 18
+    inner.append(f'<path d="M{sx},{line_y} h{sw}" stroke="{LINE}"/>')
+    inner.append(button(sx + sw - 16 - 80, line_y + 12, 80, CLOSE, primary=True))
+    sh = line_y + 50 - sy
+    parts.append(frame(sx, sy, sw, sh, RESULTS_TITLE) + ''.join(inner))
     height = max(y + h, sy + sh) + 40
     return svg(width, height, ''.join(parts))
 
