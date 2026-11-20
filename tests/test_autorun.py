@@ -55,6 +55,8 @@ class AutorunTests(unittest.TestCase):
         self.assertIn('Other files', (self.output / 'index.html').read_text(encoding='utf-8'))
         self.assertTrue((self.output / 'index.csv').is_file())
         self.assertIsNone(result['stopped_reason'])
+        # The designs it opened are closed again: nothing open that would stop --restart-fusion.
+        self.assertEqual((result['open_documents'], result['open_documents_with_work']), (0, 0))
 
     def test_inventory_opens_nothing(self):
         result = self.run_with(mode='inventory')

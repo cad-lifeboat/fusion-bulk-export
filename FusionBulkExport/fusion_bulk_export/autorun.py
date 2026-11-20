@@ -273,6 +273,33 @@ def _one_project(hub, project):
     return view
 
 
+def open_document_facts(app):
+    """open_documents: how many documents are open in Fusion now; open_documents_with_work: how
+    many of them hold a cloud file or unsaved changes (anything but an empty, unsaved "Untitled").
+    A document whose state cannot be read counts as one with work; when the documents cannot be
+    listed at all, both are None (unknown: the launcher then never closes Fusion)."""
+    try:
+        total = work = 0
+        for document in collection(app.documents):
+            total += 1
+            try:
+                cloud = document.dataFile is not None
+            except Exception:
+                try:
+                    cloud = bool(document.isSaved)  # saved once: it has a cloud file
+                except Exception:
+                    cloud = True
+            try:
+                modified = bool(document.isModified)
+            except Exception:
+                modified = True
+            if cloud or modified:
+                work += 1
+        return dict(open_documents=total, open_documents_with_work=work)
+    except Exception:
+        return dict(open_documents=None, open_documents_with_work=None)
+
+
 BUSY = ('An export started from the toolbar button is running in Fusion. '
         'Run this command again when it has finished.')
 
@@ -359,6 +386,9 @@ def run_autorun(app, config_path):
                               bytes=sum(f['bytes'] for e in exporter.manifest['entries']
                                         if e['status'] == 'done' for f in e['files']),
                               memory=info.get('memory'), gc=info.get('gc'))
+            # For the launcher's --restart-fusion: it closes Fusion only when nothing is open in it
+            # that someone could be working on.
+            log.result.update(open_document_facts(app))
             line = memory_line(info)
             if line:
                 log.write(line)

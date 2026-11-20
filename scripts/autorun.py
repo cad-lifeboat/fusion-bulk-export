@@ -30,7 +30,15 @@ Environment: FUSION_APP (app name, .app or .exe path), AUTORUN_TIMEOUT_SECONDS
 
 Exit status: 0 done; 1 the job failed or was refused; 75 the export stopped itself because
 Fusion was using a lot of memory (restart Fusion and run the same command again: it carries on);
+76 --restart-fusion opened Fusion again but the add-in did not start (switch on its Run on
+Startup); 77 Fusion closed or crashed before the export finished (open it and run again);
 130 interrupted (Ctrl-C).
+
+export --restart-fusion (opt-in) does that by itself: after a memory stop it quits Fusion
+politely (only when no saved design or unsaved document is open in it), opens it again, waits
+for the add-in and sends the same job; after a crash it opens Fusion again. At most
+--max-restarts times (default 20), never more than once per 50 designs exported.
+--restart-fusion=force also ends a Fusion that does not quit within 60 s.
 """
 import argparse
 import glob
@@ -71,13 +79,20 @@ INTERRUPTED = 130  # the exit status after Ctrl-C
 # Fusion and run the same command again (it carries on), or let --restart-fusion do that.
 EXIT_MEMORY = 75
 MEMORY_LINE = ('Stopped: Fusion is using a lot of memory. Close Fusion, open it again and run the same command: '
-               'it carries on where it stopped.')
+               'it carries on where it stopped (--restart-fusion does this by itself).')
+# Exit status when Fusion closed (or crashed) before the export finished: open it and run again.
+EXIT_FUSION_GONE = 77
+GONE_LINE = ('Fusion closed before the export finished (it may have crashed). Open Fusion and run the same '
+             'command again: it carries on where it stopped.')
+# Exit status when --restart-fusion opened Fusion again but the add-in did not start in it.
+EXIT_NO_ADDIN = 76
 SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
-MANUAL_HINT = ('Fusion has not started the add-in. In Fusion press Shift+S and find FusionBulkExport in '
-               'the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on '
-               'Startup box first, then switch Run on. The window closes when you switch it on; that is '
-               'normal. This command keeps waiting.')
+MANUAL_STEPS = ('Fusion has not started the add-in. In Fusion press Shift+S and find FusionBulkExport in '
+                'the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on '
+                'Startup box first, then switch Run on. The window closes when you switch it on; that is '
+                'normal.')
+MANUAL_HINT = MANUAL_STEPS + ' This command keeps waiting.'
 
 
 def system():
@@ -370,12 +385,19 @@ def summary(output):
     return lines or ['Nothing in ' + str(output) + ' yet.']
 
 
-def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.sleep, clock=time.monotonic):
+def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.sleep, clock=time.monotonic,
+         running=None):
+    """Wait for this job's autorun-result.json and print its summary; the exit status. Once the
+    add-in's heartbeat has been seen, a heartbeat gone stale while Fusion's process is gone too
+    means Fusion closed or crashed mid-run: EXIT_FUSION_GONE. (A stale heartbeat alone is not:
+    Fusion can be busy for minutes in one design.)"""
     result = output / 'autorun-result.json'
     print('Waiting for ' + str(result) + ' (progress: autorun.log)', flush=True)
     start = clock()
     started_at = time.time() - 5
     hinted = False
+    seen = False  # the add-in's heartbeat was fresh at some point while waiting
+    running = running or fusion_running
 
     def fresh(path):
         try:
@@ -406,6 +428,11 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
         if not hinted and elapsed >= hint_after and not (installed / 'autorun.alive').exists():
             print(MANUAL_HINT, flush=True)
             hinted = True
+        if alive(installed):
+            seen = True
+        elif seen and not running() and not fresh(result):
+            print(GONE_LINE, flush=True)
+            return EXIT_FUSION_GONE
         sleep(5)
     report = json.loads(result.read_text(encoding='utf-8'))
     if report.get('busy'):
@@ -429,9 +456,18 @@ def start(args):
     if problem:
         raise SystemExit(problem)
     installed = addins_dir(name) / 'FusionBulkExport'
-    watching = alive(installed)
     if getattr(args, 'drawings', False):
         print(DRAWINGS_REMOVED, flush=True)
+    mode = getattr(args, 'restart_fusion', None) if args.command == 'export' else None
+    if not mode:
+        return run_job(args, name, output, installed)
+    return with_restarts(lambda: run_job(args, name, output, installed), FusionProcess(name, installed),
+                         output, force=mode == 'force', limit=getattr(args, 'max_restarts', MAX_RESTARTS))
+
+
+def run_job(args, name, output, installed):
+    """Send the job to the add-in (opening Fusion if it is closed) and wait for its result."""
+    watching = alive(installed)
     install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
             folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False))
     try:
@@ -455,6 +491,152 @@ def start(args):
         return INTERRUPTED
     finally:
         withdraw_job(installed)
+
+
+MAX_RESTARTS = 20           # --restart-fusion restarts Fusion at most this many times in one command...
+DESIGNS_PER_RESTART = 50    # ...and only after at least this many designs were exported since the last start
+QUIT_SECONDS = 60           # how long Fusion gets to quit when asked politely
+KILL_SECONDS = 30           # how long a forced kill gets to take effect
+
+
+class FusionProcess:
+    """What --restart-fusion does to Fusion, one method per action (the tests use a fake)."""
+    def __init__(self, name, installed, sleep=time.sleep, clock=time.monotonic):
+        self.name, self.installed, self.sleep, self.clock = name, installed, sleep, clock
+
+    def running(self):
+        return fusion_running(self.name)
+
+    def quit(self):
+        """Ask Fusion to quit, as the user would (it may refuse or ask about unsaved work)."""
+        if self.name == 'Windows':
+            command = ['taskkill', '/IM', 'Fusion360.exe']  # no /F: a close request, not a kill
+        else:
+            command = ['osascript', '-e', 'tell application "Autodesk Fusion" to quit']
+        subprocess.run(command, capture_output=True)
+
+    def kill(self):
+        if self.name == 'Windows':
+            command = ['taskkill', '/F', '/IM', 'Fusion360.exe']
+        else:
+            command = ['pkill', '-KILL', '-x', 'Autodesk Fusion']
+        subprocess.run(command, capture_output=True)
+
+    def launch(self):
+        launch_fusion(self.name)
+
+    def started_since(self, moment):
+        """Whether the add-in's heartbeat was written after moment (time.time()) and is fresh."""
+        try:
+            return (self.installed / 'autorun.alive').stat().st_mtime > moment and alive(self.installed)
+        except OSError:
+            return False
+
+
+def done_designs(output):
+    """How many designs the folder's manifest (with its journal) holds as exported."""
+    try:
+        entries = package_checks().read_manifest(output).get('entries', [])
+    except (OSError, ValueError):
+        return 0
+    return sum(1 for e in entries if (e.get('kind') or 'design') == 'design' and e.get('status') == 'done')
+
+
+def read_result(output):
+    try:
+        value = json.loads((output / 'autorun-result.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def restart_decision(status, result, restarts, limit, exported):
+    """(restart, line): whether --restart-fusion may restart Fusion after a run that ended with
+    status, and one plain line saying what happens. result: the run's autorun-result.json (empty
+    when Fusion closed before writing it); restarts: done so far in this command; exported:
+    designs exported since Fusion was last started by this command (or since it began)."""
+    if status not in (EXIT_MEMORY, EXIT_FUSION_GONE):
+        return False, None
+    if restarts >= limit:
+        return False, 'Not restarting Fusion again: it was restarted %d times in this command already.' % restarts
+    if exported < DESIGNS_PER_RESTART:
+        return False, ('Not restarting Fusion: only %d designs were exported since it was started, so restarting '
+                       'would not help.' % exported)
+    if status == EXIT_FUSION_GONE:
+        return True, 'Fusion closed before the export finished; opening it again to carry on.'
+    work = result.get('open_documents_with_work')
+    if not isinstance(work, int):
+        return False, 'Not restarting Fusion: the add-in did not say which documents are open in it.'
+    if work:
+        return False, ('Not restarting Fusion: %d open document%s in it %s a saved design or unsaved changes. '
+                       'Close %s, then run the same command again.'
+                       % (work, '' if work == 1 else 's', 'holds' if work == 1 else 'hold',
+                          'it' if work == 1 else 'them'))
+    return True, 'Restarting Fusion to give its memory back, then carrying on.'
+
+
+def restart_fusion(fusion, status, force, hint_seconds=MANUAL_HINT_SECONDS):
+    """Quit Fusion politely (after a memory stop; after a crash it is gone already), with a
+    forced kill only when force is set, open it again and wait for the add-in. None when the
+    add-in is running again; else the exit status to stop with."""
+    if fusion.running():
+        if status == EXIT_FUSION_GONE:
+            pass  # opened again meanwhile (by the user): used as it is
+        else:
+            fusion.quit()
+            if not gone(fusion, QUIT_SECONDS):
+                if not force:
+                    print('Fusion did not quit within %d s (it may be asking something). Close it, then run the '
+                          'same command again.' % QUIT_SECONDS, flush=True)
+                    return status
+                print('Fusion did not quit within %d s; ending it (--restart-fusion=force).' % QUIT_SECONDS, flush=True)
+                fusion.kill()
+                if not gone(fusion, KILL_SECONDS):
+                    print('Fusion could not be ended. Close it, then run the same command again.', flush=True)
+                    return status
+    moment = time.time()
+    if not fusion.running():
+        fusion.launch()
+    began = fusion.clock()
+    while not fusion.started_since(moment):
+        if fusion.clock() - began >= hint_seconds:
+            print(MANUAL_STEPS + ' Then run the same command again.', flush=True)
+            return EXIT_NO_ADDIN
+        fusion.sleep(5)
+    return None
+
+
+def gone(fusion, seconds):
+    """Wait up to seconds for Fusion's process to end; whether it did."""
+    began = fusion.clock()
+    while fusion.running():
+        if fusion.clock() - began >= seconds:
+            return False
+        fusion.sleep(2)
+    return True
+
+
+def with_restarts(run, fusion, output, force=False, limit=MAX_RESTARTS):
+    """run() the job; while it ends with a memory stop or Fusion gone and restart_decision()
+    allows, restart Fusion and run the same job again. The last run's exit status."""
+    since = done_designs(output)
+    restarts = 0
+    status = run()
+    while True:
+        done = done_designs(output)
+        allowed, line = restart_decision(status, read_result(output) if status == EXIT_MEMORY else {},
+                                         restarts, limit, done - since)
+        if line:
+            print(line, flush=True)
+        if not allowed:
+            return status
+        stopped = restart_fusion(fusion, status, force)
+        if stopped is not None:
+            return stopped
+        restarts += 1
+        since = done
+        print('Fusion restarted (%d of at most %d); carrying on.' % (restarts, limit), flush=True)
+        status = run()
 
 
 def withdraw_job(installed):
@@ -539,6 +721,16 @@ def main(argv=None):
                                 'was exported; later designs and folders are left for the next run')
             p.add_argument('--designs-only', action='store_true',
                            help='skip other files (PDFs, uploads); by default they are saved too')
+            p.add_argument('--restart-fusion', nargs='?', const='polite', choices=('polite', 'force'),
+                           metavar='force',
+                           help='when the export stops because Fusion is using a lot of memory, or Fusion closes '
+                                'mid-run, quit Fusion (only when no saved design or unsaved document is open in '
+                                'it), open it again and carry on; needs Run on Startup. Risk: it closes and '
+                                'reopens Fusion by itself, and with =force it ends a Fusion that will not quit '
+                                'within 60 s, losing anything unsaved in it.')
+            p.add_argument('--max-restarts', type=int, default=MAX_RESTARTS, metavar='N',
+                           help='with --restart-fusion: restart Fusion at most N times (default %d), and never '
+                                'more than once per %d designs exported' % (MAX_RESTARTS, DESIGNS_PER_RESTART))
             # Kept for one release so older instructions still run; it only prints DRAWINGS_REMOVED.
             p.add_argument('--drawings', action='store_true', help=argparse.SUPPRESS)
     sub.add_parser('reset', help='clear stale job files (the button is always available)')
