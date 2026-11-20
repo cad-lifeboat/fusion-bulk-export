@@ -3,8 +3,9 @@
     python docs/screens.py          # writes docs/dialog.svg and docs/progress.svg;
                                     # with cairosvg installed also docs/dialog.png and docs/progress.png
 
-They follow the real dialogs: the inputs picker.py adds (version line, Save to, Browse…, the
-folder note, the other-files checkbox, the Export choice), the tree page (ui/tree.html and
+They follow the real dialogs: the inputs picker.py adds, in its order (version line, Save to
+with Browse…, the folder and its note, the Export choice, the tree across the whole dialog, what
+is chosen, the two checkboxes), the tree page (ui/tree.html and
 ui/tree.js: hint, filter box, hubs, projects and folders with tri-state boxes, file counts and
 "N exported" marks), the progress text of command.describe() and the end-of-run text of
 report.summary_text(). tests/test_screens.py checks that the words drawn here are the ones the
@@ -30,7 +31,7 @@ VERSION = 'Fusion Bulk Export 0.3.0'
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
-DRAWINGS = 'Also export drawings as PDF (slow: each drawing can take minutes)'
+DRAWINGS = 'Also export drawings as PDF (slow)'
 EXPORT_LABEL = 'Export'
 CHOOSE = 'Choose projects or folders'
 TREE_HINT = ('Tick what to export. Ticking a folder includes everything inside it. '
@@ -181,29 +182,22 @@ def tree_rows(x, y, w):
 
 
 def dialog_svg():
-    width, height = 760, 640
-    x, y, w = 150, 28, 460
-    label_w = 150
+    width, height = 820, 640
+    x, y, w = 150, 28, 520
+    label_w = 236                  # Fusion sizes the label column to its longest label
     cx = x + 16 + label_w          # where controls start
     cw = w - 16 - label_w - 16     # control width
     parts = []
     body = y + 34 + 14
-    parts.append(text(x + 16, body + 12, VERSION, 12, INK, 600))
-    row = body + 28
-    parts.append(text(x + 16, row + 15, SAVE_TO, 12, MUTED))
-    parts.append(f'<rect x="{cx}" y="{row}" width="{cw}" height="38" rx="3" fill="{FIELD}" stroke="{LINE}"/>')
-    parts.append(text(cx + 8, row + 16, OUTPUT, 12))
-    row += 46
+    parts.append(text(x + 16, body + 10, VERSION, 11, MUTED))
+    row = body + 24
+    parts.append(text(x + 16, row + 17, SAVE_TO, 12, MUTED))
     parts.append(button(cx, row, 86, BROWSE))
     row += 34
-    parts.append(text(cx, row + 12, folder_note(), 12, MUTED))
+    parts.append(text(x + 16, row + 12, OUTPUT, 12))
+    row += 22
+    parts.append(text(x + 16, row + 12, folder_note(), 12, MUTED))
     row += 26
-    for label, ticked in ((OTHER_FILES, 1), (DRAWINGS, 0)):
-        lines = wrap(label, label_w - 6, 12)
-        for index, line in enumerate(lines):
-            parts.append(text(x + 16, row + 12 + index * 16, line, 12, MUTED))
-        parts.append(checkbox(cx, row + 2, ticked))
-        row += len(lines) * 16 + 12
     parts.append(text(x + 16, row + 17, EXPORT_LABEL, 12, MUTED))
     parts.append(f'<rect x="{cx}" y="{row}" width="{cw}" height="26" rx="3" fill="{FIELD}" stroke="{LINE}"/>')
     parts.append(text(cx + 8, row + 17, CHOOSE, 12))
@@ -225,6 +219,11 @@ def dialog_svg():
     folders = sum(len(value) for value in CHOSEN.values() if value is not None)
     parts.append(text(x + 16, row + 12, '%d whole project(s) and %d folder(s) chosen.' % (whole, folders), 12, MUTED))
     row += 28
+    for label, ticked in ((OTHER_FILES, 1), (DRAWINGS, 0)):
+        parts.append(text(x + 16, row + 12, label, 12, MUTED))
+        parts.append(checkbox(cx, row + 2, ticked))
+        row += 26
+    row += 4
     parts.append(f'<path d="M{x},{row} h{w}" stroke="{LINE}"/>')
     parts.append(button(x + w - 16 - 80 - 8 - 80, row + 12, 80, OK_BUTTON, primary=True))
     parts.append(button(x + w - 16 - 80, row + 12, 80, 'Cancel'))

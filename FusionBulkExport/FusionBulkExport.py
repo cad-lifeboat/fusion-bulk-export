@@ -199,13 +199,13 @@ class Created(adsk.core.CommandCreatedEventHandler):
             # Each dialog uses the add-in code as currently installed, without a restart.
             forget_package()
             from fusion_bulk_export.command import export
-            from fusion_bulk_export.picker import Picker
+            from fusion_bulk_export.picker import DIALOG_MINIMUM, DIALOG_SIZE, Picker
             _code.update(export=export)
             command = args.command
             command.okButtonText = 'Export'
-            # Wide enough for project and folder names (Fusion's default cuts labels off).
-            command.setDialogInitialSize(460, 520)
-            command.setDialogMinimumSize(380, 160)
+            # Wide and tall enough for the tree of projects (Fusion's default cuts names off).
+            command.setDialogInitialSize(*DIALOG_SIZE)
+            command.setDialogMinimumSize(*DIALOG_MINIMUM)
             _picker = Picker(adsk.core.Application.get(), command.commandInputs, trace)
             for event, handler in ((command.execute, Execute()), (command.inputChanged, InputChanged()),
                                    (command.validateInputs, Validate()),

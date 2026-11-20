@@ -368,6 +368,7 @@ class ListItems(list):
 class DropDown:
     def __init__(self, id, name):
         self.id, self.name, self.listItems, self.isVisible = id, name, ListItems(), True
+        self.tooltip = ''
 
     @property
     def selectedItem(self):
@@ -393,16 +394,23 @@ class Inputs:
     def addGroupCommandInput(self, id, name):
         return self._add(Group(id, name))
 
+    # Layout as Fusion draws it: an input's name is its label in the dialog's left column and the
+    # control sits in the right one, unless the name is empty or isFullWidth is set (both recorded
+    # here, so tests can check the layout). A button-style bool input shows its name as the label
+    # and its text on the button; until text is set the button repeats the name.
     def addBoolValueInput(self, id, name, is_check_box, resources, value):
-        return self._add(NS(id=id, name=name, value=value, isVisible=True, isEnabled=True))
+        return self._add(NS(id=id, name=name, value=value, isVisible=True, isEnabled=True, isFullWidth=False,
+                            isCheckBox=is_check_box, text='' if is_check_box else name, tooltip=''))
 
     def addBrowserCommandInput(self, id, name, url, minimum_height, maximum_height=0):
         sent = []
-        return self._add(NS(id=id, name=name, htmlFileURL=url, isVisible=True, sent=sent,
+        return self._add(NS(id=id, name=name, htmlFileURL=url, isVisible=True, sent=sent, isFullWidth=False,
+                            minimumHeight=minimum_height, maximumHeight=maximum_height, tooltip='',
                             sendInfoToHTML=lambda action, data: sent.append((action, data)) or True))
 
     def addTextBoxCommandInput(self, id, name, text, rows, read_only):
-        return self._add(NS(id=id, name=name, text=text, isVisible=True))
+        return self._add(NS(id=id, name=name, text=text, isVisible=True, isFullWidth=False, numRows=rows,
+                            isReadOnly=read_only, tooltip=''))
 
     def find(self, id):
         for control in self.added:

@@ -87,8 +87,9 @@ class UIBase(unittest.TestCase):
     def open_dialog(self):
         self.module.run(None) if not self.definition.commandCreated.handlers else None
         command = NS(execute=Event(), inputChanged=Event(), validateInputs=Event(), incomingFromHTML=Event(),
-                     commandInputs=fake.Inputs(),
-                     setDialogInitialSize=lambda w, h: None, setDialogMinimumSize=lambda w, h: None)
+                     commandInputs=fake.Inputs(), sizes={})
+        command.setDialogInitialSize = lambda w, h: command.sizes.update(initial=(w, h))
+        command.setDialogMinimumSize = lambda w, h: command.sizes.update(minimum=(w, h))
         self.definition.commandCreated.handlers[-1].notify(NS(command=command))
         self.assertEqual(self.errors, [])
         return command
@@ -401,8 +402,18 @@ class UItests(UIBase):
         self.app.data = fake.data([self.file, drawing])
         command = self.open_dialog()
         box = command.commandInputs.find('fbx_drawings')
-        self.assertEqual(box.name, 'Also export drawings as PDF (slow: each drawing can take minutes)')
+        self.assertEqual(box.name, 'Also export drawings as PDF (slow)')
+        self.assertIn('each drawing can take minutes', box.tooltip)
         self.assertFalse(box.value)
+        note = command.commandInputs.find('fbx_drawings_note')
+        self.assertFalse(note.isVisible)  # the why is shown only once the box is ticked
+        box.value = True
+        self.change(command, box)
+        self.assertTrue(note.isVisible)
+        self.assertIn('each drawing can take minutes', note.text)
+        box.value = False
+        self.change(command, box)
+        self.assertFalse(note.isVisible)
         command.execute.handlers[0].notify(None)
         self.assertEqual(drawing.calls, 0)  # not opened
         self.assertIn('1 drawing(s) not exported: drawing PDFs are off', self.summaries[0][0])
@@ -521,6 +532,51 @@ class FriendlyErrorTests(UIBase):
             self.assertIn('RuntimeError: could not move <path>', text)
             self.assertIn('PermissionError: [Errno 13] Permission denied', text)
             self.assertNotIn('test_ui.py', text)  # only the add-in's own code is listed
+
+    def test_dialog_layout(self):
+        """What real Fusion drew squeezed: the tree must span the dialog, labels must not repeat a
+        button's caption, checkbox labels must be short enough for the label column, and the
+        dialog must open big enough for the tree."""
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        tree = inputs.find('fbx_tree')
+        self.assertEqual(tree.name, '')
+        self.assertTrue(tree.isFullWidth)
+        self.assertGreaterEqual(tree.minimumHeight, 300)
+        self.assertEqual(tree.maximumHeight, 0)  # grows with the dialog
+        captions = {control.text for control in inputs.added if getattr(control, 'isCheckBox', True) is False}
+        self.assertEqual(captions, {'Browse…'})
+        for control in inputs.added:
+            self.assertNotIn(control.name, captions, control.id)
+            if getattr(control, 'isCheckBox', False):
+                self.assertLessEqual(len(control.name), 40, control.name)
+            if hasattr(control, 'numRows') and not control.name:
+                self.assertTrue(control.isFullWidth, control.id)
+        self.assertEqual(inputs.find('fbx_browse').name, 'Save to')
+        width, height = command.sizes['initial']
+        self.assertGreaterEqual(width, 500)
+        self.assertGreaterEqual(height, 600)
+        self.assertLessEqual(command.sizes['minimum'][0], width)
+        self.assertGreaterEqual(command.sizes['minimum'][0], 360)
+        # The main choice comes before the checkboxes, so it is not pushed below the fold.
+        order = [control.id for control in inputs.added]
+        self.assertEqual(order[:6], ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_mode', 'fbx_tip'])
+        self.assertLess(order.index('fbx_tree'), order.index('fbx_files'))
+        self.assertLess(order.index('fbx_summary'), order.index('fbx_files'))
+
+    def test_long_output_folder_is_shown_with_its_middle_cut(self):
+        from fusion_bulk_export.picker import shown_path
+        self.assertEqual(shown_path('C:\\FBT'), 'C:\\FBT')
+        long = '/Users/someone/' + 'Deep Folder/' * 10 + 'FusionExport'
+        shown = shown_path(long)
+        self.assertLessEqual(len(shown), 64)
+        self.assertIn('…', shown)
+        self.assertTrue(shown.startswith('/Users/'))
+        self.assertTrue(shown.endswith('/FusionExport'))
+        self.settings.write_text(json.dumps(dict(output=long)))
+        folder = self.open_dialog().commandInputs.find('fbx_folder')
+        self.assertEqual(folder.text, shown)
+        self.assertEqual(folder.tooltip, long)
 
     def test_old_fusion_offers_everything_only(self):
         self.module.run(None)

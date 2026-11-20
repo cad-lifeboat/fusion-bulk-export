@@ -11,10 +11,21 @@ from .core import Selection, collection
 
 EVERYTHING = 'Everything'
 CHOOSE = 'Choose projects or folders'
+# Checkbox labels stay short (about 40 characters): Fusion puts a checkbox's label in the dialog's
+# left column, sizes that column to its longest label and cuts the label off at its limit, which
+# leaves the right-hand column (and anything in it) a sliver.
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
-DRAWINGS = 'Also export drawings as PDF (slow: each drawing can take minutes)'
+OTHER_FILES_WHY = 'PDFs, images and other uploaded files are copied as they are, beside the designs.'
+DRAWINGS = 'Also export drawings as PDF (slow)'
+DRAWINGS_WHY = 'Slow: Fusion opens each drawing to make its PDF, and each drawing can take minutes.'
+SAVE_TO = 'Save to'
+BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
+# Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
+DIALOG_SIZE = (520, 640)
+DIALOG_MINIMUM = (380, 460)
+PATH_LIMIT = 64  # longer output folders are shown with their middle cut out (full path as tooltip)
 TREE_HTML = Path(__file__).resolve().parent.parent / 'ui' / 'tree.html'
 
 
@@ -29,6 +40,32 @@ def version(manifest=MANIFEST):
         return str(value) if value else None
     except (OSError, ValueError, AttributeError):
         return None
+
+
+def shown_path(path, limit=PATH_LIMIT):
+    """The output folder as the dialog shows it: whole, or with the middle cut out when long,
+    so both the drive or home and the folder's own name stay readable."""
+    path = path or ''
+    if len(path) <= limit:
+        return path
+    tail = limit * 3 // 5
+    return path[:limit - tail - 1] + '…' + path[-tail:]
+
+
+def full_width(control, trace):
+    """Across the whole dialog, not in its right-hand column. Inputs of an older Fusion may lack
+    isFullWidth: the dialog then still opens, just narrower."""
+    try:
+        control.isFullWidth = True
+    except Exception as error:
+        trace('isFullWidth: %s' % error)
+
+
+def describe(control, tooltip, trace):
+    try:
+        control.tooltip = tooltip
+    except Exception as error:
+        trace('tooltip: %s' % error)
 
 
 def folder_id(folder):
@@ -53,47 +90,75 @@ class Picker:
         self.chosen = {}
         remembered = settings.load()
         number = version()
-        self.version = inputs.addTextBoxCommandInput(
-            'fbx_version', '', 'Fusion Bulk Export' + (' ' + number if number else ''), 1, True)
+        # Top to bottom: version; Save to [Browse…] with the folder and its note; the Export
+        # choice with the tree (the main choice, kept near the top); the checkboxes. Rows without
+        # a label span the whole dialog (isFullWidth as well, since the HTML tree otherwise sits
+        # in the right-hand column).
+        title = 'Fusion Bulk Export' + (' ' + number if number else '')
+        self.version = inputs.addTextBoxCommandInput('fbx_version', '', title, 1, True)
+        full_width(self.version, trace)
+        try:
+            self.version.formattedText = '<small><font color="#8c8c8c">%s</font></small>' % title
+        except Exception as error:
+            trace('formattedText: %s' % error)
         # Output folder: remembered, else the first-use suggestion (created when the export starts).
         self.output = remembered.get('output') or settings.default_output()
-        self.folder = inputs.addTextBoxCommandInput('fbx_folder', 'Save to', self.output, 2, True)
-        self.browse = inputs.addBoolValueInput('fbx_browse', 'Browse…', False, '', False)
+        # One row: the "Save to" label and the Browse… button (a button-style bool input shows its
+        # name as the label and its text on the button).
+        self.browse = inputs.addBoolValueInput('fbx_browse', SAVE_TO, False, '', False)
+        try:
+            self.browse.text = BROWSE
+        except Exception as error:
+            trace('button text: %s' % error)
+        describe(self.browse, 'Choose the folder the export goes to.', trace)
+        self.folder = inputs.addTextBoxCommandInput('fbx_folder', '', '', 1, True)
+        full_width(self.folder, trace)
         self.note = inputs.addTextBoxCommandInput('fbx_note', '', '', 1, True)
+        full_width(self.note, trace)
         self.facts = None
         self.browsing = False
         self.refresh_folder()
-        # On unless the user switched it off last time.
-        self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
-                                              remembered.get('other_files') is not False)
-        # Off unless the user switched it on last time: opening a drawing can take Fusion minutes.
-        self.drawing_box = inputs.addBoolValueInput('fbx_drawings', DRAWINGS, True, '',
-                                                    remembered.get('drawings') is True)
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
         self.tip = inputs.addTextBoxCommandInput(
             'fbx_tip', '', 'Hundreds or thousands of designs? Start with one project or folder '
             '(Choose projects or folders), check it, then do the rest into the same output folder.', 3, True)
+        full_width(self.tip, trace)
         self.tree = self.summary = None
         add_browser = getattr(inputs, 'addBrowserCommandInput', None)
         try:
+            # At least 300 high; no maximum, so it grows with the dialog.
             self.tree = add_browser('fbx_tree', '', TREE_HTML.as_uri(), 300, 0) if add_browser else None
         except Exception as error:
             trace('no tree: %s' % error)
         if self.tree is None:
             # Older Fusion: no HTML in command dialogs, so no tree; everything still exports.
-            inputs.addTextBoxCommandInput('fbx_old', '', OLD_FUSION, 2, True)
+            old = inputs.addTextBoxCommandInput('fbx_old', '', OLD_FUSION, 2, True)
+            full_width(old, trace)
             self.tip.isVisible = False  # it speaks of choosing, which this Fusion cannot offer
         else:
+            full_width(self.tree, trace)
             self.mode.listItems.add(CHOOSE, False, '')
             self.tree.isVisible = False
             self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
+            full_width(self.summary, trace)
             self.summary.isVisible = False
-            if remembered.get('mode') == CHOOSE:
-                for item in self.mode.listItems:
-                    item.isSelected = item.name == CHOOSE
-                self.show_mode()
+        # On unless the user switched it off last time.
+        self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
+                                              remembered.get('other_files') is not False)
+        describe(self.files, OTHER_FILES_WHY, trace)
+        # Off unless the user switched it on last time: opening a drawing can take Fusion minutes.
+        self.drawing_box = inputs.addBoolValueInput('fbx_drawings', DRAWINGS, True, '',
+                                                    remembered.get('drawings') is True)
+        describe(self.drawing_box, DRAWINGS_WHY, trace)
+        self.drawing_note = inputs.addTextBoxCommandInput('fbx_drawings_note', '', DRAWINGS_WHY, 2, True)
+        full_width(self.drawing_note, trace)
+        self.drawing_note.isVisible = self.drawings
+        if self.tree is not None and remembered.get('mode') == CHOOSE:
+            for item in self.mode.listItems:
+                item.isSelected = item.name == CHOOSE
+            self.show_mode()
         trace('picker built')
 
     @property
@@ -115,7 +180,8 @@ class Picker:
         self.tip.isVisible = not self.choosing
 
     def refresh_folder(self):
-        self.folder.text = self.output or ''
+        self.folder.text = shown_path(self.output)
+        describe(self.folder, self.output or '', self.trace)
         self.facts = settings.folder_facts(self.output)
         self.note.text = settings.folder_note(self.facts) if self.output else 'Choose where to save the export.'
 
@@ -146,6 +212,8 @@ class Picker:
                     self.choose_folder()
                 finally:
                     self.browsing = False
+        elif changed_input.id == self.drawing_box.id:
+            self.drawing_note.isVisible = self.drawings
         elif changed_input.id == self.mode.id and self.tree is not None:
             self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)

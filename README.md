@@ -52,6 +52,7 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 
 - The first line shows the version that is running.
 - **Choose projects or folders** opens a tree. Type in the filter box to narrow the projects by name. The keyboard works too: arrow keys move and open, **Space** ticks, **Enter** opens. An opened project or folder shows how many files it holds, and a project that already has files in the chosen folder is marked "N exported".
+- A name too long for its row ends in "…": hover over the row to read it whole.
 - If a folder cannot be listed, the tree says so with a **Retry** button.
 - The button is always there, also after an export from the command line. Only one export runs at a time.
 - While it exports, the progress text says which design (or "file N" for another file) it is on. A drawing says it is opening, which can take minutes.
