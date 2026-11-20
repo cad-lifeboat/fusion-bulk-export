@@ -89,14 +89,16 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue((out / 'STOP').exists())
         self.assertIn('STOP is set', stream.getvalue())
 
-    def test_install_writes_config_and_watch_marker(self):
+    def test_install_writes_config_without_watch_marker(self):
         installed, out = self.root / 'AddIns' / 'FusionBulkExport', self.root / 'out'
         out.mkdir()
         (out / 'STOP').write_text('')
+        installed.mkdir(parents=True)
+        (installed / 'autorun.watch').write_text('')  # from an earlier version
         launcher.install(installed, out, 'export', ['p1'], 5)
         self.assertEqual(json.loads((installed / 'autorun.json').read_text()),
                          dict(output=str(out), mode='export', projects=['p1'], limit=5))
-        self.assertTrue((installed / 'autorun.watch').exists())
+        self.assertFalse((installed / 'autorun.watch').exists())
         self.assertTrue((installed / 'FusionBulkExport.py').exists())
         # Every module of the add-in package is installed (a broad "autorun*" ignore once dropped one).
         source = Path(launcher.__file__).resolve().parents[1] / 'FusionBulkExport' / 'fusion_bulk_export'
@@ -147,7 +149,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn('rejected the job', stream.getvalue())
 
-    def test_reset_leaves_unattended_mode(self):
+    def test_reset_clears_stale_job_files_and_keeps_heartbeat(self):
         installed = self.root / 'FusionBulkExport'
         installed.mkdir()
         for name in ('autorun.watch', 'autorun.json', 'autorun.alive'):
@@ -155,9 +157,21 @@ class LauncherTests(unittest.TestCase):
         (installed / 'FusionBulkExport.manifest').write_text(json.dumps(dict(runOnStartup=True)))
         with contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(launcher.reset(installed), 0)
-        self.assertEqual(sorted(p.name for p in installed.iterdir()), ['FusionBulkExport.manifest'])
+        self.assertEqual(sorted(p.name for p in installed.iterdir()), ['FusionBulkExport.manifest', 'autorun.alive'])
         self.assertFalse(json.loads((installed / 'FusionBulkExport.manifest').read_text())['runOnStartup'])
-        self.assertIn('Unattended mode is off', out.getvalue())
+        self.assertIn('button is always available', out.getvalue())
+
+    def test_wait_reports_busy_fusion(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        out.mkdir()
+        installed.mkdir()
+        (out / 'autorun-result.json').write_text(json.dumps(dict(
+            busy=True, errors=[dict(stage='busy', error='An export started from the toolbar button is running')])))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
+        self.assertEqual(status, 1)
+        self.assertIn('Fusion is busy: An export started', stream.getvalue())
 
     def test_folder_arguments(self):
         self.assertEqual(launcher.folder_map(['p1:Parts/Brackets/', 'p1:Jigs', 'p2:/X']),

@@ -13,6 +13,9 @@ members and text commands this build offers) for bug reports; it reads no design
 "inventory" writes inventory.json (every hub, project and design with ids and
 versions) without opening anything. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
+
+A job that arrives while an export from the toolbar button is running is not started: its
+autorun-result.json says busy (true) with the reason, and the command can simply be run again.
 """
 import json
 from pathlib import Path
@@ -176,6 +179,32 @@ def _one_project(hub, project):
     view = type('DataView', (), {})()
     view.dataHubs = Listing([hub_view])
     return view
+
+
+BUSY = ('An export started from the toolbar button is running in Fusion. '
+        'Run this command again when it has finished.')
+
+
+def reject_busy(app, config_path, reason=BUSY):
+    """Answer a job that cannot start now: consume autorun.json and write a "busy" result where
+    the launcher waits for it (the job's output folder, else autorun-output beside the add-in)."""
+    config_path = Path(config_path)
+    output = config_path.parent / 'autorun-output'
+    try:
+        text = config_path.read_text(encoding='utf-8')
+        config_path.replace(config_path.with_name(config_path.name + '.last'))
+        wanted = Path(json.loads(text)['output']).expanduser()
+        if wanted.is_absolute():
+            output = wanted
+    except Exception:
+        pass  # an unreadable job is answered beside the add-in
+    output.mkdir(parents=True, exist_ok=True)
+    log = Log(output)
+    log.result.update(busy=True, finished=now(), fusion_version=getattr(app, 'version', None),
+                      errors=[dict(stage='busy', error=reason, traceback='')])
+    log.write('autorun busy')
+    atomic_write(output / 'autorun-result.json', log.result)
+    return log.result
 
 
 def run_autorun(app, config_path):

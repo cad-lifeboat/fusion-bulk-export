@@ -8,7 +8,9 @@
   autorun.py stop OUTPUT                            pause an export between designs
 
 Sign in to Fusion first. The first run needs Fusion closed (or the add-in started by
-hand from Utilities > Add-Ins); later runs reuse the open, watching Fusion session.
+hand from Utilities > Add-Ins); later runs reuse the open Fusion session, where the add-in
+always watches for jobs and its toolbar button stays available. A job sent while an export
+from the button is running is refused with a "busy" message: run the command again later.
 Environment: FUSION_APP (app name, .app or .exe path), AUTORUN_TIMEOUT_SECONDS
 (default 86400).
 """
@@ -33,7 +35,7 @@ RUNTIME_FILES = shutil.ignore_patterns(
 
 REPO = Path(__file__).resolve().parent.parent
 ALIVE_SECONDS = 20
-SAFE_LOG = re.compile(r'^\S+ (design \d+/\d+|project \d+/\d+ design \d+|autorun (start (export|inventory|diagnostics)|finished)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
+SAFE_LOG = re.compile(r'^\S+ (design \d+/\d+|project \d+/\d+ design \d+|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
 MANUAL_HINT = ('Fusion has not started the add-in. In Fusion: Utilities > Add-Ins > Scripts and '
                'Add-Ins, select FusionBulkExport, click Run (tick Run on Startup).')
@@ -135,7 +137,10 @@ def install(installed, output, mode, projects=None, limit=None, folders=None):
             (installed / stale).unlink()
         except FileNotFoundError:
             pass
-    (installed / 'autorun.watch').write_text('', encoding='utf-8')
+    try:
+        (installed / 'autorun.watch').unlink()  # the marker of earlier versions; no longer used
+    except FileNotFoundError:
+        pass
     config = dict(output=str(output), mode=mode)
     if projects:
         config['projects'] = projects
@@ -192,7 +197,7 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
         if fallback.is_file() and fallback.stat().st_mtime >= started_at:
             # The add-in could not use this job's configuration; its report went beside it.
             report = json.loads(fallback.read_text(encoding='utf-8'))
-            print('The add-in rejected the job:', flush=True)
+            print('Fusion is busy:' if report.get('busy') else 'The add-in rejected the job:', flush=True)
             for error in report.get('errors', []):
                 print('  ' + error.get('error', ''), flush=True)
             return 1
@@ -205,6 +210,10 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
             hinted = True
         sleep(5)
     report = json.loads(result.read_text(encoding='utf-8'))
+    if report.get('busy'):
+        for error in report.get('errors', []):
+            print('Fusion is busy: ' + error.get('error', ''), flush=True)
+        return 1
     for line in summary(output):
         print(line)
     return 1 if any(e.get('stage') == 'autorun' for e in report.get('errors', [])) else 0
@@ -232,17 +241,18 @@ def start(args):
 
 
 def reset(installed):
-    """Leave unattended mode. A running add-in finishes its current job first."""
+    """Kept for old instructions: clears stale job files. The add-in no longer has an unattended
+    mode; its toolbar button is always there. A running job finishes first."""
     removed = []
-    for name in ('autorun.watch', 'autorun.json', 'autorun.alive'):
+    for name in ('autorun.json', 'autorun.watch'):
         try:
             (installed / name).unlink()
             removed.append(name)
         except FileNotFoundError:
             pass
     set_startup(installed, False) if (installed / 'FusionBulkExport.manifest').is_file() else None
-    print('Unattended mode is off%s. To get the button back now, switch FusionBulkExport off and on '
-          'in Fusion (Shift+S), or restart Fusion.' % (' (removed ' + ', '.join(removed) + ')' if removed else ''))
+    print('Nothing to reset: the Fusion Bulk Export button is always available%s.'
+          % (' (removed stale ' + ', '.join(removed) + ')' if removed else ''))
     return 0
 
 
@@ -257,7 +267,7 @@ def main(argv=None):
             p.add_argument('--folder', action='append', metavar='ID:PATH',
                            help='a folder (and its subfolders) in project ID, e.g. ID:Parts/Brackets (repeatable)')
             p.add_argument('--limit', type=int, help='export at most this many designs')
-    sub.add_parser('reset', help='leave unattended mode: the add-in shows its button again')
+    sub.add_parser('reset', help='clear stale job files (the button is always available)')
     args = parser.parse_args(argv)
     if args.command == 'reset':
         return reset(addins_dir(system()) / 'FusionBulkExport')

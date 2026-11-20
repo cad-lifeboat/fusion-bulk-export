@@ -152,6 +152,16 @@ class AutorunTests(unittest.TestCase):
         self.app.registerCustomEvent = lambda name: events.setdefault(name, NS(handlers=[], add=lambda h: events[name].handlers.append(h)))
         self.app.unregisterCustomEvent = lambda name: events.pop(name)
         self.app.fireCustomEvent = lambda name, info: self.fired.append(name)
+        self.buttons, self.dialogs = [], []
+        definition = NS(commandCreated=NS(add=lambda handler: None), deleteMe=lambda: None)
+
+        def add_button(*args):
+            self.buttons.append(args[0])
+            return definition
+        self.app.userInterface = NS(
+            commandDefinitions=NS(addButtonDefinition=add_button),
+            allToolbarPanels=NS(itemById=lambda name: NS(controls=NS(addCommand=lambda d: NS(deleteMe=lambda: None)))),
+            messageBox=lambda *args: self.dialogs.append(args))
         module = importlib.import_module('FusionBulkExport')
         here = patch.object(module, '_HERE', self.root)
         here.start()
@@ -180,13 +190,73 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(json.loads((second / 'autorun-result.json').read_text())['mode'], 'inventory')
         self.assertFalse(self.config.exists())
 
-    def test_watch_marker_alone_starts_watching_without_ui(self):
-        (self.root / 'autorun.watch').write_text('')
+    def test_button_and_watching_together(self):
+        # A pending job no longer hides the button: one mode, both at once.
+        self.config.write_text(json.dumps(dict(output=str(self.output))))
         module, events = self.start_add_in()
+        self.assertEqual(self.buttons, ['FusionBulkExport'])
         self.assertIn('FusionBulkExportAutorun', events)
         self.assertIsNotNone(module._watcher)
+        self.assertEqual(self.dialogs, [])
         module.stop(None)
         self.assertNotIn('FusionBulkExportAutorun', events)
+
+    def test_no_job_still_watches_and_shows_button(self):
+        (self.root / 'autorun.watch').write_text('')  # left over from an earlier version: ignored
+        module, events = self.start_add_in()
+        self.assertEqual(self.buttons, ['FusionBulkExport'])
+        self.assertIn('FusionBulkExportAutorun', events)
+
+    def test_job_during_button_export_is_refused_as_busy(self):
+        module, events = self.start_add_in()
+        module._busy['by'] = 'button'
+        self.addCleanup(module._busy.update, by=None)
+        self.config.write_text(json.dumps(dict(output=str(self.output))))
+        module._watcher.poll()
+        self.assertEqual(self.fired, ['FusionBulkExportAutorun'])
+        events['FusionBulkExportAutorun'].handlers[0].notify(None)
+        result = json.loads((self.output / 'autorun-result.json').read_text())
+        self.assertTrue(result['busy'])
+        self.assertIn('toolbar button', result['errors'][0]['error'])
+        self.assertFalse(self.config.exists())
+        self.assertTrue(all(file.calls == 0 for file in self.files))
+        self.assertIn('autorun busy', (self.output / 'autorun.log').read_text())
+
+    def test_busy_job_with_unreadable_config_answers_beside_add_in(self):
+        module, events = self.start_add_in()
+        module._busy['by'] = 'button'
+        self.addCleanup(module._busy.update, by=None)
+        self.config.write_text('{bad')
+        events['FusionBulkExportAutorun'].handlers[0].notify(None)
+        result = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text())
+        self.assertTrue(result['busy'])
+
+    def test_button_export_during_job_is_refused(self):
+        module, events = self.start_add_in()
+        module._busy['by'] = 'job'
+        self.addCleanup(module._busy.update, by=None)
+        module._picker = None
+        module._code['export_with_dialogs'] = lambda *args: self.fail('must not start')
+        module.Execute().notify(None)
+        self.assertIn('command line is running', self.dialogs[0][0])
+        self.assertEqual(module._busy['by'], 'job')
+
+    def test_startup_failure_with_pending_job_goes_to_file_not_dialog(self):
+        self.config.write_text(json.dumps(dict(output=str(self.output))))
+        import adsk
+        module = importlib.import_module('FusionBulkExport')
+        here = patch.object(module, '_HERE', self.root)
+        here.start()
+        self.addCleanup(here.stop)
+        self.dialogs = []
+        self.app.userInterface = NS(messageBox=lambda *args: self.dialogs.append(args))  # no toolbar: fails
+        self.app.registerCustomEvent = lambda name: (_ for _ in ()).throw(RuntimeError('no events'))
+        with self.assertRaises(RuntimeError):
+            module.run(None)
+        self.addCleanup(module.stop, None)
+        self.assertIn('no events', (self.root / 'startup-error.txt').read_text())
+        self.assertEqual(self.dialogs, [])
+
 
 if __name__ == '__main__':
     unittest.main()

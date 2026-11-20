@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace as NS
 import unittest
+from unittest.mock import patch
 
 from tests import fake_adsk as fake
 
@@ -42,10 +43,22 @@ class UItests(unittest.TestCase):
                      commandDefinitions=self.definitions,
                      allToolbarPanels=NS(itemById=lambda name: NS(controls=NS(addCommand=lambda definition: self.control))))
         self.file = fake.File()
-        self.app = NS(userInterface=self.ui, documents=fake.Documents(), data=fake.data([self.file]))
+        self.events = {}
+        self.app = NS(userInterface=self.ui, documents=fake.Documents(), data=fake.data([self.file]),
+                      registerCustomEvent=lambda name: self.events.setdefault(name, Event()),
+                      unregisterCustomEvent=lambda name: self.events.pop(name, None),
+                      fireCustomEvent=lambda name, info: None)
         adsk.core.Application = NS(get=lambda: self.app)
         adsk.doEvents = lambda: None
         self.module = importlib.import_module('FusionBulkExport')
+        # The add-in's own folder: job files and the heartbeat go to a temporary one here.
+        addin = tempfile.TemporaryDirectory(prefix='addin-')
+        self.addCleanup(addin.cleanup)
+        self.addin = Path(addin.name)
+        for target, value in ((self.module, '_HERE'), (self.module.Watcher, 'start')):
+            patcher = patch.object(target, value, self.addin if value == '_HERE' else (lambda watcher: None))
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.addCleanup(self.module.stop, None)
 
     def open_dialog(self):
@@ -157,6 +170,7 @@ class UItests(unittest.TestCase):
         command = self.open_dialog()
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.errors, [])
+        self.assertIsNone(self.module._busy['by'])  # free for command-line jobs again
         self.assertEqual(len(self.summaries), 1)
         message, title, folder = self.summaries[0]
         self.assertIn('Done: 1', message)

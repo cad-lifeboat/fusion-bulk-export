@@ -26,8 +26,9 @@ def forget_package():
 
 forget_package()
 try:
-    from fusion_bulk_export.core import Exporter
-    from fusion_bulk_export.fusion import FusionAdapter
+    # Load the package once now, so a broken installation is reported at start-up.
+    import fusion_bulk_export.autorun  # noqa: F401
+    import fusion_bulk_export.command  # noqa: F401
 except Exception:
     with open(os.path.join(_DIR, 'startup-error.txt'), 'w', encoding='utf-8') as _stream:
         _stream.write(traceback.format_exc())
@@ -43,21 +44,28 @@ _watcher = None
 _custom_event = None
 
 
+# One export at a time: None, 'button' (the dialog's export) or 'job' (an autorun.json job).
+# Kept in this file, not the package, so it survives the package being reloaded.
+_busy = {'by': None}
+
+
 class AutorunEvent(adsk.core.CustomEventHandler):
     """Runs a pending autorun.json on Fusion's main thread."""
-    busy = False
-
     def notify(self, args):
-        if AutorunEvent.busy or not (_HERE / 'autorun.json').is_file():
+        if _busy['by'] == 'job' or not (_HERE / 'autorun.json').is_file():
             return
-        AutorunEvent.busy = True
+        # Each job uses the add-in package as currently installed.
+        forget_package()
+        from fusion_bulk_export import autorun
+        if _busy['by'] == 'button':
+            # Fusion processes events during an export: a job may arrive in the middle of one.
+            autorun.reject_busy(adsk.core.Application.get(), _HERE / 'autorun.json')
+            return
+        _busy['by'] = 'job'
         try:
-            # Each job uses the add-in package as currently installed.
-            forget_package()
-            from fusion_bulk_export.autorun import run_autorun
-            run_autorun(adsk.core.Application.get(), _HERE / 'autorun.json')
+            autorun.run_autorun(adsk.core.Application.get(), _HERE / 'autorun.json')
         finally:
-            AutorunEvent.busy = False
+            _busy['by'] = None
 
 
 class Watcher(threading.Thread):
@@ -69,7 +77,7 @@ class Watcher(threading.Thread):
 
     def poll(self):
         (_HERE / 'autorun.alive').write_text(str(time.time()))
-        if (_HERE / 'autorun.json').is_file() and not AutorunEvent.busy:
+        if (_HERE / 'autorun.json').is_file() and _busy['by'] != 'job':
             adsk.core.Application.get().fireCustomEvent(_EVENT, '')
 
     def run(self):
@@ -82,16 +90,16 @@ class Watcher(threading.Thread):
 
 
 def start_watching():
-    """Unattended mode: no command UI; run autorun jobs now and whenever one appears."""
+    """Run a pending autorun job now and whenever one appears (alongside the button)."""
     global _watcher, _custom_event
     app = adsk.core.Application.get()
     _custom_event = app.registerCustomEvent(_EVENT)
     handler = AutorunEvent()
     _custom_event.add(handler)
     _handlers.append(handler)
-    handler.notify(None)
     _watcher = Watcher()
     _watcher.start()
+    handler.notify(None)
 
 
 _picker = None
@@ -156,7 +164,17 @@ class Execute(adsk.core.CommandEventHandler):
                 app.userInterface.messageBox('Tick at least one project or folder, or choose Everything.',
                                              'Fusion Bulk Export')
                 return
-            _code['export_with_dialogs'](app, selection)
+            if _busy['by'] is not None:
+                app.userInterface.messageBox(
+                    'An export started from the command line is running in Fusion. '
+                    'Wait for it to finish (or stop it with "autorun.py stop"), then export again.',
+                    'Fusion Bulk Export')
+                return
+            _busy['by'] = 'button'
+            try:
+                _code['export_with_dialogs'](app, selection)
+            finally:
+                _busy['by'] = None
         except Exception:
             report('Fusion Bulk Export error')
 
@@ -186,16 +204,21 @@ class Created(adsk.core.CommandCreatedEventHandler):
             report('Fusion Bulk Export command error')
 
 
+def startup_error(unattended):
+    """A start-up failure: always written to startup-error.txt (the command-line launcher shows
+    it); shown in a dialog only when no job is waiting, since a dialog would block the job."""
+    try:
+        (_HERE / 'startup-error.txt').write_text(traceback.format_exc(), encoding='utf-8')
+    except OSError:
+        pass
+    if not unattended:
+        report('Fusion Bulk Export startup error')
+
+
 def run(context):
+    """The button is always there, and autorun.json jobs are always watched for."""
     global _control, _definition
-    if (_HERE / 'autorun.json').is_file() or (_HERE / 'autorun.watch').is_file():
-        try:
-            start_watching()
-        except Exception:
-            # Unattended: no dialog, but leave the reason where the launcher can show it.
-            (_HERE / 'startup-error.txt').write_text(traceback.format_exc(), encoding='utf-8')
-            raise
-        return
+    unattended = (_HERE / 'autorun.json').is_file()
     ui = adsk.core.Application.get().userInterface
     try:
         _definition = ui.commandDefinitions.addButtonDefinition(
@@ -210,12 +233,19 @@ def run(context):
         _control.isPromoted = True
         _control.isPromotedByDefault = True
     except Exception:
-        report('Fusion Bulk Export startup error')
+        startup_error(unattended)
+    try:
+        start_watching()
+    except Exception:
+        startup_error(unattended)
+        if unattended:
+            raise
 
 
 def stop(context):
     global _control, _definition, _watcher, _custom_event, _picker
     _picker = None
+    _busy['by'] = None
     if _watcher:
         _watcher.stopped.set()
         _watcher = None
