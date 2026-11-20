@@ -1,3 +1,5 @@
+import errno
+import os
 import subprocess
 import sys
 import json
@@ -8,7 +10,8 @@ from unittest.mock import patch
 from types import SimpleNamespace as NS
 
 from tests import fake_adsk as fake
-from fusion_bulk_export.core import Exporter, Selection, atomic_write, sanitize, walk
+from fusion_bulk_export import core, power
+from fusion_bulk_export.core import Exporter, Selection, atomic_write, free_bytes, sanitize, walk
 
 fake.install()
 from fusion_bulk_export.fusion import FusionAdapter
@@ -329,6 +332,133 @@ class ExportTests(unittest.TestCase):
             self.run_export(fake.data([file]))
         self.assertEqual(self.manifest['entries'][0]['status'], 'failed')
         self.assertTrue(all(d.closed for d in file.documents))
+
+    def failing_files(self, count):
+        files = [fake.File(identity='file-%d' % n) for n in range(count)]
+        for file in files:
+            file.failures = 2
+        return files
+
+    def test_five_failures_in_a_row_stop_and_retry_next_run(self):
+        files = self.failing_files(7)
+        exporter, counts = self.run_export(fake.data(files))
+        self.assertEqual(counts, dict(done=0, failed=5, skipped=0))
+        self.assertEqual([f.calls for f in files], [2] * 5 + [0, 0])
+        self.assertIn('5 designs in a row failed', exporter.run_info['stopped_reason'])
+        self.assertEqual(exporter.run_info['stopped_code'], 'failing')
+        self.assertFalse(exporter.run_info['cancelled'])
+        self.assertEqual(self.manifest['runs'][-1]['stopped_code'], 'failing')
+        for file in files:
+            file.failures = 0  # back online
+        exporter, counts = self.run_export(fake.data(files))
+        self.assertEqual(counts['done'], 7)
+        self.assertIsNone(exporter.run_info['stopped_reason'])
+
+    def test_a_success_resets_the_failure_count(self):
+        files = self.failing_files(4) + [fake.File(identity='good')] + self.failing_files(4)
+        exporter, counts = self.run_export(fake.data(files))
+        self.assertEqual(counts, dict(done=1, failed=8, skipped=0))
+        self.assertIsNone(exporter.run_info['stopped_reason'])
+
+    def test_on_trouble_retry_carries_on_and_stop_stops(self):
+        files = self.failing_files(12)
+        asked = []
+
+        def on_trouble(reason, last_error):
+            asked.append((reason, last_error))
+            return 'retry' if len(asked) == 1 else 'stop'
+        exporter = Exporter(self.root, self.adapter)
+        counts = exporter.run(fake.data(files), on_trouble=on_trouble)
+        self.assertEqual(len(asked), 2)
+        self.assertIn('Synthetic export failure', asked[0][1])
+        self.assertEqual(counts['failed'], 10)
+        self.assertEqual(files[10].calls, 0)
+        self.assertEqual(exporter.run_info['stopped_code'], 'failing')
+
+    def test_disk_full_stops_at_once(self):
+        a, b = fake.File(), fake.File(identity='file-2')
+
+        def full(manager, path):
+            raise OSError(errno.ENOSPC, 'No space left on device')
+        with patch.object(fake.Manager, 'execute', full):
+            exporter, counts = self.run_export(fake.data([a, b]))
+        self.assertEqual(exporter.run_info['stopped_code'], 'disk_full')
+        self.assertEqual(counts['failed'], 1)
+        self.assertEqual((a.calls, b.calls), (1, 0))  # no second attempt, no next design
+        self.assertEqual(self.manifest['entries'][0]['status'], 'failed')
+        self.assertTrue(all(d.closed for d in a.documents))
+
+    def test_fusion_error_with_little_free_space_counts_as_full(self):
+        file = fake.File()
+        file.failures = 2
+        with patch.object(core, 'free_bytes', return_value=10 << 20):
+            exporter, _ = self.run_export(fake.data([file, fake.File(identity='file-2')]))
+        self.assertEqual(exporter.run_info['stopped_code'], 'disk_full')
+        self.assertTrue(exporter.run_info['low_space'])
+        self.assertEqual(file.calls, 1)
+
+    def test_output_folder_gone_stops_at_once(self):
+        a, b = fake.File(), fake.File(identity='file-2')
+        root = self.root / 'out'
+
+        def vanish(manager, path):
+            import shutil
+            shutil.rmtree(root)
+            raise RuntimeError('Synthetic: could not write')
+        exporter = Exporter(root, self.adapter)
+        with patch.object(fake.Manager, 'execute', vanish):
+            counts = exporter.run(fake.data([a, b]))
+        self.assertEqual(exporter.run_info['stopped_code'], 'output_missing')
+        self.assertEqual((a.calls, b.calls), (1, 0))
+        self.assertEqual(counts['failed'], 1)
+
+    @unittest.skipIf(os.name != 'posix' or (hasattr(os, 'geteuid') and os.geteuid() == 0),
+                     'needs POSIX permissions as a normal user')
+    def test_unwritable_output_folder_stops_at_once(self):
+        a, b = fake.File(), fake.File(identity='file-2')
+        root = self.root / 'out'
+
+        def lock(manager, path):
+            os.chmod(root, 0o500)
+            raise RuntimeError('Synthetic: could not write')
+        exporter = Exporter(root, self.adapter)
+        self.addCleanup(os.chmod, root, 0o700)
+        with patch.object(fake.Manager, 'execute', lock):
+            exporter.run(fake.data([a, b]))
+        self.assertEqual(exporter.run_info['stopped_code'], 'output_unwritable')
+        self.assertEqual(b.calls, 0)
+
+    def test_low_space_flag_and_free_bytes(self):
+        self.assertGreater(free_bytes(self.root), 0)
+        self.assertGreater(free_bytes(self.root / 'not' / 'yet'), 0)
+        exporter, _ = self.run_export(fake.data([fake.File()]))
+        self.assertIn('low_space', exporter.run_info)
+        with patch.object(core, 'free_bytes', return_value=500 << 20):
+            exporter, counts = self.run_export(fake.data([fake.File(identity='other')]))
+        self.assertTrue(exporter.run_info['low_space'])
+        self.assertEqual(counts['done'], 1)  # a warning, not a stop
+
+    def test_keep_awake_is_a_no_op_under_the_test_api(self):
+        self.assertFalse(power.inside_fusion())
+        with patch.object(power.subprocess, 'Popen') as popen:
+            with power.keep_awake(platform='darwin'):
+                pass
+        popen.assert_not_called()
+
+    def test_keep_awake_on_macos_runs_caffeinate_and_ends_it(self):
+        with patch.object(power.subprocess, 'Popen') as popen:
+            with power.keep_awake(platform='darwin', active=True):
+                self.assertEqual(popen.call_args[0][0][:3], ['caffeinate', '-i', '-w'])
+        popen.return_value.terminate.assert_called_once_with()
+
+    def test_keep_awake_fails_silently(self):
+        with patch.object(power.subprocess, 'Popen', side_effect=OSError('no caffeinate')):
+            with power.keep_awake(platform='darwin', active=True):
+                pass
+        with power.keep_awake(platform='win32', active=True):  # no ctypes.windll here
+            pass
+        with power.keep_awake(platform='linux', active=True):
+            pass
 
     def test_data_discovery_error_persisted(self):
         exporter = Exporter(self.root, self.adapter)

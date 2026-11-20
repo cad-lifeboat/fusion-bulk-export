@@ -1,10 +1,18 @@
 """Portable traversal, naming and resumable export orchestration."""
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 from datetime import datetime, timezone
+
+from .power import keep_awake
+
+LOW_SPACE_BYTES = 1 << 30   # warn before a run below this much free space
+FULL_BYTES = 100 << 20      # after a failed write, below this the disk counts as full
+FAILURES_IN_A_ROW = 5       # this many designs failing one after another means something is wrong
 
 
 def now():
@@ -176,6 +184,35 @@ def file_info(path, root):
     return {'path': path.relative_to(root).as_posix(), 'sha256': sha.hexdigest(), 'bytes': path.stat().st_size}
 
 
+def free_bytes(path):
+    """Free space on the disk holding path (or its nearest existing parent), or None."""
+    path = Path(path)
+    for candidate in [path] + list(path.parents):
+        try:
+            return shutil.disk_usage(str(candidate)).free
+        except OSError:
+            continue
+    return None
+
+
+DISK_FULL_TEXT = re.compile(r'no space left|disk (is )?full|not enough (disk )?space|insufficient (disk )?space',
+                            re.IGNORECASE)
+
+
+def disk_full(error):
+    if isinstance(error, OSError) and (error.errno in (errno.ENOSPC, getattr(errno, 'EDQUOT', -1))
+                                       or getattr(error, 'winerror', None) in (39, 112)):
+        return True
+    return bool(DISK_FULL_TEXT.search(str(error)))
+
+
+class Trouble(Exception):
+    """A problem that stops the whole run (not just one design)."""
+    def __init__(self, code, reason, error=None):
+        super().__init__(reason)
+        self.code, self.reason, self.error = code, reason, error
+
+
 def atomic_write(path, value):
     temporary = path.with_suffix('.json.tmp')
     with temporary.open('w', encoding='utf-8') as stream:
@@ -194,6 +231,7 @@ class Exporter:
         self.root.mkdir(parents=True, exist_ok=True)
         self.adapter = adapter
         self.error_callback = error_callback
+        self.last_error = None
         self.manifest_path = self.root / 'manifest.json'
         self.manifest = {'schema': 1, 'runs': [], 'entries': []}
         if self.manifest_path.exists():
@@ -207,8 +245,32 @@ class Exporter:
         atomic_write(self.manifest_path, self.manifest)
 
     def log(self, message):
-        with (self.root / 'export.log').open('a', encoding='utf-8') as stream:
-            stream.write(now() + ' ' + message.replace('\n', ' ') + '\n')
+        try:
+            with (self.root / 'export.log').open('a', encoding='utf-8') as stream:
+                stream.write(now() + ' ' + message.replace('\n', ' ') + '\n')
+        except OSError:
+            pass  # the log is a convenience; a missing or full disk is caught where it matters
+
+    def trouble(self, error):
+        """A Trouble when error (or the state of the output folder) means no design can be
+        written now: disk full, output folder gone or read-only. None for a single bad design."""
+        if disk_full(error):
+            return Trouble('disk_full', 'The disk is full.', error)
+        if not self.root.is_dir():
+            return Trouble('output_missing', 'The output folder is gone (disconnected drive?): '
+                           + str(self.root), error)
+        probe = self.root / '.write-check'
+        try:
+            probe.write_bytes(b'x')
+            probe.unlink()
+        except OSError as problem:
+            if disk_full(problem):
+                return Trouble('disk_full', 'The disk is full.', error)
+            return Trouble('output_unwritable', 'The output folder cannot be written: ' + str(problem), error)
+        free = free_bytes(self.root)
+        if free is not None and free < FULL_BYTES:
+            return Trouble('disk_full', 'The disk is full (%d MB free).' % (free >> 20), error)
+        return None
 
     def valid(self, entry):
         if entry.get('status') != 'done' or len(entry.get('files', [])) != 2:
@@ -239,19 +301,29 @@ class Exporter:
         directory.mkdir(parents=True, exist_ok=True)
         return directory / stem
 
-    def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None):
+    def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
+            on_trouble=None):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         progress(state) is called while listing and before each design, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
         project_name, path (folder names), design (designs found so far) and name.
+
+        When the run cannot go on (disk full, output folder gone, or FAILURES_IN_A_ROW designs
+        failing in a row, as when offline or signed out), on_trouble(reason, last_error) is
+        asked: 'retry' carries on (designs failed so far are retried on the next run), anything
+        else stops. Without on_trouble it stops. run_info['stopped_reason'] then says why.
         """
         counts = dict(done=0, failed=0, skipped=0)
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
         if not selection.everything:
             data = select_projects(data, selection.keeps_project)
-        self.run_info['discovery_errors'] = []
+        self.run_info.update(discovery_errors=[], stopped_reason=None, stopped_code=None)
+        free = free_bytes(self.root)
+        self.run_info.update(free_bytes=free, low_space=free is not None and free < LOW_SPACE_BYTES)
+        if self.run_info['low_space']:
+            self.log('low disk space: %d MB free' % (free >> 20))
 
         def unreadable(where, error):
             self.run_info['discovery_errors'].append(dict(path=where, error=str(error)))
@@ -260,6 +332,8 @@ class Exporter:
                 self.error_callback('discovery ' + json.dumps(where, ensure_ascii=False), error)
         self.save()
         found = 0
+        failing = []  # errors of the designs that failed one after another
+        stopping = None
         try:
             self.log('run started')
             numbers = {}
@@ -282,40 +356,72 @@ class Exporter:
                 progress(dict(state))
 
             entries = {entry['key']: entry for entry in self.manifest['entries']}
-            for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
-                                                    visiting):
-                if cancelled():
-                    self.run_info['cancelled'] = True
-                    break
-                if not selection.keeps(hub, project, folders):
-                    continue
-                found += 1
-                place(hub, project, folders)
-                state.update(phase='design', design=found, name=file.name)
-                progress(dict(state))
-                if cancelled():
-                    self.run_info['cancelled'] = True
-                    break
-                self.export_one(hub, project, folders, file, entries, counts)
-                if limit is not None and found >= limit:
-                    break  # a small run on a large account need not list everything
+            with keep_awake():
+                for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
+                                                        visiting):
+                    if cancelled():
+                        self.run_info['cancelled'] = True
+                        break
+                    if not selection.keeps(hub, project, folders):
+                        continue
+                    found += 1
+                    place(hub, project, folders)
+                    state.update(phase='design', design=found, name=file.name)
+                    progress(dict(state))
+                    if cancelled():
+                        self.run_info['cancelled'] = True
+                        break
+                    try:
+                        status = self.export_one(hub, project, folders, file, entries, counts)
+                        problem = None
+                    except Trouble as error:
+                        status, problem = 'failed', error
+                    except OSError as error:  # writing the manifest or log
+                        problem = self.trouble(error)
+                        if problem is None:
+                            raise
+                        status = 'failed'
+                    if status == 'done':
+                        failing = []
+                    elif status == 'failed':
+                        failing.append(str(problem.error if problem else self.last_error))
+                        if problem is None and len(failing) >= FAILURES_IN_A_ROW:
+                            problem = Trouble('failing', '%d designs in a row failed (offline or signed out?).'
+                                              % len(failing), failing[-1])
+                    if problem is not None:
+                        last = str(problem.error) if problem.error is not None else ''
+                        self.log('trouble: ' + problem.reason + ' ' + last)
+                        answer = on_trouble(problem.reason, last) if on_trouble else 'stop'
+                        if answer != 'retry':
+                            stopping = problem
+                            self.run_info.update(stopped_reason=problem.reason, stopped_code=problem.code)
+                            break
+                        failing = []
+                    if limit is not None and found >= limit:
+                        break  # a small run on a large account need not list everything
         except Exception as error:
             self.run_info['error'] = str(error)
             raise
         finally:
             self.run_info.update(finished=now(), counts=counts, found=found)
-            self.save()
+            try:
+                self.save()
+            except OSError:
+                if stopping is None:
+                    raise  # with a stop reason, the folder is known to be unusable
             self.log('run finished ' + json.dumps(counts))
         return counts
 
     def export_one(self, hub, project, folders, file, entries, counts):
+        """Export one file; returns its status. Raises Trouble when the run must stop."""
+        self.last_error = None
         key = json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
         entry = entries.get(key)
         if entry and self.valid(entry):
             counts['skipped'] += 1
             self.log('verified ' + key)
             self.save()
-            return
+            return 'verified'
         entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': folders,
                  'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
                  'date': file.dateModified, 'files': [], 'status': 'skipped', 'error': None,
@@ -325,6 +431,7 @@ class Exporter:
             self.manifest['entries'].remove(entries[key])
         self.manifest['entries'].append(entry)
         entries[key] = entry
+        trouble = None
         if file.fileExtension.lower() != 'f3d':
             entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
@@ -348,11 +455,18 @@ class Exporter:
                     if self.error_callback:
                         self.error_callback(key, error)
                     entry.update(status='failed', error=str(error), files=[])
+                    self.last_error = str(error)
                     self.log('attempt failed ' + key + ': ' + str(error))
+                    trouble = self.trouble(error)
+                    if trouble is not None:
+                        break  # a second attempt cannot succeed either
                     self.save()
         counts[entry['status']] += 1
         self.log(entry['status'] + ' ' + key)
+        if trouble is not None:
+            raise trouble
         self.save()
+        return entry['status']
 
 
 class NonDesign(Exception):
