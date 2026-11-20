@@ -69,7 +69,7 @@ class ExportTests(unittest.TestCase):
         data, files = self.selection_data()
         exporter, _ = self.run_export(data, selection=Selection({'project-1': [['Top']]}))
         self.assertEqual(self.exported(), ['deep', 'top'])
-        self.assertEqual(exporter.run_info['selection'], '0 whole project(s), 1 folder(s)')
+        self.assertEqual(exporter.run_info['selection'], '0 whole projects, 1 folder')
         self.assertEqual(files['other'].calls + files['root'].calls + files['second'].calls, 0)
 
     def test_selection_nested_folder_and_unselected_folders_not_listed(self):
@@ -541,7 +541,8 @@ class ExportTests(unittest.TestCase):
             self.assertEqual(entries[mode]['status'], 'skipped')
             self.assertIn(reason, entries[mode]['error'])
             self.assertEqual(entries[mode]['files'], [])
-        self.assertEqual(entries['board']['error'], 'Fusion cannot export this file type through its API (.fbrd)')
+        self.assertEqual(entries['board']['error'],
+                         'Electronics file (.fbrd) not exported: Fusion offers no export for it to add-ins.')
         self.assertEqual([b.downloads for b in boards], [[], []])  # not even asked: no extra API calls
         self.assertEqual([p.name for p in (self.root / 'Hub' / 'Project').iterdir()], [])  # nothing left over
         for file in files:
@@ -559,8 +560,7 @@ class ExportTests(unittest.TestCase):
         _, counts = self.run_export(fake.data([drawing, design]))
         entry = next(e for e in self.manifest['entries'] if e['id'] == 'drawing')
         self.assertEqual((entry['kind'], entry['status'], entry['files']), ('file', 'unsupported', []))
-        self.assertEqual(entry['error'], 'Fusion cannot export drawings safely through its API '
-                                         '(use File > Export in Fusion)')
+        self.assertEqual(entry['error'], "Drawing not exported: Fusion's drawing export crashes when an add-in runs it.")
         self.assertEqual((counts['exported'], counts['unsupported'], counts['skipped'], counts['failed']),
                          (1, 1, 0, 0))
         self.assertEqual((drawing.calls, drawing.downloads), (0, []))  # neither opened nor downloaded
@@ -1254,7 +1254,7 @@ class ExportTests(unittest.TestCase):
         self.assertLess(page.index('Locked'), page.index('Stuck', page.index('<h2>Slow items</h2>')))
         self.assertIn('2 min 15 s', page)
         data = report.summary(counts, exporter.run_info, exporter.manifest, self.root)
-        self.assertIn('2 item(s) took Fusion over a minute each; the report lists them under "Slow items".',
+        self.assertIn('2 items took Fusion over a minute each; the report lists them under \u201cSlow items\u201d.',
                       data['notes'])
         rows = {r['design']: r for r in csv.DictReader(io.StringIO(report.render_csv(exporter.manifest,
                                                                                       exporter.run_info)))}

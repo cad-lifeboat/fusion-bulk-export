@@ -68,7 +68,7 @@ class PrivacyScanTests(unittest.TestCase):
         status, lines = self.run_scan()
         self.assertEqual(status, 1)
         self.assertEqual(lines[0], 'notes.md')
-        self.assertIn('1 file(s) listed above', lines[1])
+        self.assertIn('The file listed above contains a banned word', lines[1])
         self.assertNotIn(BANNED.lower(), '\n'.join(lines).lower())  # the word itself is never printed
 
     def test_a_commit_message_with_a_banned_word_is_listed_by_id(self):
@@ -76,7 +76,7 @@ class PrivacyScanTests(unittest.TestCase):
         self.commit('b.txt', 'b\n', 'Plain follow-up')
         status, lines = self.run_scan()
         self.assertEqual(status, 1)
-        self.assertEqual(lines, [first, '::error::The 1 commit(s) listed above have a banned word in their message.'])
+        self.assertEqual(lines, [first, '::error::The commit listed above has a banned word in its message.'])
 
     def test_a_banned_word_in_the_body_of_a_message_counts(self):
         bad = self.commit('a.txt', 'a\n', 'Subject\n\nBody naming %s.' % BANNED)

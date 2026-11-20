@@ -7,6 +7,7 @@ import adsk.core
 from . import errors, report
 from .core import Exporter
 from .fusion import FusionAdapter
+from .words import plural
 
 
 def open_exporter(output, adapter):
@@ -44,7 +45,7 @@ def describe(state):
     where = ' / '.join([state['project_name'] or ''] + list(state['path']))
     head = 'Project %d of %d' % (state['project'], state['projects'])
     if state['phase'] == 'listing':
-        text = '%s, listing: %s\n%d item(s) so far' % (head, where, state['design'])
+        text = '%s, listing: %s\n%s so far' % (head, where, plural(state['design'], 'item'))
     else:
         what = 'file' if state.get('kind') == 'file' else 'design'
         text = '%s, %s %d: %s\n%s' % (head, what, state['design'], state['name'], where)

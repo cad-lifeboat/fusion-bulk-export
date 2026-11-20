@@ -64,6 +64,23 @@ def _installer():
     return module
 
 
+def words():
+    """The add-in's words module (counts in words: "1 design", "8 designs"), from this checkout."""
+    package = REPO / 'FusionBulkExport'
+    if str(package) not in sys.path:
+        sys.path.insert(0, str(package))
+    from fusion_bulk_export import words as module
+    return module
+
+
+def plural(count, word, many=None):
+    return words().plural(count, word, many)
+
+
+def form(count, word, many=None):
+    return words().form(count, word, many)
+
+
 def runtime_files(directory, names):
     """copytree's ignore: the files the add-in creates at run time are never copied over an
     installation (install.is_runtime decides, by exact names, never a broad glob)."""
@@ -86,7 +103,7 @@ GONE_LINE = ('Fusion closed before the export finished (it may have crashed). Op
              'command again: it carries on where it stopped.')
 # Exit status when --restart-fusion opened Fusion again but the add-in did not start in it.
 EXIT_NO_ADDIN = 76
-SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
+SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files?|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
 MANUAL_STEPS = ('Fusion has not started the add-in. In Fusion press Shift+S and find FusionBulkExport in '
                 'the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on '
@@ -291,11 +308,11 @@ def count_line(counts):
     if 'exported' in counts:
         unchanged = counts.get('files_up_to_date', 0)
         unsupported = counts.get('unsupported', 0)
-        return ('Counts: %d exported now, %d already up to date, %d other files saved%s, %d skipped, %d failed%s'
-                % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
-                   ', %d other files already up to date' % unchanged if unchanged else '',
+        return ('Counts: %d exported now, %d already up to date, %s saved%s, %d skipped, %d failed%s'
+                % (counts.get('exported', 0), counts.get('up_to_date', 0), plural(counts.get('files', 0), 'other file'),
+                   ', %s already up to date' % plural(unchanged, 'other file') if unchanged else '',
                    counts.get('skipped', 0), counts.get('failed', 0),
-                   ("; %d not supported by Fusion's export (electronics, drawings)" % unsupported
+                   ("; %s can't be exported by an add-in (drawings, electronics)" % plural(unsupported, 'file')
                     if unsupported else '')))
     return 'Counts: ' + json.dumps(counts, sort_keys=True)
 
@@ -347,32 +364,35 @@ def summary(output):
             statuses = {}
             for entry in chosen:
                 statuses[entry.get('status')] = statuses.get(entry.get('status'), 0) + 1
-            lines.append('%s: %d entries %s%s' % (label, len(chosen), json.dumps(statuses, sort_keys=True),
+            lines.append('%s: %s %s%s' % (label, plural(len(chosen), 'entry'), json.dumps(statuses, sort_keys=True),
                                                   ', %d bytes' % size if kind is None else ''))
         unsupported = sum(1 for e in entries if e.get('status') == 'unsupported' or (
             e.get('status') == 'skipped' and e.get('kind') == 'file'
             and str(e.get('error') or '').startswith('Fusion cannot export this file type')))
         if unsupported:
-            lines.append("Not supported: %d not supported by Fusion's export (electronics, drawings); "
-                         'not failures' % unsupported)
+            lines.append("Not supported: %s can't be exported by an add-in (drawings, electronics); %s not %s"
+                         % (plural(unsupported, 'file'), form(unsupported, 'it is', 'they are'),
+                            form(unsupported, 'a failure', 'failures')))
         warned = sum(1 for e in entries if e.get('status') == 'done' and e.get('warnings'))
         if warned:
-            lines.append('Warnings: %d item(s) exported with a warning (see the report)' % warned)
+            lines.append('Warnings: %s exported with a warning (see the report)' % plural(warned, 'item'))
         designs = [e for e in entries if (e.get('kind') or 'design') == 'design']
         broken = sum(1 for e in designs if e.get('status') == 'failed' and e.get('fusion_error') is not None)
         if broken:
-            lines.append('Links: %d design(s) failed with a linked design missing or not opening (see the report)'
-                         % broken)
+            lines.append('Links: %s failed with a linked design missing or not opening (see the report)'
+                         % plural(broken, 'design'))
         unread = sum(1 for e in designs if e.get('status') == 'done' and e.get('references_unreadable'))
         if unread:
-            lines.append('Warning: %d design(s): links to other designs could not be read; the design itself '
-                         'was exported' % unread)
+            lines.append('Warning: %s whose links to other designs could not be read; %s exported all the same'
+                         % (plural(unread, 'design'), form(unread, 'it was', 'they were')))
         slow = sum(1 for e in entries if e.get('slow_seconds'))
         if slow:
-            lines.append('Slow: %d item(s) took Fusion over a minute each (the report lists them)' % slow)
+            lines.append('Slow: %s took Fusion over a minute%s (the report lists %s)'
+                         % (plural(slow, 'item'), '' if slow == 1 else ' each', form(slow, 'it', 'them')))
         stale = sum(1 for e in designs if e.get('references_out_of_date'))
         if stale:
-            lines.append('Note: %d design(s) with out-of-date links (exported as they are, not a failure)' % stale)
+            lines.append('Note: %s with out-of-date links (exported as %s, not a failure)'
+                         % (plural(stale, 'design'), form(stale, 'it is', 'they are')))
     log = output / 'autorun.log'
     if log.is_file():
         # Only known counter lines: error lines can carry project or design names.
@@ -559,20 +579,20 @@ def restart_decision(status, result, restarts, limit, exported):
     if status not in (EXIT_MEMORY, EXIT_FUSION_GONE):
         return False, None
     if restarts >= limit:
-        return False, 'Not restarting Fusion again: it was restarted %d times in this command already.' % restarts
+        return False, ('Not restarting Fusion again: it was restarted %s in this command already.'
+                       % plural(restarts, 'time'))
     if exported < DESIGNS_PER_RESTART:
-        return False, ('Not restarting Fusion: only %d designs were exported since it was started, so restarting '
-                       'would not help.' % exported)
+        return False, ('Not restarting Fusion: only %s %s exported since it was started, so restarting '
+                       'would not help.' % (plural(exported, 'design'), form(exported, 'was')))
     if status == EXIT_FUSION_GONE:
         return True, 'Fusion closed before the export finished; opening it again to carry on.'
     work = result.get('open_documents_with_work')
     if not isinstance(work, int):
         return False, 'Not restarting Fusion: the add-in did not say which documents are open in it.'
     if work:
-        return False, ('Not restarting Fusion: %d open document%s in it %s a saved design or unsaved changes. '
+        return False, ('Not restarting Fusion: %s in it %s a saved design or unsaved changes. '
                        'Close %s, then run the same command again.'
-                       % (work, '' if work == 1 else 's', 'holds' if work == 1 else 'hold',
-                          'it' if work == 1 else 'them'))
+                       % (plural(work, 'open document'), form(work, 'holds'), form(work, 'it')))
     return True, 'Restarting Fusion to give its memory back, then carrying on.'
 
 
@@ -694,10 +714,10 @@ def check(output, names=False):
         for note in notes:
             print('%s: NOTE %s' % (label, note))
     totals = checks.check_folder(output, show=show)
-    print('Checked %d finished item(s): %d with a problem, %d missing file(s), %d changed file(s), '
-          '%d STEP file(s) missing bodies, %d not exported yet (failed).'
-          % (totals['done'], totals['failed_checks'] - totals['failed'], totals['missing'], totals['changed'],
-             totals['solids_differ'], totals['failed']))
+    print('Checked %s: %d with a problem, %s, %s, %s missing bodies, %d not exported yet (failed).'
+          % (plural(totals['done'], 'finished item'), totals['failed_checks'] - totals['failed'],
+             plural(totals['missing'], 'missing file'), plural(totals['changed'], 'changed file'),
+             plural(totals['solids_differ'], 'STEP file'), totals['failed']))
     print(json.dumps(totals))
     return 0 if not totals['failed_checks'] else 1
 

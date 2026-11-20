@@ -2,6 +2,10 @@
 const assert = require('assert');
 const t = require('../FusionBulkExport/ui/tree.js');
 
+assert.strictEqual(t.plural(1, 'file'), '1 file');
+assert.strictEqual(t.plural(0, 'file'), '0 files');
+assert.strictEqual(t.plural(8, 'entry', 'entries'), '8 entries');
+
 const roots = t.build([{ id: 'h', name: 'Hub', projects: [{ id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' }] }]);
 const [p1, p2] = roots[0].children;
 assert.deepStrictEqual(t.selection(roots), {});

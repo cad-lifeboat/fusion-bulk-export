@@ -92,7 +92,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with(mode='inventory')
         log = (self.output / 'autorun.log').read_text(encoding='utf-8')
         self.assertIn('inventory hub 1/1 project 1/2: 3 files', log)
-        self.assertIn('inventory hub 1/1 project 2/2: 1 files', log)
+        self.assertIn('inventory hub 1/1 project 2/2: 1 file', log)
         self.assertFalse(result.get('stopped'))
         (self.output / 'STOP').write_text('')
         self.run_with(mode='inventory')
@@ -127,7 +127,7 @@ class AutorunTests(unittest.TestCase):
     def test_folder_selection(self):
         result = self.run_with(folders={'project-1': ['Sub']})
         self.assertEqual(result['errors'], [])
-        self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
+        self.assertEqual(result['selection'], '0 whole projects, 1 folder')
         self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, files=1, files_up_to_date=0, skipped=0, unsupported=0, failed=0))  # Sub holds only an uploaded PDF
         self.assertEqual(self.files[0].calls + self.files[1].calls + self.files[3].calls, 0)
 
@@ -137,7 +137,7 @@ class AutorunTests(unittest.TestCase):
         project.rootFolder.dataFolders.item(0).dataFolders = fake.Collection(odd)
         result = self.run_with(folders={'project-1': [{'id': 'folder-odd'}]})
         self.assertEqual(result['errors'], [])
-        self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
+        self.assertEqual(result['selection'], '0 whole projects, 1 folder')
         self.assertEqual(result['counts']['exported'], 1)
         self.assertEqual(sum(f.calls for f in self.files), 0)
         listing = self.run_with(mode='inventory', output=str(self.root / 'inv'))
@@ -188,7 +188,7 @@ class AutorunTests(unittest.TestCase):
         entry = next(e for e in manifest['entries'] if e['id'] == 'drawing')
         self.assertEqual(entry['status'], 'unsupported')
         page = (self.output / 'index.html').read_text(encoding='utf-8')
-        self.assertIn('use File &gt; Export in Fusion', page)
+        self.assertIn('open the drawing in Fusion and use File &gt; Export (PDF)', page)
         self.assertNotIn('Also export drawings', page)
 
     def test_designs_only(self):

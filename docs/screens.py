@@ -69,8 +69,8 @@ SUMMARY_COUNTS = dict(exported=17, up_to_date=9, files=3, skipped=1, failed=1)
 SUMMARY_MANIFEST = dict(entries=[
     dict(status='failed', name='Gearbox housing', hub='My Hub', project='Robot Arm', path=['Gripper'],
          error='This design is open in Fusion with unsaved changes; save or close it, then run again.'),
-    dict(status='skipped', kind='file', name='Motor board', hub='My Hub', project='Robot Arm', path=['Wiring'],
-         error='Fusion cannot export this file type through its API (.fbrd)'),
+    dict(status='unsupported', kind='file', name='Motor board', hub='My Hub', project='Robot Arm', path=['Wiring'],
+         error='Electronics file (.fbrd) not exported: Fusion offers no export for it to add-ins.'),
 ])
 RESULTS_TITLE = 'Fusion Bulk Export results'
 PAGE_BUTTONS = ('Open report', 'Open folder')
@@ -213,7 +213,10 @@ def dialog_svg():
     row += 36
     whole = sum(1 for value in CHOSEN.values() if value is None)
     folders = sum(len(value) for value in CHOSEN.values() if value is not None)
-    parts.append(text(x + 16, row + 12, '%d whole project(s) and %d folder(s) chosen.' % (whole, folders), 12, MUTED))
+    package()
+    from fusion_bulk_export.words import plural
+    chosen = '%s and %s chosen.' % (plural(whole, 'whole project'), plural(folders, 'folder'))
+    parts.append(text(x + 16, row + 12, chosen, 12, MUTED))
     row += 26
     # The tree page (an HTML input across the whole dialog), last.
     tx, tw = x + 12, w - 24

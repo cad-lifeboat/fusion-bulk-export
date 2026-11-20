@@ -130,10 +130,9 @@ class LauncherTests(unittest.TestCase):
             dict(name='Secret Fine', status='done', files=[], references_out_of_date=False),
             dict(name='Secret Odd', status='done', files=[], references_unreadable=True, references_error='Secret')])))
         text = '\n'.join(launcher.summary(out))
-        self.assertIn('Links: 1 design(s) failed with a linked design missing or not opening', text)
-        self.assertIn('Note: 1 design(s) with out-of-date links', text)
-        self.assertIn('Warning: 1 design(s): links to other designs could not be read; the design itself was exported',
-                      text)
+        self.assertIn('Links: 1 design failed with a linked design missing or not opening', text)
+        self.assertIn('Note: 1 design with out-of-date links (exported as it is, not a failure)', text)
+        self.assertIn('Warning: 1 design whose links to other designs could not be read; it was exported all the same', text)
         self.assertNotIn('Secret', text)
 
     def test_check_command_runs_without_fusion(self):
@@ -156,10 +155,10 @@ class LauncherTests(unittest.TestCase):
         with contextlib.redirect_stdout(stream):
             self.assertEqual(launcher.main(['check', str(out)]), 0)
         text = stream.getvalue()
-        self.assertIn('Checked 1 finished item(s): 0 with a problem', text)
+        self.assertIn('Checked 1 finished item: 0 with a problem, 0 missing files, 0 changed files, 1 STEP file missing bodies', text)
         self.assertIn('design 1: NOTE STEP has no bodies (Fusion showed 2)', text)
         self.assertNotIn('Secret', text)
-        self.assertIn('Warnings: 1 item(s) exported with a warning', '\n'.join(launcher.summary(out)))
+        self.assertIn('Warnings: 1 item exported with a warning', '\n'.join(launcher.summary(out)))
         step.write_bytes(b'ISO-10303-21;\n')  # damaged since
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(launcher.main(['check', str(out)]), 1)
@@ -421,7 +420,7 @@ class LauncherTests(unittest.TestCase):
             dict(name='Secret Locked', status='done', files=[], slow_seconds=135),
             dict(name='Secret Quick', status='done', files=[])])))
         text = '\n'.join(launcher.summary(out))
-        self.assertIn('Slow: 1 item(s) took Fusion over a minute each (the report lists them)', text)
+        self.assertIn('Slow: 1 item took Fusion over a minute (the report lists it)', text)
         self.assertNotIn('Secret', text)
 
     def test_status_counts_unsupported_files_apart_from_failures(self):
@@ -433,12 +432,12 @@ class LauncherTests(unittest.TestCase):
             dict(name='Secret Old', kind='file', status='skipped', files=[],
                  error='Fusion cannot export this file type through its API (.fsch)')])))
         text = '\n'.join(launcher.summary(out))
-        self.assertIn("Not supported: 2 not supported by Fusion's export (electronics, drawings); not failures", text)
+        self.assertIn("Not supported: 2 files can't be exported by an add-in (drawings, electronics); they are not failures", text)
         self.assertNotIn('Secret', text)
         self.assertEqual(launcher.count_line(dict(exported=1, up_to_date=0, files=0, skipped=0, unsupported=6,
                                                   failed=0)),
                          "Counts: 1 exported now, 0 already up to date, 0 other files saved, 0 skipped, 0 failed; "
-                         "6 not supported by Fusion's export (electronics, drawings)")
+                         "6 files can't be exported by an add-in (drawings, electronics)")
 
     def test_run_time_files_come_from_the_installer_list(self):
         source = Path(launcher.__file__).resolve().parents[1] / 'FusionBulkExport'

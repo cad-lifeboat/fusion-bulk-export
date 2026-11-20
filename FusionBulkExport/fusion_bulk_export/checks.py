@@ -20,6 +20,7 @@ import zipfile
 
 from .journal import Journal, replay
 from .names import long_path
+from .words import plural
 
 SOLID = re.compile(rb'=\s*(MANIFOLD_SOLID_BREP|BREP_WITH_VOIDS)\s*\(')
 CHUNK = 1 << 20
@@ -221,7 +222,7 @@ def check_folder(root, strict=False, show=None):
         line = ''
         if entry.get('kind') == 'file':
             totals['other_files'] += 1
-            line = 'other file, %d file(s)' % len(files)
+            line = 'other file, ' + plural(len(files), 'file')
         else:
             totals['designs'] += 1
             archive = next((root / f['path'] for f in files if is_archive(f.get('path', ''))), None)
@@ -258,8 +259,9 @@ def check_folder(root, strict=False, show=None):
                             # is the complete copy.
                             totals['solids_differ'] += 1
                             (problems if strict else notes).append(warning)
-                    line = '%s, %d member design(s), STEP %d bytes, %d solid(s)%s' % (
-                        archive.suffix, members, os.stat(long_path(step)).st_size, solids,
+                    line = '%s, %s, STEP %d bytes, %s%s' % (
+                        archive.suffix, plural(members, 'member design'), os.stat(long_path(step)).st_size,
+                        plural(solids, 'solid'),
                         '' if expected is None else ' (Fusion: %d)' % expected)
         if entry.get('warnings'):
             totals['warnings'] += 1

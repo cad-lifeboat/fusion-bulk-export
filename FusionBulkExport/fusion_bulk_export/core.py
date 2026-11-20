@@ -19,6 +19,7 @@ from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, absolu
                     long_path, output_root_problem, too_long, windows_length)
 from .power import inside_fusion, keep_awake
 from .staging import Staging
+from .words import plural
 
 SCHEMA = 2  # manifest schema; schema-1 folders are read and saved as 2
 
@@ -281,7 +282,7 @@ class Selection:
             return 'everything'
         folders = sum(len(paths) for paths in self.projects.values() if paths is not None)
         whole = sum(1 for paths in self.projects.values() if paths is None)
-        return '%d whole project(s), %d folder(s)' % (whole, folders)
+        return '%s, %s' % (plural(whole, 'whole project'), plural(folders, 'folder'))
 
     @classmethod
     def from_config(cls, projects=None, folders=None):
@@ -315,7 +316,7 @@ DRAWING = 'f2d'
 # Drawings are never opened or exported: on real Fusion, exporting a drawing's PDF through the API
 # crashed Fusion itself (inside its sheet export, after minutes of opening the drawing). They are
 # recorded as unsupported with this reason.
-DRAWING_REASON = 'Fusion cannot export drawings safely through its API (use File > Export in Fusion)'
+DRAWING_REASON = "Drawing not exported: Fusion's drawing export crashes when an add-in runs it."
 
 
 def is_drawing(file):
@@ -326,7 +327,20 @@ def is_drawing(file):
 # for download", seen on real Fusion for .f2d, .fsch, .fbrd and .flbr) and the API has no export
 # for them, so they are recorded as unsupported (status "unsupported") without asking Fusion.
 UNSUPPORTED = {'f2d', 'f2t', 'fsch', 'fbrd', 'flbr', 'fprj', 'cam360'}
-NATIVE_REASON = 'Fusion cannot export this file type through its API'
+# Fusion's electronics types; the other types in UNSUPPORTED get the general reason.
+ELECTRONICS = {'fsch', 'fbrd', 'flbr', 'fprj'}
+ELECTRONICS_REASON = 'Electronics file (.%s) not exported: Fusion offers no export for it to add-ins.'
+NATIVE_REASON = 'File (.%s) not exported: Fusion offers no export for this file type to add-ins.'
+# What versions up to 0.3.1 wrote for these (their manifests are still read).
+LEGACY_NATIVE_REASON = 'Fusion cannot export this file type through its API'
+
+
+def native_reason(extension):
+    """Why a file of one of Fusion's own types (UNSUPPORTED) is not exported, in plain words."""
+    extension = str(extension or '').lower().strip('.')
+    if extension in ('f2d', 'f2t'):
+        return DRAWING_REASON
+    return (ELECTRONICS_REASON if extension in ELECTRONICS else NATIVE_REASON) % extension
 
 
 def extension_of(file):
@@ -339,7 +353,7 @@ def unsupported_reason(file):
     if extension == DRAWING:
         return DRAWING_REASON
     if extension in UNSUPPORTED:
-        return '%s (.%s)' % (NATIVE_REASON, extension)
+        return native_reason(extension)
     return None
 
 

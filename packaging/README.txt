@@ -44,8 +44,8 @@ choose Everything or tick projects and folders, and click Export. "Also save oth
 files (PDFs, uploads)" is on by default. Fusion cannot be used while it exports:
 leave it open and signed in until the summary appears. It gives the counts and the
 paths of the output folder and of index.html, a report of everything saved and
-anything that failed. Drawings and electronics are counted as "not supported by
-Fusion's export": not failures.
+anything that failed. Drawings and electronics are counted as "can't be exported
+by an add-in": not failures.
 If the run gets into trouble (designs failing in a row, a full disk) it pauses and
 asks "Try again now?": OK carries on, Cancel stops. Run it again on the same folder to
 continue, retry failures or pick up new designs.

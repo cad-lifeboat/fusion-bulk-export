@@ -47,6 +47,7 @@ from .core import (Exporter, Listing, Selection, atomic_write, collection, now, 
                    walk)
 from .fusion import FusionAdapter
 from .report import memory_line, write as write_report
+from .words import plural
 
 
 class Log:
@@ -250,8 +251,8 @@ def inventory(data, log, stop=lambda: False, output=None):
                     if problems:
                         item.update(references_unreadable=True, references_error=problems[0])
                 p['files'].append(item)
-            log.write('inventory hub %d/%d project %d/%d: %d files'
-                      % (hub_number, len(hub_list), project_number, len(projects), len(p['files'])))
+            log.write('inventory hub %d/%d project %d/%d: %s'
+                      % (hub_number, len(hub_list), project_number, len(projects), plural(len(p['files']), 'file')))
             if output is not None:
                 atomic_write(output / 'inventory.json', summary())
         if stopped:
@@ -259,8 +260,9 @@ def inventory(data, log, stop=lambda: False, output=None):
             break
     listing = summary()
     counts = listing['counts']
-    log.write('inventory: %d hubs, %d projects, %d files, %d designs, %d unreadable'
-              % (counts['hubs'], counts['projects'], counts['files'], counts['designs'], counts['unreadable']))
+    log.write('inventory: %s, %s, %s, %s, %d unreadable'
+              % (plural(counts['hubs'], 'hub'), plural(counts['projects'], 'project'), plural(counts['files'], 'file'),
+                 plural(counts['designs'], 'design'), counts['unreadable']))
     return listing
 
 

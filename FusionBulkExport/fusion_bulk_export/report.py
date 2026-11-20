@@ -13,16 +13,29 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-from .core import LINKS_UNREADABLE, NATIVE_REASON
+from .core import DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE
 from .names import long_path
+from .words import form, plural
 
 ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'unsupported': 3, 'warning': 4, 'done': 5}
 LABEL = {'failed': 'Failed', 'unreadable': 'Not read', 'skipped': 'Skipped', 'unsupported': 'Not supported',
          'done': 'Exported'}
 # Files Fusion's API cannot export (electronics, drawings): neither failures nor left out by the
 # user, so they are counted and named apart from both.
-UNSUPPORTED_TEXT = "%d not supported by Fusion's export (electronics, drawings)"
-UNSUPPORTED_NEXT = 'Nothing to do here. If you need it, open it in Fusion and use File > Export.'
+UNSUPPORTED_NEXT = 'To keep a copy, open it in Fusion and use File > Export.'
+DRAWING_NEXT = 'To keep a copy, open the drawing in Fusion and use File > Export (PDF).'
+
+
+def unsupported_text(count):
+    """'7 files can't be exported by an add-in (drawings, electronics)'."""
+    return "%s can't be exported by an add-in (drawings, electronics)" % plural(count, 'file')
+
+
+def unsupported_note(count):
+    """The summary's line for them: not failures, and where they are listed."""
+    return '%s. %s not %s; the report lists %s.' % (
+        unsupported_text(count), 'It is' if count == 1 else 'They are', form(count, 'a failure', 'failures'),
+        form(count, 'it', 'them'))
 LINKS_OUT_OF_DATE = ('Some of its links are out of date: a linked design has a newer version than this design '
                      'uses. The export holds the versions it uses; open it in Fusion and update its links '
                      'if you want the newer ones.')
@@ -36,7 +49,7 @@ def next_step(status, error):
     if status == 'done':
         return ''
     if status == 'unsupported':
-        return UNSUPPORTED_NEXT
+        return DRAWING_NEXT if 'drawing' in text else UNSUPPORTED_NEXT
     if status == 'skipped':
         if 'not a fusion design' in text:
             return 'Not saved: only designs were exported. Tick "Also save other files" to save it.'
@@ -44,7 +57,7 @@ def next_step(status, error):
             return 'Nothing to do: not a 3D design.'
         if 'unsaved changes' in text or 'close it' in text:
             return 'Save or close it in Fusion, then export again.'
-        if 'cannot export this file type' in text:
+        if 'cannot export this file type' in text or 'offers no export' in text:
             return 'If you need it, open it in Fusion and export or download it by hand.'
         if 'download' in text or 'not saved' in text:
             return 'Export again to retry; if it is skipped again, download it from Fusion by hand.'
@@ -98,7 +111,7 @@ def shown_status(entry):
     version before "unsupported" existed, is reported as unsupported too."""
     status = entry.get('status')
     if status == 'skipped' and entry.get('kind') == 'file' and str(entry.get('error') or '').startswith(
-            NATIVE_REASON):
+            LEGACY_NATIVE_REASON):
         return 'unsupported'
     return status
 
@@ -135,7 +148,7 @@ table { border-collapse: collapse; width: 100%; } th, td { text-align: left; ver
 def counts_html(counts):
     return ('<div class="counts"><span>Exported now: <b>%d</b></span><span>Already up to date: <b>%d</b></span>'
             '<span>Other files saved: <b>%d</b></span><span>Other files up to date: <b>%d</b></span>'
-            '<span>Skipped: <b>%d</b></span><span>Not supported by Fusion\'s export: <b>%d</b></span>'
+            '<span>Skipped: <b>%d</b></span><span>Can\'t be exported by an add-in: <b>%d</b></span>'
             '<span>Failed: <b>%d</b></span></div>'
             % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
                counts.get('files_up_to_date', 0), counts.get('skipped', 0), counts.get('unsupported', 0),
@@ -205,15 +218,15 @@ def render_html(manifest, run_info, counts):
     totals = {}
     for row in designs:
         totals[row['status']] = totals.get(row['status'], 0) + 1
-    line = ('In this folder: %d designs exported, %d failed, %d skipped%s'
-            % (totals.get('done', 0), totals.get('failed', 0), totals.get('skipped', 0),
-               ', %d folders not read' % totals['unreadable'] if totals.get('unreadable') else ''))
+    line = ('In this folder: %s exported, %d failed, %d skipped%s'
+            % (plural(totals.get('done', 0), 'design'), totals.get('failed', 0), totals.get('skipped', 0),
+               ', %s not read' % plural(totals['unreadable'], 'folder') if totals.get('unreadable') else ''))
     if others:
         saved = sum(1 for row in others if row['status'] == 'done')
         unsupported = sum(1 for row in others if row['status'] == 'unsupported')
-        line += '; %d other files saved, %d not saved' % (saved, len(others) - saved - unsupported)
+        line += '; %s saved, %d not saved' % (plural(saved, 'other file'), len(others) - saved - unsupported)
         if unsupported:
-            line += '; ' + UNSUPPORTED_TEXT % unsupported
+            line += '; ' + unsupported_text(unsupported)
     stale = links_out_of_date(manifest)
     if stale:
         line += '; %d with out-of-date links (a note, not a failure)' % stale
@@ -226,7 +239,7 @@ def render_html(manifest, run_info, counts):
         out.append('<div class="muted">%s</div>' % esc(memory))
     long_paths = long_path_count(manifest)
     if long_paths:
-        out.append('<p class="stop">%s</p>' % esc(LONG_PATHS % long_paths))
+        out.append('<p class="stop">%s</p>' % esc(long_paths_text(long_paths)))
     if manifest.get('older_layout'):
         out.append('<p class="muted">Note: %s</p>' % esc(OLDER_LAYOUT))
     out += slow_html(rows)
@@ -327,8 +340,11 @@ OLDER_LAYOUT = ('Older exports keep their old folder names; new items go in read
                 'this folder and listed here.')
 
 
-LONG_PATHS = ('%d item(s) have a path over 260 characters: they are saved, but Explorer and some programs '
-              'cannot open them. A shorter output folder (such as C:\\FusionExport) avoids this.')
+def long_paths_text(count):
+    """How many items have a path over 260 characters, and what that means."""
+    return ('%s %s a path over 260 characters: %s saved, but Explorer and some programs cannot open %s. '
+            'A shorter output folder (such as C:\\FusionExport) avoids this.'
+            % (plural(count, 'item'), form(count, 'has'), 'it is' if count == 1 else 'they are', form(count, 'it')))
 
 
 def links_out_of_date(manifest):
@@ -402,21 +418,23 @@ def summary(counts, run_info, manifest, output, page=None):
         notes.append('Low disk space: %s free.' % ('%d MB' % (free >> 20) if free is not None else 'little'))
     long_paths = long_path_count(manifest)
     if long_paths:
-        notes.append(LONG_PATHS % long_paths)
+        notes.append(long_paths_text(long_paths))
     unsupported = unsupported_count(manifest)
     if unsupported:
-        notes.append((UNSUPPORTED_TEXT % unsupported) + '; not failures, the report lists them.')
+        notes.append(unsupported_note(unsupported))
     stale = links_out_of_date(manifest)
     if stale:
-        notes.append('%d design(s) use older versions of linked designs (a note, not a failure).' % stale)
+        notes.append('%s %s older versions of linked designs (a note, not a failure).'
+                     % (plural(stale, 'design'), form(stale, 'uses')))
     if run_info.get('upgraded_schema'):
         notes.append(OLDER_LAYOUT)
     slow = run_info.get('slow') or 0  # this run's; the report lists every one in the folder
     if slow:
-        notes.append('%d item(s) took Fusion over a minute each; the report lists them under "Slow items".' % slow)
+        notes.append('%s took Fusion over a minute%s; the report lists %s under \u201cSlow items\u201d.'
+                     % (plural(slow, 'item'), '' if slow == 1 else ' each', form(slow, 'it', 'them')))
     unreadable = len(run_info.get('discovery_errors') or [])
     if unreadable:
-        notes.append('%d folder(s) could not be read.' % unreadable)
+        notes.append('%s could not be read.' % plural(unreadable, 'folder'))
     return dict(headline=headline, rows=rows, failures=failed[:FAILURES_SHOWN],
                 more=max(len(failed) - FAILURES_SHOWN, 0),
                 retry=('Run again to retry the %d failed.' % counts['failed']) if counts.get('failed') else '',

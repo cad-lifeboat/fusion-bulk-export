@@ -368,7 +368,7 @@ class WindowsPathTests(Base):
         self.assertTrue(entries['deep']['long_path'])
         self.assertNotIn('long_path', entries['short'])
         text = report.summary_text(exporter.run_info['counts'], exporter.run_info, self.manifest, str(self.root))
-        self.assertIn('1 item(s) have a path over 260 characters', text)
+        self.assertIn('1 item has a path over 260 characters: it is saved', text)
         self.assertIn('path over 260 characters', report.render_html(self.manifest, exporter.run_info, None))
 
     def test_other_systems_keep_longer_names_and_no_flag(self):

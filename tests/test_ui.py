@@ -293,7 +293,7 @@ class UItests(UIBase):
         self.assertFalse(self.valid(command))
         self.assertEqual(inputs.find('fbx_summary').text, 'Nothing chosen yet.')
         self.page(command, 'selection', {'project-1': [['Top']]})
-        self.assertEqual(inputs.find('fbx_summary').text, '0 whole project(s) and 1 folder(s) chosen.')
+        self.assertEqual(inputs.find('fbx_summary').text, '0 whole projects and 1 folder chosen.')
         self.assertTrue(self.valid(command))
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.exported(), ['deep', 'top'])
@@ -763,7 +763,7 @@ class UItests(UIBase):
         command.execute.handlers[0].notify(None)
         self.assertEqual(drawing.calls, 0)  # never opened
         data = self.results()[1]
-        self.assertIn("1 not supported by Fusion's export (electronics, drawings); not failures, the report lists them.",
+        self.assertIn("1 file can't be exported by an add-in (drawings, electronics). It is not a failure; the report lists it.",
                       data['notes'])
         self.assertNotIn('Failed', [label for label, _ in data['rows']])
         self.assertNotIn('drawings', json.loads(self.settings.read_text(encoding='utf-8')))  # the old setting is dropped
@@ -978,7 +978,7 @@ class ProgressTextTests(unittest.TestCase):
     def test_listing_and_design_lines(self):
         from fusion_bulk_export.command import describe
         self.assertEqual(describe(self.state()),
-                         'Project 3 of 17, listing: P / A / B\n40 item(s) so far\n12 min · 2 failed')
+                         'Project 3 of 17, listing: P / A / B\n40 items so far\n12 min · 2 failed')
         state = self.state(phase='design', design=41, name='Gear 50%', seconds_per_design=3.42, elapsed=4000)
         self.assertEqual(describe(state),
                          'Project 3 of 17, design 41: Gear 50%%\nP / A / B\n1 h 06 min · 3.4 s/design · 2 failed')

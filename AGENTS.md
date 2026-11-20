@@ -124,20 +124,20 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 - **Folders that could not be read** (counted in `status` as `discovery_errors`): a
   project or folder the account cannot open (permissions, deleted, offline). They are
   skipped; report how many, not which.
-- **Not supported** ("N not supported by Fusion's export (electronics, drawings)"):
-  drawings, electronics and other Fusion-only types that Fusion's API cannot export (safely).
+- **Not supported** ("N files can't be exported by an add-in (drawings, electronics)"):
+  drawings, electronics and other Fusion-only types that an add-in cannot export (safely).
   They are neither failures nor skips; report the count, and tell the person they can export
   such files by hand in Fusion (File > Export) if they need them.
 - **Skipped items**: other files left out with `--designs-only`, or a file Fusion would not
   hand out, with a reason. Report the count.
-- **Slow items** (`status`: "Slow: N item(s)"): Fusion took over a minute on each (a design
+- **Slow items** (`status`: "Slow: N items took Fusion over a minute each"): Fusion took over a minute on each (a design
   locked in another team can block it for minutes). Not a failure; report the count.
 - **Fusion crashed or was closed mid-export**: restart Fusion and rerun the same command;
   the stale `export.lock` and `.staging` are cleared by themselves. Do not delete them by
   hand while an export may be running.
-- **"Links: N design(s) failed with a linked design missing"** in `status`: those designs
+- **"Links: N designs failed with a linked design missing"** in `status`: those designs
   link to a design that was deleted, moved or cannot be read. The person fixes the links in
-  Fusion, then reruns. **"N design(s) with out-of-date links"** is a note, not a failure.
+  Fusion, then reruns. **"N designs with out-of-date links"** is a note, not a failure.
   `inventory.json` has `has_references` and `references_out_of_date` per design.
   **"Links to other designs could not be read"** is a warning: Fusion raised on reading
   them, and the design was exported anyway; report the count.

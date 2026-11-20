@@ -49,6 +49,34 @@ class TextTests(unittest.TestCase):
         self.assertTrue(BUTTON_TALK.search('OK tries again and carries on. Cancel stops the export'))
         self.assertFalse(BUTTON_TALK.search('Everything exported so far is kept. Try again now?'))
 
+    def test_no_count_says_s_in_brackets(self):
+        # "1 design(s)" reads badly: every count is written with words.plural().
+        pattern = re.compile(r'\((e?s)\)')
+        found = []
+        scripts = sorted((ROOT.parent / 'scripts').glob('*.py'))
+        for path in list(sources()) + scripts + [ROOT.parent / 'docs' / 'screens.py']:
+            for line, text in literals(path):
+                if pattern.search(text):
+                    found.append('%s:%d %s' % (path.name, line, text))
+        for path in sorted((ROOT / 'ui').glob('*.*')):
+            for number, text in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                for quoted in re.findall(r"'([^']*)'|\"([^\"]*)\"|>([^<]+)<", text):
+                    if pattern.search(''.join(quoted)):
+                        found.append('%s:%d %s' % (path.name, number, ''.join(quoted)))
+        self.assertEqual(found, [])
+
+    def test_plural(self):
+        from fusion_bulk_export.words import form, plural
+        self.assertEqual(plural(1, 'design'), '1 design')
+        self.assertEqual(plural(8, 'design'), '8 designs')
+        self.assertEqual(plural(0, 'design'), '0 designs')
+        self.assertEqual(plural(2, 'entry'), '2 entries')
+        self.assertEqual(plural(3, 'whole project'), '3 whole projects')
+        self.assertEqual(plural(2, 'STEP file'), '2 STEP files')
+        self.assertEqual(form(2, 'uses'), 'use')
+        self.assertEqual(form(1, 'uses'), 'uses')
+        self.assertEqual(form(2, 'it', 'them'), 'them')
+
     def test_dialog_messages_are_at_most_two_sentences_each(self):
         from tests import fake_adsk as fake
         fake.install()

@@ -60,12 +60,14 @@ def main(argv=None):
     for name in files:
         print(name)
     if files:
-        print('::error::The %d file(s) listed above contain a banned word. Remove it before merging.'
-              % len(files))
+        print('::error::The %s listed above %s a banned word. Remove it before merging.'
+              % ('file' if len(files) == 1 else '%d files' % len(files), 'contains' if len(files) == 1 else 'contain'))
     for commit in commits:
         print(commit)
     if commits:
-        print('::error::The %d commit(s) listed above have a banned word in their message.' % len(commits))
+        print('::error::The %s listed above %s a banned word in %s message.'
+              % ('commit' if len(commits) == 1 else '%d commits' % len(commits),
+                 'has' if len(commits) == 1 else 'have', 'its' if len(commits) == 1 else 'their'))
     if not files and not commits:
         print('Privacy scan: no banned word in the tracked files or the commit messages.')
     return 1 if files or commits else 0

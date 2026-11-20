@@ -9,6 +9,7 @@ import adsk.core
 from . import settings
 from .core import Selection, collection
 from .names import output_root_problem
+from .words import plural
 
 EVERYTHING = 'Everything'
 CHOOSE = 'Choose projects or folders'
@@ -266,7 +267,7 @@ class Picker:
             self.chosen = {str(key): value for key, value in request.items()}
             whole = sum(1 for value in self.chosen.values() if value is None)
             folders = sum(len(value) for value in self.chosen.values() if value is not None)
-            self.summary.text = ('%d whole project(s) and %d folder(s) chosen.' % (whole, folders)
+            self.summary.text = ('%s and %s chosen.' % (plural(whole, 'whole project'), plural(folders, 'folder'))
                                  if self.chosen else 'Nothing chosen yet.')
             return json.dumps(dict(ok=True))
         return ''

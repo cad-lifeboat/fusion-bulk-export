@@ -6,6 +6,11 @@
 const OFF = 0, ON = 1, SOME = 2;
 const BRIDGE_TIMEOUT_MS = 5000;  // how long to wait for Fusion's page bridge before saying so
 
+// A count in words: "1 file", "8 files" (many: the plural when it is not word + "s").
+function plural(count, word, many) {
+  return count + ' ' + (count === 1 ? word : (many || word + 's'));
+}
+
 // own: whether the files directly inside this project or folder are included. A path ending
 // in '' in the selection means "only the files directly in this folder".
 function node(kind, name, extra) {
@@ -180,7 +185,7 @@ if (typeof module !== 'undefined') {
   module.exports = { OFF: OFF, ON: ON, SOME: SOME, BRIDGE_TIMEOUT_MS: BRIDGE_TIMEOUT_MS, build: build,
                      addFolders: addFolders, startLoading: startLoading, applyFolders: applyFolders,
                      toggle: toggle, selection: selection, address: address, matches: matches, visibleRows: visibleRows,
-                     keyAction: keyAction, markExported: markExported };
+                     keyAction: keyAction, markExported: markExported, plural: plural };
 }
 
 // ---- Page wiring (inside Fusion only) ----
@@ -257,7 +262,7 @@ if (typeof document !== 'undefined') {
     if (n.open && n.files !== null && n.kind !== 'hub') {
       const count = document.createElement('span');
       count.className = 'count';
-      count.textContent = n.files === 1 ? '1 file' : n.files + ' files';
+      count.textContent = plural(n.files, 'file');
       line.appendChild(count);
     }
     if (n.kind === 'project' && n.exported) {

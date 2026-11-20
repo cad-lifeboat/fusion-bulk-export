@@ -68,7 +68,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn('Exported now  1\nSkipped       1\nFailed        2\n', text)
         self.assertEqual(text.count('\n- '), 3)
         self.assertIn('Run again to retry the 2 failed.', text)
-        self.assertIn('1 folder(s) could not be read', text)
+        self.assertIn('1 folder could not be read', text)
         self.assertTrue(text.endswith('Folder: /out\nReport: /out/index.html'))
         info = dict(self.run_info, stopped_reason='The disk is full.', stopped_code='disk_full',
                     low_space=True, free_bytes=50 << 20, discovery_errors=[])
@@ -122,7 +122,7 @@ class ReportTests(unittest.TestCase):
         long['long_path'] = True
         data = report.summary(dict(exported=1), dict(low_space=True, free_bytes=300 << 20), dict(entries=[long]), '/o')
         self.assertIn('Low disk space: 300 MB free.', data['notes'])
-        self.assertIn(report.LONG_PATHS % 1, data['notes'])
+        self.assertIn(report.long_paths_text(1), data['notes'])
         plain = report.summary(dict(exported=1), {}, dict(entries=[entry('Short', 'done')]), '/o')
         self.assertEqual(plain['notes'], [])
 
@@ -167,8 +167,8 @@ class ReportTests(unittest.TestCase):
         # A file type Fusion cannot export, recorded as a skip by an older version, reads as not supported.
         self.assertIn('<td class="unsupported">Not supported</td>', text)
         self.assertIn('use File &gt; Export', text)
-        self.assertIn('1 other files saved, 0 not saved; 1 not supported by Fusion&#x27;s export '
-                      '(electronics, drawings)', text)
+        self.assertIn('1 other file saved, 0 not saved; 1 file can&#x27;t be exported by an add-in '
+                      '(drawings, electronics)', text)
         rows = list(csv.DictReader(io.StringIO(table.read_text(encoding='utf-8-sig'))))
         spec = next(r for r in rows if r['design'] == 'Spec')
         self.assertEqual((spec['kind'], spec['file'], spec['archive']), ('file', 'Hub/Proj/Spec.pdf', ''))
@@ -190,14 +190,15 @@ class ReportTests(unittest.TestCase):
         counts = dict(exported=1, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=6, failed=0)
         data = report.summary(counts, self.run_info, self.manifest, '/out')
         text = report.text_of(data)
-        self.assertIn("6 not supported by Fusion's export (electronics, drawings)", text)
+        self.assertIn("6 files can't be exported by an add-in (drawings, electronics). They are not failures; "
+                      "the report lists them.", text)
         self.assertNotIn('could not be saved', text)
         self.assertNotIn('Failed', text)
         self.assertNotIn('Skipped', text)
         page = report.render_html(self.manifest, self.run_info, counts)
-        self.assertIn('Not supported by Fusion\'s export: <b>6</b>', page)
+        self.assertIn('Can\'t be exported by an add-in: <b>6</b>', page)
         self.assertIn('Failed: <b>0</b>', page)
-        self.assertIn('0 other files saved, 0 not saved; 6 not supported', page)
+        self.assertIn('0 other files saved, 0 not saved; 6 files can&#x27;t be exported by an add-in', page)
         statuses = [r['status'] for r in csv.DictReader(io.StringIO(report.render_csv(self.manifest, self.run_info)))]
         self.assertEqual(statuses, ['unsupported'] * 6 + ['done'])
         self.assertEqual(report.next_step('unsupported', ''), report.UNSUPPORTED_NEXT)
@@ -244,7 +245,7 @@ class LinkReportTests(unittest.TestCase):
         text = report.summary_text(counts, self.run_info, self.manifest, '/out')
         self.assertIn('- Assembly: A linked design is missing or cannot be opened (2 links).', text)
         self.assertNotIn('not resolved', text)  # Fusion's own text is in the report, not the summary
-        self.assertIn('1 design(s) use older versions of linked designs (a note, not a failure).', text)
+        self.assertIn('1 design uses older versions of linked designs (a note, not a failure).', text)
         page = report.render_html(self.manifest, self.run_info, counts)
         self.assertIn('Fusion said: 5 : not resolved', page)
         self.assertIn('fix its links', page)

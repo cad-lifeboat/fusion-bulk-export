@@ -6,7 +6,7 @@ import time
 
 import adsk.core
 import adsk.fusion
-from .core import (DRAWING_REASON, NATIVE_REASON, UNSUPPORTED, NonDesign, NotSaved, OpenInFusion, collection,
+from .core import (DRAWING_REASON, UNSUPPORTED, native_reason, NonDesign, NotSaved, OpenInFusion, collection,
                    disk_full, is_drawing)
 from .names import fusion_path, long_path
 from .staging import Staging
@@ -159,7 +159,7 @@ class FusionAdapter:
         if is_drawing(data_file):
             raise NotSaved(DRAWING_REASON)
         if extension in FUSION_NATIVE:
-            raise NotSaved('%s (.%s)' % (NATIVE_REASON, extension))
+            raise NotSaved(native_reason(extension))
         staging = self.stage()
         # A short file path in a fresh folder: Fusion writes exactly that file (it would hang on
         # a long path, and the folder form writes the file under its cloud name, which can be long).
@@ -306,7 +306,7 @@ def read_products(document):
 def reason(extension, detail):
     """Why another file was not saved: for Fusion's own types, that the API cannot export them."""
     if extension in FUSION_NATIVE:
-        return '%s (.%s; %s)' % (NATIVE_REASON, extension, detail[0].lower() + detail[1:])
+        return '%s (%s)' % (native_reason(extension).rstrip('.'), detail[0].lower() + detail[1:])
     return detail
 
 
