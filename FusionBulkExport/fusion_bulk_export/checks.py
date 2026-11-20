@@ -5,8 +5,9 @@ adsk), so they also run outside Fusion.
 - archive_facts(): does an .f3d (or .f3z) open as a zip with Fusion's members; with full=True,
   every member is also read to the end, which checks its CRC.
 - inline(): the quick checks made right after each export. A STEP or archive that is broken
-  raises BadExport (the design is tried again); a STEP with no bodies, or a different number of
-  solids than Fusion showed, is only a warning stored on the manifest entry.
+  raises BadExport (the design is tried again); a STEP with no bodies, or fewer solids than the
+  distinct bodies Fusion showed, is only a warning stored on the manifest entry (see
+  solid_warning(); other differences are only recorded).
 - check_folder(): "Check this folder": every finished item of an export folder checked again,
   with full hashes. Used by `autorun.py check` and `verify-export.py`; it needs no Fusion.
 """
@@ -97,14 +98,24 @@ def archive_facts(path, full=True):
 
 
 def solid_warning(solids, expected, distinct=None):
-    """The warning for a STEP's solid count against Fusion's visible count, or None.
-    distinct: the count with each component once (a STEP may write a component used several
-    times only once); a match with either count is a match."""
+    """The warning for a STEP's solid count against Fusion's visible counts, or None.
+
+    expected counts each shown occurrence (two instances of a part are two solids); distinct
+    counts each shown component once. A STEP writer may write either, or something in between
+    (seen on real Fusion: about twice Fusion's count, and other in-between numbers), so a
+    difference alone says nothing: the numbers are only recorded (step_solids beside Fusion's
+    counts). A warning is given only when the STEP is empty (with the bodies Fusion showed, if
+    any) or holds fewer solids than the distinct count: bodies are then really missing."""
     if solids == 0:
         return 'STEP has no bodies' + (' (Fusion showed %d)' % expected if expected else '')
-    if expected is None or solids == expected or (distinct is not None and solids == distinct):
-        return None
-    return 'STEP has %d solids, Fusion showed %d' % (solids, expected)
+    if distinct is not None and solids < distinct:
+        return 'STEP has %d solids, fewer than the %d distinct ones Fusion showed' % (solids, distinct)
+    return None
+
+
+def solids_agree(solids, expected, distinct=None):
+    """Whether a STEP's solid count is one of Fusion's counts exactly."""
+    return solids == expected or (distinct is not None and solids == distinct)
 
 
 def is_step(path):
@@ -159,7 +170,7 @@ def read_manifest(root):
 
 
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
-              'step_ok', 'solids_match', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
+              'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
               'failed_checks', 'members_not_crc_checked')
 
 
@@ -236,9 +247,12 @@ def check_folder(root, strict=False, show=None):
                     if expected is None:
                         totals['solids_unknown'] += 1
                     else:
-                        warning = solid_warning(solids, expected, entry.get('visible_solid_bodies_distinct'))
+                        distinct = entry.get('visible_solid_bodies_distinct')
+                        warning = solid_warning(solids, expected, distinct)
                         if warning is None or (solids == 0 and expected == 0):
-                            totals['solids_match'] += 1
+                            # A count that differs without a warning is only noted in the totals.
+                            totals['solids_match' if solids_agree(solids, expected, distinct)
+                                   or solids == 0 else 'solids_noted'] += 1
                         else:
                             # Advisory: the STEP translator can drop bodies it cannot write. The .f3d
                             # is the complete copy.

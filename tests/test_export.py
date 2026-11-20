@@ -173,16 +173,28 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(all(doc.closed for file in [a, b] for doc in file.documents))
 
     def test_each_step_is_checked_inline_and_warnings_stored(self):
-        good, empty, fewer = fake.File('Good', 'good'), fake.File('Empty', 'empty'), fake.File('Fewer', 'fewer')
+        good, empty, more = fake.File('Good', 'good'), fake.File('Empty', 'empty'), fake.File('More', 'more')
         empty.step_solids = 0
-        fewer.step_solids = 3
-        _, counts = self.run_export(fake.data([good, empty, fewer]))
-        self.assertEqual(counts['exported'], 3)  # warnings are not failures
+        more.step_solids = 3
+        # Two different parts and two instances of one: Fusion shows 4 solids per occurrence, 3
+        # distinct ones. A STEP with fewer than 3 is missing bodies; 3 to 8 is only noted.
+        bolt, plate = fake.component('bolt', [fake.body()]), fake.component('plate', [fake.body()])
+        assembly = [fake.File('Short', 'short'), fake.File('Twice', 'twice'), fake.File('Distinct', 'distinct')]
+        for file, solids in zip(assembly, (2, 8, 3)):
+            file.root = fake.component('root', [fake.body()], [fake.occurrence(bolt), fake.occurrence(bolt),
+                                                                fake.occurrence(plate)])
+            file.step_solids = solids
+        _, counts = self.run_export(fake.data([good, empty, more] + assembly))
+        self.assertEqual(counts['exported'], 6)  # warnings are not failures
         entries = {e['id']: e for e in self.manifest['entries']}
         self.assertEqual((entries['good']['step_solids'], entries['good']['warnings']), (1, []))
         self.assertEqual(entries['empty']['warnings'], ['STEP has no bodies (Fusion showed 1)'])
-        self.assertEqual(entries['fewer']['warnings'], ['STEP has 3 solids, Fusion showed 1'])
-        self.assertEqual(entries['fewer']['step_solids'], 3)
+        # More solids than Fusion showed (seen on real Fusion: about twice): recorded, no warning.
+        self.assertEqual((entries['more']['step_solids'], entries['more']['warnings']), (3, []))
+        self.assertEqual((entries['twice']['visible_solid_bodies'], entries['twice']['visible_solid_bodies_distinct'],
+                          entries['twice']['step_solids'], entries['twice']['warnings']), (4, 3, 8, []))
+        self.assertEqual(entries['distinct']['warnings'], [])
+        self.assertEqual(entries['short']['warnings'], ['STEP has 2 solids, fewer than the 3 distinct ones Fusion showed'])
 
     def test_truncated_step_or_broken_archive_fails_and_is_retried(self):
         for broken in ('step', 'archive'):

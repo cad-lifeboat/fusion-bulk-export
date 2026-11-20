@@ -477,7 +477,7 @@ def check(output, names=False):
             print('%s: NOTE %s' % (label, note))
     totals = checks.check_folder(output, show=show)
     print('Checked %d finished item(s): %d with a problem, %d missing file(s), %d changed file(s), '
-          '%d STEP solid count(s) different, %d not exported yet (failed).'
+          '%d STEP file(s) missing bodies, %d not exported yet (failed).'
           % (totals['done'], totals['failed_checks'] - totals['failed'], totals['missing'], totals['changed'],
              totals['solids_differ'], totals['failed']))
     print(json.dumps(totals))

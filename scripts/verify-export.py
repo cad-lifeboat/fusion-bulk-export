@@ -4,8 +4,9 @@ archive opens with every member readable, every STEP is complete.
 
 Usage: verify-export.py OUTPUT_FOLDER [--names] [--strict]
 
-A STEP whose solid count differs from Fusion's visible solid count is a NOTE
-(--strict makes it a problem). Prints counts only, unless --names is given (manifests hold
+A STEP with no bodies, or with fewer solids than the distinct bodies Fusion showed,
+is a NOTE (--strict makes it a problem); other differences in the count are only
+counted (solids_noted), since a STEP writer may write a part used twice once or twice. Prints counts only, unless --names is given (manifests hold
 private design names). Exit status 0 means every check passed.
 
 The checks live in the add-in package (fusion_bulk_export/checks.py) and need no Fusion; this

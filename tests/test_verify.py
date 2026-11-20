@@ -25,7 +25,7 @@ class VerifyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def build(self, step=STEP, solids=2, archive='.f3z'):
+    def build(self, step=STEP, solids=2, archive='.f3z', distinct=None):
         with zipfile.ZipFile(self.root / ('a' + archive), 'w') as out:
             out.writestr('Manifest.json', '{}')
             out.writestr('part.f3d', 'x')
@@ -34,6 +34,8 @@ class VerifyTests(unittest.TestCase):
         (self.root / 'a.step').write_text(step)
         entry = dict(id='f1', name='Secret Name', status='done', visible_solid_bodies=solids,
                      files=[dict(path='a' + archive), dict(path='a.step')])
+        if distinct is not None:
+            entry['visible_solid_bodies_distinct'] = distinct
         (self.root / 'manifest.json').write_text(json.dumps(dict(entries=[entry])))
 
     def run_check(self, *flags):
@@ -98,20 +100,30 @@ class VerifyTests(unittest.TestCase):
         self.assertIn('"members_not_crc_checked": 1', text)
 
     def test_truncated_step_and_solid_mismatch_fail(self):
-        self.build(step=STEP.replace('END-ISO-10303-21;', ''), solids=3)
+        self.build(step=STEP.replace('END-ISO-10303-21;', ''), solids=4, distinct=3)
         status, text = self.run_check()
         self.assertEqual(status, 1)
         self.assertIn('truncated', text)
-        self.assertIn('NOTE STEP has 2 solids, Fusion showed 3', text)
+        self.assertIn('NOTE STEP has 2 solids, fewer than the 3 distinct ones Fusion showed', text)
 
     def test_solid_mismatch_is_a_note_unless_strict(self):
-        self.build(solids=3)
+        self.build(solids=3, distinct=3)
         status, text = self.run_check()
         self.assertEqual(status, 0, text)
         self.assertIn('"solids_differ": 1', text)
         status, text = self.run_check('--strict')
         self.assertEqual(status, 1)
         self.assertIn('PROBLEM STEP has 2 solids', text)
+
+    def test_a_count_between_fusions_counts_is_only_noted(self):
+        # Seen on real Fusion: STEP files with about twice Fusion's count, or between its counts.
+        for solids, distinct in ((1, None), (1, 1), (4, 1)):  # the STEP holds 2
+            self.build(solids=solids, distinct=distinct)
+            status, text = self.run_check('--strict')
+            self.assertEqual(status, 0, text)
+            self.assertIn('"solids_differ": 0', text)
+            self.assertIn('"solids_noted": 1', text)
+            self.assertNotIn('NOTE', text)
 
 
 class CheckFolderTests(unittest.TestCase):
