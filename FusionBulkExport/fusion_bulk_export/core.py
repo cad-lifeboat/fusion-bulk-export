@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from . import checks
 from .journal import Journal, replay
-from .names import NAME_LIMIT, Names, clean, file_kind, long_path, tag, too_long
+from .names import NAME_LIMIT, Names, clean, design_suffixes, long_path, too_long
 from .power import keep_awake
 from .staging import Staging
 
@@ -255,11 +255,6 @@ def file_name_parts(file):
     return name, (clean(declared, 16) if declared else '')
 
 
-def shorten_for(base, suffix):
-    """base cut so that base + "~1a2b" + suffix stays within one name's limit."""
-    return base[:max(NAME_LIMIT - len(suffix) - 9, 1)].rstrip(' .') or '_'
-
-
 def digest(value):
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
@@ -382,8 +377,13 @@ class Exporter:
         self.replayed = replay(self.manifest, self.journal.read())
         drop_older_files(self.manifest)
         self.names = Names()
+        # Who may write where: relative path -> ids of the cloud files that hold it (recorded in
+        # the manifest, or claimed by an item in this run). A file on disk that no item holds
+        # (the user's own, or left by a run that stopped before recording it) is never written over.
+        self.holders = {}
         for entry in self.manifest['entries']:
             self.names.remember(entry)
+            self.hold(entry)
         self.saves = 0          # full manifest.json writes, for checking the cost
         self.unsaved = 0        # finished items only in the journal so far
         self.saved_at = time.monotonic()
@@ -509,7 +509,36 @@ class Exporter:
             self.log('cannot create a folder, using the shortened layout: ' + str(error))
             return False
 
-    def destination(self, hub, project, folders, file, short=False):
+    def hold(self, entry, paths=None):
+        """Record that entry's cloud file holds these relative paths (default: its recorded files
+        and thumbnail)."""
+        if paths is None:
+            paths = [info.get('path') for info in list(entry.get('files') or []) + [entry.get('thumbnail') or {}]]
+        for path in paths:
+            if path:
+                self.holders.setdefault(path, set()).add(str(entry.get('id')))
+
+    def free(self, location, name, file_id, owned=()):
+        """Whether the item with this cloud id may write location/name: nothing is there, or what
+        is there is its own (an earlier version, an earlier attempt, its record before this run)."""
+        relative = location + '/' + name if location else name
+        if relative in owned or str(file_id) in self.holders.get(relative, ()):
+            return True
+        return not os.path.lexists(long_path(self.root / relative))
+
+    def claim_names(self, segments, base, suffixes, file, owned):
+        """(relative directory parts, base) for an item: its folder, and a base name whose
+        files (base + each suffix) are free for it in the folder's single namespace of full
+        names, wherever they come from (designs, thumbnails, other files). The paths are then
+        held for this item, so a second attempt writes them again."""
+        parts = self.names.directory(segments)
+        location = '/'.join(parts)
+        base = self.names.claim_group(location, base, suffixes, 'file:' + str(file.id),
+                                      free=lambda name: self.free(location, name, file.id, owned))
+        self.hold(dict(id=str(file.id)), [location + '/' + base + suffix for suffix in suffixes])
+        return parts, base
+
+    def destination(self, hub, project, folders, file, short=False, owned=()):
         """Where a design goes: (stem path without extension, facts for its manifest entry).
 
         Real names: <hub>/<project>/<folders...>/<design> v<version>, made portable by
@@ -519,7 +548,8 @@ class Exporter:
         version = ' v' + str(int(file.versionNumber))
         if not short:
             segments = self.segments(hub, project, folders)
-            parts, base = self.names.place(segments, clean(file.name), 'file:' + str(file.id))
+            parts, base = self.claim_names(segments, clean(file.name), design_suffixes(file.versionNumber),
+                                           file, owned)
             directory = self.root.joinpath(*parts)
             stem = directory / (base + version)
             facts = dict(location='/'.join(parts), identities=[identity for _, identity in segments],
@@ -542,13 +572,8 @@ class Exporter:
         suffix = '.' + extension if extension else ''
         identity = 'file:' + str(file.id)
         segments = self.segments(hub, project, folders)
-        kind = file_kind(extension)
-        parts, base = self.names.place(segments, clean(name, NAME_LIMIT - len(suffix)), identity, kind)
+        parts, base = self.claim_names(segments, clean(name, NAME_LIMIT - len(suffix)), [suffix], file, owned)
         location = '/'.join(parts)
-        if os.path.lexists(long_path(self.root.joinpath(*parts) / (base + suffix))) and \
-                (location + '/' + base + suffix) not in (self.paths_of(file.id) | set(owned)):
-            # Something else is there already (a design's export of that name, say): keep both.
-            base = self.names.claim(location, kind, shorten_for(base, suffix) + '~' + tag(identity), identity)
         directory = self.root.joinpath(*parts)
         target = directory / (base + suffix)
         facts = dict(location=location, identities=[identity for _, identity in segments], base=base,
@@ -561,11 +586,6 @@ class Exporter:
             raise ValueError('The export path is too long even when shortened; choose a shorter output folder.')
         os.makedirs(long_path(directory), exist_ok=True)
         return target, dict(location=None, identities=None, base=None, extension=extension, shortened=True)
-
-    def paths_of(self, file_id):
-        """Relative paths recorded for any version of this cloud file."""
-        return {info.get('path') for entry in self.manifest['entries'] if entry.get('id') == str(file_id)
-                for info in entry.get('files') or []}
 
     def drop_replaced(self, entry, entries):
         """After a newer version of another file was saved over the same path: the older
@@ -736,7 +756,8 @@ class Exporter:
         # Fusion dateModified is a Unix timestamp, retained without conversion.
         owned = set()  # paths this item's earlier record held: it may write over them
         if key in entries:
-            owned = {info.get('path') for info in entries[key].get('files') or []}
+            owned = {info.get('path') for info in list(entries[key].get('files') or [])
+                     + [entries[key].get('thumbnail') or {}] if info.get('path')}
             self.manifest['entries'].remove(entries[key])
         self.manifest['entries'].append(entry)
         entries[key] = entry
@@ -747,7 +768,7 @@ class Exporter:
             else:
                 entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
-            trouble = self.export_design(hub, project, folders, file, entry, key)
+            trouble = self.export_design(hub, project, folders, file, entry, key, owned)
         counts[count_key(entry, entry['status'])] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
@@ -755,14 +776,14 @@ class Exporter:
         self.record(entry)
         return entry['status']
 
-    def export_design(self, hub, project, folders, file, entry, key):
+    def export_design(self, hub, project, folders, file, entry, key, owned=()):
         """Write a design's .f3d and STEP (two attempts); the Trouble that stops the run, or None."""
         for attempt in range(2):
             entry['attempts'] = attempt + 1
             try:
                 if hasattr(self.adapter, 'references'):
                     entry['references'] = self.adapter.references(file)
-                stem, facts = self.destination(hub, project, folders, file)
+                stem, facts = self.destination(hub, project, folders, file, owned=owned)
                 entry.update(facts)
                 written = self.adapter.export(file, stem)
                 paths = [path for path in written if not str(path).lower().endswith('.png')]

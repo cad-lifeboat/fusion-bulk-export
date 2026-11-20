@@ -341,6 +341,7 @@ def thumbnail_future(data_file):
 def save_thumbnail(future, path, staging):
     """Write the thumbnail to path if it has arrived; the path, or None. Never waits and never
     raises: a thumbnail is a convenience, so anything unexpected means no thumbnail."""
+    staged = None
     try:
         if future is None:
             return None
@@ -363,9 +364,11 @@ def save_thumbnail(future, path, staging):
             return staging.place(staged, path)
     except Exception:
         pass
+    # Only the staged file can be half-written; whatever is at path (an earlier thumbnail, or a
+    # file the user put there) is never removed.
     try:
-        if os.path.isfile(long_path(path)):
-            os.unlink(long_path(path))  # nothing half-written is left behind
+        if staged is not None and os.path.isfile(long_path(staged)):
+            os.unlink(long_path(staged))
     except OSError:
         pass
     return None
