@@ -1,11 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- README: a shorter command-line section aimed at AI agents and scripts.
+- `scripts/autorun.py reset` leaves unattended mode so the button comes back.
+
 ## 0.2.3
 
 - Exports stream: each folder is listed and its designs exported before moving on, so the first files appear within seconds, even on large accounts (no long "Discovering designs…" wait).
 - The progress dialog shows the project number, folder and design it is on, including while it is listing.
-- README: a copy-paste prompt for AI agents, a note that timing varies with design complexity, and a shorter command-line section aimed at agents and scripts.
-- `scripts/autorun.py reset` leaves unattended mode so the button comes back.
+- README: a copy-paste prompt for AI agents, a note that timing varies with design complexity.
 
 ## 0.2.2
 
