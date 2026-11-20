@@ -17,7 +17,9 @@ from .staging import Staging
 FUSION_NATIVE = {'f2d', 'f2t', 'fsch', 'fbrd', 'flbr', 'fprj', 'cam360'}
 NATIVE_REASON = 'Fusion cannot export this file type through its API'
 PDF_WAIT_SECONDS = 20     # how long a drawing's PDF is waited for after Fusion's export returns
-PRODUCT_TRIES = 5         # a just-opened drawing's products can fail to read the first time
+PRODUCT_TRIES = 5         # a just-opened document's products can fail to read the first time
+POLL_SECONDS = 0.25       # how often a file Fusion writes later is looked at
+STABLE_POLLS = 4          # a drawing's PDF is taken once its size held this many looks (1 s)
 
 
 # Cloud ids of documents this add-in opened (hidden) and Fusion did not close yet. Kept for the
@@ -208,9 +210,12 @@ class FusionAdapter:
                 raise NotSaved('%s (.f2d; PDF export failed: %s)' % (NATIVE_REASON, error or type(error).__name__))
             if result is False:
                 raise NotSaved('%s (.f2d; PDF export returned false)' % NATIVE_REASON)
-            if not wait_for_file(staged, PDF_WAIT_SECONDS):
+            state = wait_for_pdf(staged, PDF_WAIT_SECONDS)
+            if state == 'missing':
                 self.pdf_broken = 'Fusion did not write the drawing PDF'
                 raise NotSaved(self.pdf_broken)
+            if state != 'ok':
+                raise NotSaved('Fusion wrote an incomplete drawing PDF; not saved')
             return staging.place(staged, target)
         finally:
             if document is not None and opened:
@@ -248,7 +253,7 @@ class FusionAdapter:
             self.close_opened(before)
 
     def write(self, document, data_file, stem):
-        design = adsk.fusion.Design.cast(document.products.itemByProductType('DesignProductType'))
+        design = adsk.fusion.Design.cast(read_products(document).itemByProductType('DesignProductType'))
         if not design:
             raise NonDesign('No Fusion Design product (drawing or CAM-only file)')
         fusion_document = adsk.fusion.FusionDocument.cast(document)
@@ -313,18 +318,25 @@ def visible_counts(root):
                 visible_solid_bodies_distinct=shown_solids(root) + sum(components.values()))
 
 
+def read_products(document):
+    """document.products. Reading it right after opening can fail ("InternalValidationError",
+    seen on a drawing) while the document loads: tried PRODUCT_TRIES times, then the error."""
+    for attempt in range(PRODUCT_TRIES):
+        try:
+            return document.products
+        except Exception:
+            if attempt == PRODUCT_TRIES - 1:
+                raise
+            adsk.doEvents()
+            time.sleep(0.5)
+
+
 def drawing_product(document):
     """The Drawing product of an opened drawing document, or None. Reading products right after
     opening can fail once ("InternalValidationError") while the drawing loads: tried again."""
-    products = None
-    for attempt in range(PRODUCT_TRIES):
-        try:
-            products = list(collection(document.products))
-            break
-        except Exception:
-            adsk.doEvents()
-            time.sleep(0.5)
-    if products is None:
+    try:
+        products = list(collection(read_products(document)))
+    except Exception:
         return None
     try:
         cast = importlib.import_module('adsk.drawing').Drawing.cast
@@ -343,22 +355,39 @@ def drawing_product(document):
     return None
 
 
-def wait_for_file(path, seconds):
-    """Wait (letting Fusion work) until path exists with a size that stopped changing."""
-    deadline = time.monotonic() + seconds
-    size = -1
-    while True:
+def pdf_complete(path):
+    """Whether a file looks like a whole PDF: "%PDF-" at the start and "%%EOF" near the end."""
+    try:
+        with open(long_path(path), 'rb') as stream:
+            head = stream.read(5)
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(stream.tell() - 1024, 0))
+            tail = stream.read()
+    except OSError:
+        return False
+    return head == b'%PDF-' and b'%%EOF' in tail
+
+
+def wait_for_pdf(path, seconds):
+    """Wait (letting Fusion work) for a PDF Fusion writes after its export returned: 'ok' once
+    the file is a whole PDF whose size held for STABLE_POLLS looks; at the deadline, 'missing'
+    (no file) or 'incomplete'. Counted in looks, not clock time."""
+    looks = max(int(seconds / POLL_SECONDS), 1)
+    size, steady = -1, 0
+    for _ in range(looks):
         try:
             now_size = os.path.getsize(long_path(path))
         except OSError:
             now_size = -1
-        if now_size > 0 and now_size == size:
-            return True
+        steady = steady + 1 if now_size == size and now_size > 0 else 0
         size = now_size
-        if time.monotonic() >= deadline:
-            return now_size > 0
+        if steady >= STABLE_POLLS - 1 and pdf_complete(path):
+            return 'ok'
         adsk.doEvents()
-        time.sleep(0.25)
+        time.sleep(POLL_SECONDS)
+    if size <= 0:
+        return 'missing'
+    return 'ok' if pdf_complete(path) else 'incomplete'
 
 
 def reason(extension, detail):

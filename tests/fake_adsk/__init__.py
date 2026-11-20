@@ -38,7 +38,8 @@ class File:
         # 'raise', 'nothing', 'two' files, or 'pdf': the file comes down as a PDF), and what.
         self.download_mode = 'ok'
         # A drawing (.f2d): how its PDF export behaves: 'now', 'later' (written a few doEvents
-        # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false'.
+        # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false',
+        # 'partial' (a PDF that stops before its end).
         self.pdf_mode = 'now'
         self.products_flaky = 0
         # Seen with old or linked designs: Fusion marks a document modified as it opens it
@@ -148,12 +149,15 @@ class DrawingManager:
             return False
 
         def write():
-            Path(path).write_bytes(b'%PDF-1.4 synthetic drawing')
-        if mode == 'now':
+            Path(path).write_bytes(PDF if mode != 'partial' else PDF[:20])
+        if mode in ('now', 'partial'):
             write()
         elif mode == 'later':
             PENDING.extend([lambda: None, lambda: None, write])
         return True
+
+
+PDF = b'%PDF-1.4\n% synthetic drawing, no real content\ntrailer\n<<>>\n%%EOF\n'
 
 
 def write_archive(path):

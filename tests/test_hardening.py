@@ -253,5 +253,28 @@ class CountTests(Base):
                       report.count_sentence(counts))
 
 
+class FusionTimingTests(Base):
+    def test_a_partial_drawing_pdf_is_not_saved(self):
+        from unittest.mock import patch
+        partial, whole = fake.File('Half', 'half', extension='f2d'), fake.File('Whole', 'whole', extension='f2d')
+        partial.pdf_mode = 'partial'
+        with patch.object(fusion, 'PDF_WAIT_SECONDS', 2), patch('fusion_bulk_export.fusion.time.sleep'):
+            _, counts = self.run_export(fake.data([partial, whole]))
+        entries = {e['id']: e for e in self.manifest['entries']}
+        self.assertEqual(entries['half']['status'], 'skipped')
+        self.assertIn('incomplete drawing PDF', entries['half']['error'])
+        self.assertEqual(entries['whole']['status'], 'done')  # the next drawing is still tried
+        self.assertEqual(list((self.root / 'Hub' / 'Project').glob('Half*')), [])
+
+    def test_a_design_whose_products_are_not_ready_at_once_exports_first_time(self):
+        from unittest.mock import patch
+        part = fake.File('Part', 'part')
+        part.products_flaky = 2
+        with patch('fusion_bulk_export.fusion.time.sleep'):
+            self.run_export(fake.data([part]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual((entry['status'], entry['attempts'], part.calls), ('done', 1, 1))
+
+
 if __name__ == '__main__':
     unittest.main()
