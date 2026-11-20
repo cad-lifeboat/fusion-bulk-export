@@ -324,5 +324,38 @@ class FolderLockTests(Base):
         self.assertFalse((self.root / 'export.lock').exists())
 
 
+class WindowsPathTests(Base):
+    def export_on(self, platform, data):
+        exporter = Exporter(self.root, self.adapter)
+        exporter.platform = platform
+        exporter.run(data)
+        self.manifest = json.loads((self.root / 'manifest.json').read_text())
+        return exporter
+
+    def test_names_are_capped_on_windows_and_long_paths_are_reported(self):
+        from fusion_bulk_export import report
+        deep = [fake.folder('x' * 100, files=[fake.File('y' * 100, 'deep')])]
+        for _ in range(2):
+            deep = [fake.folder('z' * 100, folders=deep)]
+        data = fake.data([fake.File('Short', 'short')], deep)
+        exporter = self.export_on('win32', data)
+        entries = {e['id']: e for e in self.manifest['entries']}
+        parts = entries['deep']['files'][0]['path'].split('/')
+        self.assertEqual([len(part) for part in parts[2:5]], [64, 64, 64])
+        self.assertTrue(parts[5].startswith('y' * 64 + ' v3.'))
+        self.assertTrue(entries['deep']['long_path'])
+        self.assertNotIn('long_path', entries['short'])
+        text = report.summary_text(exporter.run_info['counts'], exporter.run_info, self.manifest, str(self.root))
+        self.assertIn('1 item(s) have a path over 260 characters', text)
+        self.assertIn('path over 260 characters', report.render_html(self.manifest, exporter.run_info, None))
+
+    def test_other_systems_keep_longer_names_and_no_flag(self):
+        deep = [fake.folder('x' * 100, files=[fake.File('y' * 100, 'deep')])]
+        self.export_on('darwin', fake.data(folders=deep))
+        entry = self.manifest['entries'][0]
+        self.assertEqual(len(entry['files'][0]['path'].split('/')[2]), 100)
+        self.assertNotIn('long_path', entry)
+
+
 if __name__ == '__main__':
     unittest.main()

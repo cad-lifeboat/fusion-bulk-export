@@ -19,6 +19,7 @@ import sys
 import unicodedata
 
 NAME_LIMIT = 100        # characters in one cleaned name (a design's stem before " v3.f3d")
+WINDOWS_NAME_LIMIT = 64  # on Windows: typical layouts then stay under its 260-character paths
 NAME_BYTES = 200        # and UTF-8 bytes, since macOS allows 255 bytes per name
 ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 RESERVED = {'CON', 'PRN', 'AUX', 'NUL'} | {'COM%d' % i for i in range(1, 10)} | {'LPT%d' % i for i in range(1, 10)}

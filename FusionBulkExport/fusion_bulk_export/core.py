@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from . import checks
 from .journal import Journal, replay
 from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
-from .names import NAME_LIMIT, Names, clean, design_suffixes, long_path, too_long
+from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, clean, design_suffixes, long_path,
+                    too_long, windows_length)
 from .power import keep_awake
 from .staging import Staging
 
@@ -494,9 +495,11 @@ class Exporter:
     def segments(self, hub, project, folders):
         """[(cleaned name, identity), ...] from the output root to an item's folder."""
         ids = getattr(folders, 'ids', None) or [None] * len(folders)
-        segments = [(clean(hub.name), 'hub:' + str(hub.id)), (clean(project.name), 'project:' + str(project.id))]
+        limit = self.name_limit
+        segments = [(clean(hub.name, limit), 'hub:' + str(hub.id)),
+                    (clean(project.name, limit), 'project:' + str(project.id))]
         for index, (name, identity) in enumerate(zip(folders, ids)):
-            segments.append((clean(name), 'folder:' + identity if identity is not None else
+            segments.append((clean(name, limit), 'folder:' + identity if identity is not None else
                              'path:' + json.dumps([str(project.id)] + list(folders[:index + 1]), ensure_ascii=False)))
         return segments
 
@@ -520,6 +523,23 @@ class Exporter:
                 raise
             self.log('cannot create a folder, using the shortened layout: ' + str(error))
             return False
+
+    @property
+    def name_limit(self):
+        """Characters in one folder or file name. Shorter on Windows, so that typical layouts
+        stay under its 260-character paths, which Explorer and many programs still need."""
+        return WINDOWS_NAME_LIMIT if self.platform == 'win32' else NAME_LIMIT
+
+    def mark_long_path(self, entry):
+        """On Windows, long_path: true on an entry with a file whose full path is over 259
+        characters: it is written (with the long-path prefix), but Explorer, many programs and
+        Fusion's own Open cannot use it. The report lists such items."""
+        entry.pop('long_path', None)
+        if self.platform != 'win32':
+            return
+        infos = list(entry.get('files') or []) + [entry.get('thumbnail') or {}]
+        if any(info.get('path') and windows_length(self.root / info['path']) > WINDOWS_LIMIT for info in infos):
+            entry['long_path'] = True
 
     def hold(self, entry, paths=None):
         """Record that entry's cloud file holds these relative paths (default: its recorded files
@@ -560,7 +580,8 @@ class Exporter:
         version = ' v' + str(int(file.versionNumber))
         if not short:
             segments = self.segments(hub, project, folders)
-            parts, base = self.claim_names(segments, clean(file.name), design_suffixes(file.versionNumber),
+            parts, base = self.claim_names(segments, clean(file.name, self.name_limit),
+                                           design_suffixes(file.versionNumber),
                                            file, owned)
             directory = self.root.joinpath(*parts)
             stem = directory / (base + version)
@@ -584,7 +605,7 @@ class Exporter:
         suffix = '.' + extension if extension else ''
         identity = 'file:' + str(file.id)
         segments = self.segments(hub, project, folders)
-        parts, base = self.claim_names(segments, clean(name, NAME_LIMIT - len(suffix)), [suffix], file, owned)
+        parts, base = self.claim_names(segments, clean(name, self.name_limit - len(suffix)), [suffix], file, owned)
         location = '/'.join(parts)
         directory = self.root.joinpath(*parts)
         target = directory / (base + suffix)
@@ -845,6 +866,7 @@ class Exporter:
                 entry.update(details)
                 entry.update(facts)
                 entry.update(status='done', error=None)
+                self.mark_long_path(entry)
                 return None
             except NonDesign as error:
                 if self.error_callback:
@@ -875,6 +897,7 @@ class Exporter:
             self.set_times([path], file)
             entry['files'] = [file_info(path, self.root)]
             entry.update(status='done', error=None)
+            self.mark_long_path(entry)
             self.drop_replaced(entry, entries)
             return None
         except NotSaved as error:

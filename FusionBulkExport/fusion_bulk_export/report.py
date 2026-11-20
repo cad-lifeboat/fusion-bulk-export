@@ -164,6 +164,9 @@ def render_html(manifest, run_info, counts):
         saved = sum(1 for row in others if row['status'] == 'done')
         line += '; %d other files saved, %d not saved' % (saved, len(others) - saved)
     out.append('<div class="muted">%s.</div>' % esc(line))
+    long_paths = long_path_count(manifest)
+    if long_paths:
+        out.append('<p class="stop">%s</p>' % esc(LONG_PATHS % long_paths))
     out += table_html(designs, 'Designs', 'Design')
     if others:
         out += table_html(others, 'Other files', 'File')
@@ -242,6 +245,14 @@ def warning_lines(manifest, limit=3):
     return len(rows), ['%s: %s' % (row['name'], '; '.join(row['warnings'])) for row in rows[:limit]]
 
 
+LONG_PATHS = ('%d item(s) have a path over 260 characters: they are saved, but Explorer and some programs '
+              'cannot open them. A shorter output folder (such as C:\\FusionExport) avoids this.')
+
+
+def long_path_count(manifest):
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done' and entry.get('long_path'))
+
+
 def summary_text(counts, run_info, manifest, output):
     """The end-of-run dialog text (without the question of what to open)."""
     if run_info.get('cancelled'):
@@ -261,6 +272,9 @@ def summary_text(counts, run_info, manifest, output):
     not_saved = skipped_files(manifest)
     if not_saved:
         lines.append('%d other file(s) could not be saved; the report says why.' % not_saved)
+    long_paths = long_path_count(manifest)
+    if long_paths:
+        lines.append(LONG_PATHS % long_paths)
     unreadable = len(run_info.get('discovery_errors') or [])
     if unreadable:
         lines.append('%d folder(s) could not be read (listed in the report).' % unreadable)
