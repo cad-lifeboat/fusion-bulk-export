@@ -14,14 +14,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        # 3.12: Fusion's bundled Python runs the add-in. 3.9: the oldest the scripts support
-        # (macOS's own python3 is 3.9). Fusion runs only on macOS and Windows, and Python 3.9 is
-        # no longer built for current Ubuntu images, so 3.9 runs on those two only.
+        # macOS images pinned to a version, not macos-latest: jobs on the macos-latest arm64 pool
+        # were cancelled in the queue ("not acquired by Runner of type hosted"). macos-15 (arm64)
+        # runs 3.12; 3.9 runs on macos-15-intel, where setup-python's x64 builds of 3.9 are
+        # certain (macOS's own python3 is 3.9, also on Intel Macs).
+        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
+        # 3.12: Fusion's bundled Python runs the add-in. 3.9: the oldest the scripts support.
+        # Fusion runs only on macOS and Windows, and Python 3.9 is no longer built for current
+        # Ubuntu images, so 3.9 runs on macOS (Intel) and Windows only.
         python: ['3.9', '3.12']
         exclude:
           - os: ubuntu-latest
             python: '3.9'
+          - os: macos-15
+            python: '3.9'
+          - os: macos-15-intel
+            python: '3.12'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
