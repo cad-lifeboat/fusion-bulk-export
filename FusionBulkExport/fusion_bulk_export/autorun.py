@@ -23,7 +23,7 @@ import traceback
 import adsk
 import adsk.core
 
-from .core import Exporter, Selection, atomic_write, collection, now, select_projects, walk
+from .core import Exporter, Listing, Selection, atomic_write, collection, now, select_projects, walk
 from .fusion import FusionAdapter
 
 
@@ -117,24 +117,65 @@ def diagnostics(app):
     return dict(fusion_version=app.version, classes=classes, text_commands=commands)
 
 
-def inventory(data, log):
-    hubs = {}
-    errors = []
-    for hub, project, path, file in walk(data, lambda where, error: errors.append(dict(path=where, error=str(error)))):
-        adsk.doEvents()
+def inventory(data, log, stop=lambda: False, output=None):
+    """List every hub, project and file without opening anything.
+
+    Logs one counts-only line per project, saves inventory.json after each project so a long
+    listing can be used (or resumed by eye) before it ends, and stops between projects when
+    stop() is true.
+    """
+    hubs, errors, stopped = {}, [], False
+
+    def unreadable(where, error):
+        errors.append(dict(path=where, error=str(error)))
+
+    def summary():
+        projects = [p for h in hubs.values() for p in h['projects'].values()]
+        files = [f for p in projects for f in p['files']]
+        return dict(hubs=hubs, unreadable=errors, stopped=stopped,
+                    counts=dict(hubs=len(hubs), projects=len(projects), files=len(files),
+                                designs=sum(1 for f in files if f['extension'].lower() == 'f3d'),
+                                unreadable=len(errors)))
+
+    hub_list = list(collection(data.dataHubs))
+    for hub_number, hub in enumerate(hub_list, 1):
         h = hubs.setdefault(str(hub.id), dict(name=hub.name, projects={}))
-        p = h['projects'].setdefault(str(project.id), dict(name=project.name, files=[]))
-        p['files'].append(dict(id=str(file.id), name=file.name, path=path,
-                               extension=file.fileExtension, version=int(file.versionNumber)))
-    designs = sum(1 for h in hubs.values() for p in h['projects'].values()
-                  for f in p['files'] if f['extension'].lower() == 'f3d')
-    files = sum(len(p['files']) for h in hubs.values() for p in h['projects'].values())
-    projects = sum(len(h['projects']) for h in hubs.values())
+        try:
+            projects = list(collection(hub.dataProjects))
+        except Exception as error:
+            unreadable([hub.name], error)
+            continue
+        for project_number, project in enumerate(projects, 1):
+            if stop():
+                stopped = True
+                break
+            p = h['projects'][str(project.id)] = dict(name=project.name, files=[])
+            view = _one_project(hub, project)
+            for _, _, path, file in walk(view, unreadable):
+                adsk.doEvents()
+                p['files'].append(dict(id=str(file.id), name=file.name, path=path,
+                                       extension=file.fileExtension, version=int(file.versionNumber)))
+            log.write('inventory hub %d/%d project %d/%d: %d files'
+                      % (hub_number, len(hub_list), project_number, len(projects), len(p['files'])))
+            if output is not None:
+                atomic_write(output / 'inventory.json', summary())
+        if stopped:
+            log.write('inventory stopped')
+            break
+    listing = summary()
+    counts = listing['counts']
     log.write('inventory: %d hubs, %d projects, %d files, %d designs, %d unreadable'
-              % (len(hubs), projects, files, designs, len(errors)))
-    return dict(hubs=hubs, unreadable=errors,
-                counts=dict(hubs=len(hubs), projects=projects, files=files, designs=designs,
-                            unreadable=len(errors)))
+              % (counts['hubs'], counts['projects'], counts['files'], counts['designs'], counts['unreadable']))
+    return listing
+
+
+def _one_project(hub, project):
+    """Data view holding just this project, without listing the hub's projects again."""
+    hub_view = type('HubView', (), {})()
+    hub_view.id, hub_view.name, hub_view.dataProjects = hub.id, hub.name, Listing([project])
+    view = type('DataView', (), {})()
+    view.dataHubs = Listing([hub_view])
+    return view
 
 
 def run_autorun(app, config_path):
@@ -168,7 +209,7 @@ def run_autorun(app, config_path):
                 raise ValueError('Only %d of %d requested projects were found'
                                  % (log.result['projects_matched'], len(wanted)))
         if mode == 'inventory':
-            listing = inventory(data, log)
+            listing = inventory(data, log, stop=lambda: (output / 'STOP').exists(), output=output)
             atomic_write(output / 'inventory.json', listing)
             log.result['counts'] = listing['counts']
         else:

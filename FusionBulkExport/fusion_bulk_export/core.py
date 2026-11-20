@@ -261,6 +261,8 @@ class Exporter:
                     return counts
                 if selection.keeps(item[0], item[1], item[2]):
                     items.append(item)
+                    if limit is not None and len(items) >= limit:
+                        break  # a small run on a large account need not list everything
             if limit is not None:
                 items = items[:limit]
             self.run_info['found'] = len(items)

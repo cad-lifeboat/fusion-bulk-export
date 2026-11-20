@@ -60,6 +60,25 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(len(listing['hubs']['hub-1']['projects']['project-1']['files']), 3)
         self.assertTrue(all(file.calls == 0 for file in self.files))
 
+    def test_inventory_logs_each_project_saves_as_it_goes_and_stops(self):
+        result = self.run_with(mode='inventory')
+        log = (self.output / 'autorun.log').read_text()
+        self.assertIn('inventory hub 1/1 project 1/2: 3 files', log)
+        self.assertIn('inventory hub 1/1 project 2/2: 1 files', log)
+        self.assertFalse(result.get('stopped'))
+        (self.output / 'STOP').write_text('')
+        self.run_with(mode='inventory')
+        listing = json.loads((self.output / 'inventory.json').read_text())
+        self.assertTrue(listing['stopped'])
+        self.assertIn('inventory stopped', (self.output / 'autorun.log').read_text())
+
+    def test_limit_stops_listing_early(self):
+        files = self.data.dataHubs.item(0).dataProjects.item(1).rootFolder
+        files.dataFiles = None  # listing the second project would be an unreadable folder
+        result = self.run_with(limit=2)
+        self.assertEqual(result['counts']['done'], 2)
+        self.assertEqual(result['discovery_errors'], 0)
+
     def test_selected_project_and_limit(self):
         result = self.run_with(projects=['project-1'], limit=1)
         self.assertEqual(result['projects_matched'], 1)
