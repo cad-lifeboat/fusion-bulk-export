@@ -14,6 +14,10 @@
      names end in an ellipsis (the full name is the row's tooltip); counts and badges stay whole. */
   html, body { margin: 0; background: transparent; color: var(--text); overflow-x: hidden; max-width: 100%;
     font: 12px -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif; user-select: none; }
+  /* Height by construction (the dialog sets the same minimum on the input, picker.py
+     TREE_MIN_HEIGHT): never decided by how much the page holds, so an empty or loading tree is as
+     tall as a full one. */
+  html, body { min-height: 300px; }
   * { box-sizing: border-box; }
   ul { list-style: none; margin: 0; padding: 0; }
   .row { display: flex; align-items: center; gap: 6px; height: 24px; border-radius: 4px; cursor: default;

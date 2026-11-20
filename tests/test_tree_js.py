@@ -52,6 +52,16 @@ class TreePageLayoutTests(unittest.TestCase):
         self.assertIn((media, selector), self.css)
         return self.css[(media, selector)]
 
+    def test_height_does_not_depend_on_the_content(self):
+        # The same minimum as the dialog sets on the input (picker.TREE_MIN_HEIGHT), as an absolute
+        # length on both html and body: an empty or loading page is as tall as a full one.
+        source = (ROOT / 'FusionBulkExport' / 'fusion_bulk_export' / 'picker.py').read_text(encoding='utf-8')
+        minimum = int(re.search(r'^TREE_MIN_HEIGHT = (\d+)', source, re.M).group(1))
+        for selector in ('html', 'body'):
+            self.assertEqual(self.rule(selector)['min-height'], '%dpx' % minimum)
+            self.assertNotIn('height', self.rule(selector))
+            self.assertNotIn('max-height', self.rule(selector))
+
     def test_never_a_horizontal_scrollbar(self):
         self.assertEqual(self.rule('body')['overflow-x'], 'hidden')
         self.assertEqual(self.rule('html')['overflow-x'], 'hidden')

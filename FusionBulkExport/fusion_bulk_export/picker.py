@@ -23,6 +23,12 @@ OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion 
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
 DIALOG_SIZE = (520, 640)
 DIALOG_MINIMUM = (380, 460)
+# The tree's height in Fusion's units, set explicitly on the HTML input when it is made and again
+# each time it is shown (on macOS, test builds showed the tree collapsed to a ~40-unit strip when
+# nothing but the page's own content decided its height). The page (ui/tree.html) holds the same
+# minimum in its CSS, so its content height never falls below it either.
+TREE_MIN_HEIGHT = 300
+TREE_MAX_HEIGHT = 0  # 0: no maximum, the tree grows with the dialog
 PATH_LIMIT = 64  # longer output folders are shown with their middle cut out (full path as tooltip)
 TREE_HTML = Path(__file__).resolve().parent.parent / 'ui' / 'tree.html'
 
@@ -57,6 +63,16 @@ def full_width(control, trace):
         control.isFullWidth = True
     except Exception as error:
         trace('isFullWidth: %s' % error)
+
+
+def size_tree(tree, trace):
+    """Give the tree its explicit height limits (BrowserCommandInput.minimumHeight and
+    maximumHeight); an older Fusion without them keeps the ones given at creation."""
+    for name, value in (('minimumHeight', TREE_MIN_HEIGHT), ('maximumHeight', TREE_MAX_HEIGHT)):
+        try:
+            setattr(tree, name, value)
+        except Exception as error:
+            trace('%s: %s' % (name, error))
 
 
 def describe(control, tooltip, trace):
@@ -126,8 +142,8 @@ class Picker:
         self.tree = self.summary = None
         add_browser = getattr(inputs, 'addBrowserCommandInput', None)
         try:
-            # At least 300 high; no maximum, so it grows with the dialog.
-            self.tree = add_browser('fbx_tree', '', TREE_HTML.as_uri(), 300, 0) if add_browser else None
+            self.tree = (add_browser('fbx_tree', '', TREE_HTML.as_uri(), TREE_MIN_HEIGHT, TREE_MAX_HEIGHT)
+                         if add_browser else None)
         except Exception as error:
             trace('no tree: %s' % error)
         if self.tree is None:
@@ -137,6 +153,7 @@ class Picker:
             self.tip.isVisible = False  # it speaks of choosing, which this Fusion cannot offer
         else:
             full_width(self.tree, trace)
+            size_tree(self.tree, trace)
             self.mode.listItems.add(CHOOSE, False, '')
             self.tree.isVisible = False
             self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
@@ -170,6 +187,8 @@ class Picker:
     def show_mode(self):
         self.tree.isVisible = self.summary.isVisible = self.choosing
         self.tip.isVisible = not self.choosing
+        if self.choosing:
+            size_tree(self.tree, self.trace)  # again once shown: its height never left to its content
 
     def refresh_folder(self):
         self.folder.text = shown_path(self.output)

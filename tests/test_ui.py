@@ -820,3 +820,58 @@ class ProgressStateTests(unittest.TestCase):
         self.assertEqual([s['folder_files'] for s in listing], [3, 1])
         # Up-to-date designs are not timed.
         self.assertIsNone([s for s in again if s['phase'] == 'design'][1]['seconds_per_design'])
+
+
+class TreeLayoutContractTests(UIBase):
+    """The tree's height is set by construction, never left to the page's content: on macOS a
+    test build showed the tree as a ~40-unit strip in "Choose projects or folders" mode."""
+    def test_tree_height_is_explicit_when_made_and_each_time_it_is_shown(self):
+        from fusion_bulk_export import picker
+        command = self.open_dialog()
+        tree = command.commandInputs.find('fbx_tree')
+        self.assertGreaterEqual(picker.TREE_MIN_HEIGHT, 240)
+        self.assertEqual((tree.minimumHeight, tree.maximumHeight), (picker.TREE_MIN_HEIGHT, picker.TREE_MAX_HEIGHT))
+        self.assertTrue(tree.isFullWidth)
+        self.assertFalse(tree.isVisible)
+        tree.minimumHeight = 40  # whatever Fusion did to it while hidden
+        self.choose(command)
+        self.assertTrue(tree.isVisible)
+        self.assertEqual(tree.minimumHeight, picker.TREE_MIN_HEIGHT)
+        # Remembered Choose mode: the dialog opens with the tree shown and sized.
+        self.settings.write_text(json.dumps(dict(output=self.temp.name, mode='Choose projects or folders')))
+        tree = self.open_dialog().commandInputs.find('fbx_tree')
+        self.assertTrue(tree.isVisible)
+        self.assertEqual(tree.minimumHeight, picker.TREE_MIN_HEIGHT)
+
+    def test_an_older_fusion_without_the_height_properties_still_opens(self):
+        inputs = fake.Inputs()
+        made = inputs.addBrowserCommandInput
+
+        def browser(*args):
+            control = made(*args)
+
+            class Fixed(type(control)):
+                def __setattr__(self, name, value):
+                    if name in ('minimumHeight', 'maximumHeight'):
+                        raise AttributeError(name)
+                    super().__setattr__(name, value)
+            control.__class__ = Fixed
+            return control
+        inputs.addBrowserCommandInput = browser
+        command = fake.Command(inputs)
+        if self.definition is None:
+            self.module.run(None)
+        self.definition.commandCreated.handlers[-1].notify(NS(command=command))
+        self.assertEqual(self.errors, [])
+        self.choose(command)
+        self.assertTrue(command.commandInputs.find('fbx_tree').isVisible)
+
+    def test_the_results_dialog_shares_no_input_with_the_tree(self):
+        command = self.open_dialog()
+        ids = [control.id for control in command.commandInputs.added]
+        self.assertEqual(len(ids), len(set(ids)))
+        from fusion_bulk_export import results
+        source = Path(results.__file__).read_text(encoding='utf-8')
+        self.assertNotIn('fbx_tree', source)
+        self.assertNotIn('tree.html', source)
+        self.assertNotIn('fbx_results', ids)
