@@ -46,7 +46,7 @@
 - `scripts/install.py` does the same from a download of the repository (`--uninstall` removes it).
 
 ### Under the hood
-- Removed the upload self-test from the add-in: nothing in the download can upload, save or delete anything in your account, and a test checks the zip for it.
+- Removed a developer test from the add-in that could upload files: nothing in the download can upload, save or delete anything in your account, and a test checks the zip for it.
 - Tests run on macOS, Windows and Linux for every change, with a privacy scan.
 - `scripts/release.py prepare X.Y.Z` sets the version, moves these notes under it, runs the tests and builds the zip.
 - `SECURITY.md` and `CONTRIBUTING.md`; the bug form asks for `errors.log`.

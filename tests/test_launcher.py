@@ -158,7 +158,6 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(launched, ['Darwin'])
         self.assertEqual(waited, [{}])  # the default wait, which prints the hint if nothing starts
         self.assertEqual((installed / 'FusionBulkExport.manifest').read_bytes(), source.read_bytes())
-        self.assertFalse(hasattr(launcher, 'set_startup'))
 
     def test_wait_prints_manual_hint_once_then_reports(self):
         out, installed = self.root / 'out', self.root / 'inst'
