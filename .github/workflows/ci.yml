@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Unit tests (the tree test runs through node)
+        run: python -m unittest discover -s tests -v
+      - name: Tree logic test
+        run: node tests/tree_logic_test.js
+      - name: Release zip builds
+        run: python scripts/package.py dist
+
+  privacy:
+    name: Privacy scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No private names in tracked files or commit messages
+        shell: bash
+        run: |
+          # The banned words are stored encoded so this file does not contain them itself.
+          pattern="$(printf '%s' 'ZHV0Y2h8c29saWRjcmFmdHxjYWRtcGVnfGNhZCA/bGVhcHxjbGF1ZGV8Y29kZXh8YW50aHJvcGljfG9wZW5haXxyYXlraG9sb3xzcGFuaWVyfGNvaGVzaW9ufHJvdGFyeXxhZG9tfG5lbWExN3xtaW5pMjU2fHRhaWwyNjYz' | base64 -d)"
+          status=0
+          if git grep -IilE "$pattern"; then
+            echo "::error::The files listed above contain a banned word. Remove it before merging."
+            status=1
+          fi
+          bad_commits="$(git rev-list HEAD | while read -r commit; do
+            git log -1 --format=%B "$commit" | grep -qiE "$pattern" && echo "$commit"
+          done)"
+          if [ -n "$bad_commits" ]; then
+            echo "$bad_commits"
+            echo "::error::The commits listed above have a banned word in their message."
+            status=1
+          fi
+          exit $status
