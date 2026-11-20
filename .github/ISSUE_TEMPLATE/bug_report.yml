@@ -43,7 +43,7 @@ body:
         Paste `errors.log` from the add-in folder, if it exists:
         macOS `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionBulkExport/errors.log`,
         Windows `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\FusionBulkExport\errors.log`
-        (or the folder you added with the green "+"). It contains no paths and no project or
+        (or the folder you added with the "+" in Scripts and Add-Ins). It contains no paths and no project or
         design names, so it is safe to paste; look it over before posting all the same.
       render: text
   - type: textarea

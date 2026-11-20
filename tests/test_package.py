@@ -109,7 +109,7 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn('{version}', text)
         for needed in ('1. Install', '2. Switch it on in Fusion', '3. Export', 'Big account',
                        'https://github.com/cad-lifeboat/fusion-bulk-export', 'Not affiliated with Autodesk',
-                       'green "+"'):
+                       'click the "+" at the top of the list'):
             self.assertIn(needed, text)
         self.assertEqual(text.count('\n'), text.count('\r\n'))
 

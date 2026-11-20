@@ -25,12 +25,15 @@ After that you can delete this download.
 
 2. Switch it on in Fusion (once)
 --------------------------------
-In Fusion press Shift+S (or Utilities > Add-Ins > Scripts and Add-Ins), open the
-Add-Ins tab, switch FusionBulkExport on (Run) and tick Run on Startup.
+In Fusion press Shift+S (Utilities > Add-Ins > Scripts and Add-Ins). Find
+FusionBulkExport in the list: type its name in Search, or tick Add-ins under Type
+on the left. Tick its Run on Startup box first, then switch Run on. The window
+closes when you switch it on; that is normal.
 
 If FusionBulkExport is not in the list (or you prefer not to run the installer):
-move the FusionBulkExport folder somewhere it can stay, such as Documents, then in
-the Add-Ins tab click the green "+" and choose that folder.
+move the FusionBulkExport folder somewhere it can stay, such as Documents, then
+click the "+" at the top of the list and choose the add-in's folder. Tick Run on
+Startup first, then switch Run on, as above.
 
 
 3. Export

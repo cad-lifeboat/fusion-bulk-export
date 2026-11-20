@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Install steps match Fusion's current Scripts and Add-Ins window: no Add-Ins tab; tick Run on Startup before switching Run on.
+
 ## 0.3.0
 
 Tested on real Fusion 2706.1.17 on macOS and Windows 11 before release: the dialog and tree, small and whole-account exports (59 designs), resume from a folder made by 0.2, cancel and continue, long output paths, the results dialog and the command line. Not yet exercised on real Fusion: runs of hundreds of designs with this version, the pause after repeated failures, and a design whose links Fusion cannot read (covered by automated tests only).

@@ -14,7 +14,7 @@ if not exist "%ADDINS%" goto failed
 robocopy "%SOURCE%" "%ADDINS%\FusionBulkExport" /MIR /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 goto failed
 
-echo Installed. In Fusion press Shift+S, open the Add-Ins tab, switch FusionBulkExport on and tick Run on Startup.
+echo Installed. In Fusion press Shift+S and find FusionBulkExport in the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on Startup box first, then switch Run on. The window closes when you switch it on; that is normal.
 set "RESULT=0"
 goto end
 

@@ -19,9 +19,10 @@ or older (by version) than this checkout: an installed add-in is never downgrade
 installation of the same version is kept, and nothing is replaced while an export runs.
 One line says which it used (scripts/install.py replaces it on purpose).
 
-Sign in to Fusion first, and switch the add-in on in Fusion once (Shift+S, Add-Ins tab,
-FusionBulkExport: Run, and tick Run on Startup); until it runs, this command says so and
-keeps waiting. If Fusion is closed it is opened. The running add-in always watches for jobs,
+Sign in to Fusion first, and switch the add-in on in Fusion once: Shift+S, find
+FusionBulkExport in the list (Search, or tick Add-ins under Type), tick its Run on Startup
+box first, then switch Run on (the window closes; that is normal). Until it runs, this
+command says so and keeps waiting. If Fusion is closed it is opened. The running add-in always watches for jobs,
 and its toolbar button stays available. A job sent while an export
 from the button is running is refused with a "busy" message: run the command again later.
 Environment: FUSION_APP (app name, .app or .exe path), AUTORUN_TIMEOUT_SECONDS
@@ -64,8 +65,10 @@ ALIVE_SECONDS = 20
 INTERRUPTED = 130  # the exit status after Ctrl-C
 SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
-MANUAL_HINT = ('Fusion has not started the add-in. In Fusion press Shift+S, open the Add-Ins tab, '
-               'switch FusionBulkExport on (Run) and tick Run on Startup. This command keeps waiting.')
+MANUAL_HINT = ('Fusion has not started the add-in. In Fusion press Shift+S and find FusionBulkExport in '
+               'the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on '
+               'Startup box first, then switch Run on. The window closes when you switch it on; that is '
+               'normal. This command keeps waiting.')
 
 
 def system():

@@ -27,8 +27,11 @@ account. Work on the person's machine, in a terminal, with them nearby.
 ## What needs the person
 
 - Installing Fusion and signing in (their credentials, never yours).
-- Once: switching the add-in on in Fusion. **Shift+S → Add-Ins tab → FusionBulkExport →
-  Run**, and tick **Run on Startup**. Fusion keeps that setting itself; you cannot set it.
+- Once: switching the add-in on in Fusion. **Shift+S** (Utilities > Add-Ins > Scripts and
+  Add-Ins), find **FusionBulkExport** in the list (Search, or tick **Add-ins** under
+  **Type**), tick its **Run on Startup** box first, then switch **Run** on. The window
+  closes when it is switched on; that is normal. Fusion keeps that setting itself; you
+  cannot set it.
 - Closing a Fusion dialog that blocks the export, or saving a design that is open with
   unsaved changes.
 - Operating-system prompts (file access, firewall, the unsigned installer on macOS).

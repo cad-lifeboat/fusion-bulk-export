@@ -26,10 +26,10 @@ You need Fusion installed and signed in, on macOS or Windows. Nothing else.
    - **Windows:** `Install (Windows).bat`. If SmartScreen warns you, click **More info**, then **Run anyway**.
 
    It copies the add-in into Fusion's add-ins folder and changes nothing else. You can delete the download afterwards.
-2. In Fusion press **Shift+S** (or **Utilities → Add-Ins → Scripts and Add-Ins**) and open the **Add-Ins** tab.
-3. Switch **FusionBulkExport** on (**Run**) and tick **Run on Startup**, so it is there every time Fusion starts.
+2. In Fusion press **Shift+S** (**Utilities → Add-Ins → Scripts and Add-Ins**). Find **FusionBulkExport** in the list: type its name in **Search**, or tick **Add-ins** under **Type** on the left.
+3. Tick its **Run on Startup** box first, then switch **Run** on, so it is there every time Fusion starts. The window closes when you switch it on; that is normal.
 
-If **FusionBulkExport** is not in the list, or you would rather not run the installer: move the `FusionBulkExport` folder from the download somewhere it can stay (Documents is fine), click the green **+** in the **Add-Ins** tab, choose that folder, then switch it on as above.
+If **FusionBulkExport** is not in the list, or you would rather not run the installer: move the `FusionBulkExport` folder from the download somewhere it can stay (Documents is fine), click the **+** at the top of the list and choose the add-in's folder, then tick **Run on Startup** and switch **Run** on as above.
 
 **Step 3: Export**
 1. Open the **Utilities** tab and click the orange cube in the **ADD-INS** group (**Fusion Bulk Export**).

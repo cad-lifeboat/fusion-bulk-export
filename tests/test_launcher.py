@@ -218,7 +218,8 @@ class LauncherTests(unittest.TestCase):
             status = launcher.wait(installed, out, 86400, sleep=sleep, clock=lambda: next(ticks))
         self.assertEqual(status, 1)
         self.assertEqual(stream.getvalue().count('has not started the add-in'), 1)
-        self.assertIn('tick Run on Startup', stream.getvalue())
+        self.assertIn('Tick its Run on Startup box first, then switch Run on.', stream.getvalue())
+        self.assertNotIn('Add-Ins tab', stream.getvalue())
 
     def test_wait_reports_add_in_startup_crash(self):
         out, installed = self.root / 'out', self.root / 'inst'
