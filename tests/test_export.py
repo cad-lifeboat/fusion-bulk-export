@@ -1237,6 +1237,24 @@ class ExportTests(unittest.TestCase):
         exporter.run(fake.data([flaky]))
         self.assertEqual(flaky.calls, 2)
 
+    def test_limit_counts_designs_and_still_saves_the_folders_other_files(self):
+        # --limit 2 once saved no other file although the folder had some: they came after the
+        # second design. Other files in the folders visited up to the limit are saved.
+        first = fake.File('Notes.pdf', 'notes', extension='pdf')
+        a, b, c = fake.File('A', 'a'), fake.File('B', 'b'), fake.File('C', 'c')
+        later = fake.File('Spec.pdf', 'spec', extension='pdf')
+        board = fake.File('Board', 'board', extension='fbrd')
+        deeper = fake.File('Deep.pdf', 'deep', extension='pdf')
+        data = fake.data([first, a, b, c, later, board], [fake.folder('Sub', files=[deeper, fake.File('D', 'd')])])
+        exporter, counts = self.run_export(data, limit=2)
+        self.assertEqual((counts['exported'], counts['files'], counts['unsupported']), (2, 2, 1))
+        ids = sorted(e['id'] for e in self.manifest['entries'])
+        self.assertEqual(ids, ['a', 'b', 'board', 'notes', 'spec'])  # C and the next folder: next run
+        self.assertEqual((c.calls, deeper.downloads), (0, []))
+        self.assertTrue(exporter.run_info['limit_reached'])
+        exporter, counts = self.run_export(data, limit=2)
+        self.assertEqual((counts['exported'], counts['up_to_date'], counts['files']), (2, 2, 1))  # C, D; Deep.pdf
+
     def test_journal_replay_replaces_entries_with_the_same_key(self):
         file = fake.File()
         file.failures = 2

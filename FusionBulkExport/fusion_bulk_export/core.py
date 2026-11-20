@@ -700,7 +700,9 @@ class Exporter:
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
-        date, failures and other files do not count).
+        date, failures and other files do not count). Other files are saved in every folder
+        visited until then, including the rest of the folder in which the limit was reached;
+        its remaining designs, and every later folder, are left for the next run.
 
         progress(state) is called while listing and before each item, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
@@ -792,6 +794,7 @@ class Exporter:
                 report('listing')
 
             entries = {entry['key']: entry for entry in self.manifest['entries']}
+            finishing = None  # the folder in which the limit was reached: only its other files go on
             with keep_awake():
                 for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
                                                         visiting):
@@ -800,6 +803,11 @@ class Exporter:
                         break
                     if not selection.keeps(hub, project, folders):
                         continue
+                    if finishing is not None:
+                        if finishing != (str(hub.id), str(project.id), list(folders)):
+                            break  # the limit's folder is done
+                        if self.item_kind(file) == 'design':
+                            continue  # left for the next run
                     found += 1
                     place(hub, project, folders)
                     state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1,
@@ -840,8 +848,11 @@ class Exporter:
                             self.run_info.update(stopped_reason=problem.reason, stopped_code=problem.code)
                             break
                         failing = []
-                    if limit is not None and counts['exported'] >= limit:
-                        break  # a small run on a large account need not list everything
+                    if limit is not None and counts['exported'] >= limit and finishing is None:
+                        # A small run on a large account need not list everything; the other files
+                        # of this folder are still saved (they do not count towards the limit).
+                        finishing = (str(hub.id), str(project.id), list(folders))
+                        self.run_info['limit_reached'] = True
         except Exception as error:
             self.run_info['error'] = str(error)
             raise

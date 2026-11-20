@@ -485,7 +485,9 @@ def main(argv=None):
                                 'folder id (ID:id=FOLDER_ID, see folder_ids in inventory.json); repeatable')
             p.add_argument('--limit', type=int, metavar='N',
                            help='stop after exporting N designs in this run (designs already up to date and '
-                                'other files do not count)')
+                                'other files do not count). Other files are still saved in every folder '
+                                'visited up to then, including the rest of the folder where the Nth design '
+                                'was exported; later designs and folders are left for the next run')
             p.add_argument('--designs-only', action='store_true',
                            help='skip other files (PDFs, uploads); by default they are saved too')
             # Kept for one release so older instructions still run; it only prints DRAWINGS_REMOVED.

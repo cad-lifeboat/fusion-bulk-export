@@ -305,6 +305,13 @@ class LauncherTests(unittest.TestCase):
             launcher.main(['export', '--help'])
         self.assertNotIn('--drawings', help_text.getvalue())
 
+    def test_limit_rule_is_in_the_help(self):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream), self.assertRaises(SystemExit):
+            launcher.main(['export', '--help'])
+        text = ' '.join(stream.getvalue().split())
+        self.assertIn('Other files are still saved in every folder visited up to then', text)
+
     def test_folder_arguments(self):
         self.assertEqual(launcher.folder_map(['p1:Parts/Brackets/', 'p1:Jigs', 'p2:/X']),
                          {'p1': ['Parts/Brackets', 'Jigs'], 'p2': ['X']})

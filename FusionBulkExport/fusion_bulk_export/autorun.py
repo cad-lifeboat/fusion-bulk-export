@@ -14,7 +14,9 @@ Configuration (all paths absolute):
                                      (exporting one crashed Fusion); they are listed as
                                      not supported
    "limit": 25,                      optional; stop after exporting this many designs (those
-                                     already up to date and other files do not count)
+                                     already up to date and other files do not count); other
+                                     files in the folders visited until then are saved, including
+                                     the rest of the folder where the limit was reached
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
 "diagnostics" writes diagnostics.json (Fusion version, the export-related API
