@@ -4,6 +4,7 @@ import os
 import adsk.core
 import adsk.fusion
 from .core import NonDesign, collection
+from .names import fusion_path, long_path
 
 
 class FusionAdapter:
@@ -109,13 +110,14 @@ class FusionAdapter:
         archive = str(stem) + '.f3d'
         step = str(stem) + '.step'
         manager = design.exportManager
-        if not manager.execute(manager.createFusionArchiveExportOptions(archive)):
+        # Long Windows paths go to Fusion with the \\?\ prefix (names.fusion_path decides).
+        if not manager.execute(manager.createFusionArchiveExportOptions(fusion_path(archive))):
             raise RuntimeError('Fusion archive export returned false')
-        if not os.path.isfile(archive):
+        if not os.path.isfile(long_path(archive)):
             raise RuntimeError('Fusion reported a successful archive export but wrote no file')
-        if not manager.execute(manager.createSTEPExportOptions(step)):
+        if not manager.execute(manager.createSTEPExportOptions(fusion_path(step))):
             raise RuntimeError('STEP export returned false')
-        if not os.path.isfile(step):
+        if not os.path.isfile(long_path(step)):
             raise RuntimeError('Fusion reported a successful STEP export but wrote no file')
         return [archive, step]
 

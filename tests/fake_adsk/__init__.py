@@ -31,8 +31,12 @@ class File:
         self.documents = []
 
 
-def folder(name='Root', files=(), folders=()):
-    return NS(name=name, dataFiles=Collection(*files), dataFolders=Collection(*folders))
+def folder(name='Root', files=(), folders=(), identity=None):
+    """A DataFolder; with identity it has an .id like the real one (most tests go without)."""
+    result = NS(name=name, dataFiles=Collection(*files), dataFolders=Collection(*folders))
+    if identity is not None:
+        result.id = identity
+    return result
 
 
 def data(files=(), folders=()):

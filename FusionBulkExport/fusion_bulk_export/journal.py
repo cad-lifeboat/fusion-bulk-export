@@ -9,6 +9,8 @@ harmless: an entry replaces the one with the same key.
 import json
 import os
 
+from .names import long_path
+
 
 class Journal:
     def __init__(self, path):
@@ -16,7 +18,7 @@ class Journal:
 
     def append(self, entry):
         line = json.dumps(dict(entry=entry), ensure_ascii=False, separators=(',', ':'))
-        with self.path.open('a', encoding='utf-8') as stream:
+        with open(long_path(self.path), 'a', encoding='utf-8') as stream:
             stream.write(line + '\n')
             stream.flush()
             os.fsync(stream.fileno())
@@ -24,7 +26,8 @@ class Journal:
     def read(self):
         """Entries in the order written. A line cut short by a crash is ignored."""
         try:
-            text = self.path.read_text(encoding='utf-8')
+            with open(long_path(self.path), encoding='utf-8') as stream:
+                text = stream.read()
         except FileNotFoundError:
             return []
         entries = []
@@ -40,7 +43,7 @@ class Journal:
     def clear(self):
         """Called after manifest.json has been saved with everything in the journal."""
         try:
-            self.path.unlink()
+            os.unlink(long_path(self.path))
         except FileNotFoundError:
             pass
 

@@ -6,11 +6,15 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import time
 from datetime import datetime, timezone
 
 from .journal import Journal, replay
+from .names import WINDOWS_LIMIT, Names, clean, long_path, too_long, windows_length
 from .power import keep_awake
+
+SCHEMA = 2  # manifest schema; schema-1 folders are read and saved as 2
 
 LOW_SPACE_BYTES = 1 << 30   # warn before a run below this much free space
 FULL_BYTES = 100 << 20      # after a failed write, below this the disk counts as full
@@ -28,8 +32,21 @@ def collection(values):
         yield values.item(index)
 
 
+class FolderPath(list):
+    """Folder names below a project root (a plain list to its users), with .ids: the cloud id
+    of each folder, or None where the API object has none."""
+    def __init__(self, names=(), ids=None):
+        super().__init__(names)
+        self.ids = list(ids) if ids is not None else [None] * len(self)
+
+    def child(self, folder):
+        identity = getattr(folder, 'id', None)
+        return FolderPath(list(self) + [folder.name], self.ids + [None if identity is None else str(identity)])
+
+
 def walk(data, on_error=None, selection=None, visiting=None):
-    """Yield files from every hub, project and folder (including project roots).
+    """Yield (hub, project, path, file) for files in every hub, project and folder (including
+    project roots). path is a FolderPath: a list of folder names that also carries their ids.
 
     With on_error, a project or folder that cannot be read is reported as
     on_error(where, error) and skipped instead of stopping the walk.
@@ -52,12 +69,12 @@ def walk(data, on_error=None, selection=None, visiting=None):
                 yield path, file
         for child in guarded(where, lambda: collection(folder.dataFolders)):
             if selection is None or selection.may_contain(project, path + [child.name]):
-                yield from folders(hub, project, child, path + [child.name])
+                yield from folders(hub, project, child, path.child(child))
     for hub in collection(data.dataHubs):
         for project in guarded([hub.name], lambda: collection(hub.dataProjects)):
             root = guarded([hub.name, project.name], lambda: [project.rootFolder])
             for folder in root:
-                for path, file in folders(hub, project, folder, []):
+                for path, file in folders(hub, project, folder, FolderPath()):
                     yield hub, project, path, file
 
 
@@ -164,6 +181,7 @@ class Selection:
 
 
 def sanitize(value, limit=42):
+    """ASCII-only short name, for the shortened fallback layout and schema-1 folders."""
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', str(value)).strip(' .') or '_'
     if value.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *('COM%d' % i for i in range(1, 10)), *('LPT%d' % i for i in range(1, 10))}:
         value = '_' + value
@@ -172,20 +190,17 @@ def sanitize(value, limit=42):
     return value[:limit].rstrip(' .') or '_'
 
 
-def windows_length(path):
-    return len(str(path).encode('utf-16-le')) // 2
-
-
 def digest(value):
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
 
 def file_info(path, root):
     sha = hashlib.sha256()
-    with path.open('rb') as stream:
+    with open(long_path(path), 'rb') as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             sha.update(chunk)
-    return {'path': path.relative_to(root).as_posix(), 'sha256': sha.hexdigest(), 'bytes': path.stat().st_size}
+    return {'path': path.relative_to(root).as_posix(), 'sha256': sha.hexdigest(),
+            'bytes': os.stat(long_path(path)).st_size}
 
 
 def free_bytes(path):
@@ -193,7 +208,7 @@ def free_bytes(path):
     path = Path(path)
     for candidate in [path] + list(path.parents):
         try:
-            return shutil.disk_usage(str(candidate)).free
+            return shutil.disk_usage(long_path(candidate)).free
         except OSError:
             continue
     return None
@@ -219,32 +234,42 @@ class Trouble(Exception):
 
 def atomic_write(path, value):
     temporary = path.with_suffix('.json.tmp')
-    with temporary.open('w', encoding='utf-8') as stream:
+    with open(long_path(temporary), 'w', encoding='utf-8') as stream:
         # One write: json.dump would call write() for every small piece of a large manifest.
         stream.write(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(temporary, path)
+    os.replace(long_path(temporary), long_path(path))
 
 
 class Exporter:
     def __init__(self, output, adapter, error_callback=None):
         self.root = Path(output).resolve()
-        if windows_length(self.root) > 100:
-            raise ValueError('Choose an output folder with a path of at most 100 characters.')
-        self.root.mkdir(parents=True, exist_ok=True)
+        try:
+            os.makedirs(long_path(self.root), exist_ok=True)
+        except OSError as error:
+            raise ValueError('The output folder cannot be created: %s (%s)' % (self.root, error.strerror or error))
+        if not os.path.isdir(long_path(self.root)):
+            raise ValueError('The output folder is not a folder: %s' % self.root)
         self.adapter = adapter
         self.error_callback = error_callback
         self.last_error = None
+        self.platform = sys.platform
         self.manifest_path = self.root / 'manifest.json'
-        self.manifest = {'schema': 1, 'runs': [], 'entries': []}
-        if self.manifest_path.exists():
-            self.manifest = json.loads(self.manifest_path.read_text(encoding='utf-8'))
-            if self.manifest.get('schema') != 1:
+        self.manifest = {'schema': SCHEMA, 'runs': [], 'entries': []}
+        if os.path.exists(long_path(self.manifest_path)):
+            with open(long_path(self.manifest_path), encoding='utf-8') as stream:
+                self.manifest = json.loads(stream.read())
+            if self.manifest.get('schema') not in (1, SCHEMA):
                 raise ValueError('Unsupported manifest schema')
+            # Schema 1 entries keep their (shortened, hashed) files; new exports use real names.
+            self.manifest['schema'] = SCHEMA
         # Items finished after the last full save (the previous run stopped without one).
         self.journal = Journal(self.root / 'manifest.journal')
         self.replayed = replay(self.manifest, self.journal.read())
+        self.names = Names()
+        for entry in self.manifest['entries']:
+            self.names.remember(entry)
         self.saves = 0          # full manifest.json writes, for checking the cost
         self.unsaved = 0        # finished items only in the journal so far
         self.saved_at = time.monotonic()
@@ -269,7 +294,7 @@ class Exporter:
 
     def log(self, message):
         try:
-            with (self.root / 'export.log').open('a', encoding='utf-8') as stream:
+            with open(long_path(self.root / 'export.log'), 'a', encoding='utf-8') as stream:
                 stream.write(now() + ' ' + message.replace('\n', ' ') + '\n')
         except OSError:
             pass  # the log is a convenience; a missing or full disk is caught where it matters
@@ -279,13 +304,14 @@ class Exporter:
         written now: disk full, output folder gone or read-only. None for a single bad design."""
         if disk_full(error):
             return Trouble('disk_full', 'The disk is full.', error)
-        if not self.root.is_dir():
+        if not os.path.isdir(long_path(self.root)):
             return Trouble('output_missing', 'The output folder is gone (disconnected drive?): '
                            + str(self.root), error)
         probe = self.root / '.write-check'
         try:
-            probe.write_bytes(b'x')
-            probe.unlink()
+            with open(long_path(probe), 'wb') as stream:
+                stream.write(b'x')
+            os.unlink(long_path(probe))
         except OSError as problem:
             if disk_full(problem):
                 return Trouble('disk_full', 'The disk is full.', error)
@@ -300,29 +326,52 @@ class Exporter:
             return False
         try:
             for expected in entry['files']:
-                path = (self.root / expected['path']).resolve()
+                # normpath, not resolve(): no file-system call, so long Windows paths are fine.
+                path = Path(os.path.normpath(str(self.root / expected['path'])))
                 if not path.is_relative_to(self.root) or file_info(path, self.root) != expected:
                     return False
             return True
         except (OSError, ValueError):
             return False
 
-    def destination(self, hub, project, folders, file, key):
+    def destination(self, hub, project, folders, file, short=False):
+        """Where a design goes: (stem path without extension, facts for its manifest entry).
+
+        Real names: <hub>/<project>/<folders...>/<design> v<version>, made portable by
+        names.clean, with a "~1a2b" suffix only where two items would share a name. When that
+        path is too long for this system, cannot be created, or short is set, the design goes
+        to the shortened layout of earlier versions instead, recorded as shortened: true."""
+        version = ' v' + str(int(file.versionNumber))
+        if not short:
+            ids = getattr(folders, 'ids', None) or [None] * len(folders)
+            segments = [(clean(hub.name), 'hub:' + str(hub.id)), (clean(project.name), 'project:' + str(project.id))]
+            for index, (name, identity) in enumerate(zip(folders, ids)):
+                segments.append((clean(name), 'folder:' + identity if identity is not None else
+                                 'path:' + json.dumps([str(project.id)] + list(folders[:index + 1]), ensure_ascii=False)))
+            parts, base = self.names.place(segments, clean(file.name), 'file:' + str(file.id))
+            directory = self.root.joinpath(*parts)
+            stem = directory / (base + version)
+            facts = dict(location='/'.join(parts), identities=[identity for _, identity in segments],
+                         base=base, shortened=False)
+            if not too_long(str(stem) + '.step', self.platform):
+                try:
+                    os.makedirs(long_path(directory), exist_ok=True)
+                    return stem, facts
+                except OSError as error:
+                    if self.trouble(error) is not None:
+                        raise
+                    self.log('cannot create a folder, using the shortened layout: ' + str(error))
+        # The layout of schema 1: 12 ASCII characters and a hash per name.
         def segment(obj):
             return sanitize(obj.name, 12) + '~' + digest(str(obj.id))[:8]
         directory = self.root / segment(hub) / segment(project)
-        parent = directory
-        for index, folder in enumerate(folders):
-            directory /= sanitize(folder, 12) + '~' + digest(json.dumps(folders[:index + 1], ensure_ascii=False))[:8]
-        # Keep the whole absolute path below 240 ASCII characters on Windows.
-        # The full identity hash prevents case, truncation and sanitizing collisions.
-        stem = sanitize(file.name, 12) + '~' + digest(key)[:24] + ' v' + str(int(file.versionNumber))
-        if folders and windows_length(directory / (stem + '.step')) > 239:
-            directory = parent / ('folders~' + digest(json.dumps(folders, ensure_ascii=False))[:16])
-        if windows_length(directory / (stem + '.step')) > 239:
-            raise ValueError('Export path exceeds 239 characters; choose a shorter output folder.')
-        directory.mkdir(parents=True, exist_ok=True)
-        return directory / stem
+        if folders:
+            directory /= 'folders~' + digest(json.dumps([str(project.id)] + list(folders), ensure_ascii=False))[:16]
+        stem = directory / (sanitize(file.name, 12) + '~' + digest(str(file.id))[:24] + version)
+        if too_long(str(stem) + '.step', self.platform):
+            raise ValueError('The export path is too long even when shortened; choose a shorter output folder.')
+        os.makedirs(long_path(directory), exist_ok=True)
+        return stem, dict(location=None, identities=None, base=None, shortened=True)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
             on_trouble=None):
@@ -445,7 +494,7 @@ class Exporter:
             counts['skipped'] += 1
             self.log('verified ' + key)  # nothing changed: nothing to save
             return 'verified'
-        entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': folders,
+        entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': list(folders),
                  'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
                  'date': file.dateModified, 'files': [], 'status': 'skipped', 'error': None,
                  'attempts': 0}
@@ -458,12 +507,14 @@ class Exporter:
         if file.fileExtension.lower() != 'f3d':
             entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
+            short, stem = False, None
             for attempt in range(2):
                 entry['attempts'] = attempt + 1
                 try:
                     if hasattr(self.adapter, 'references'):
                         entry['references'] = self.adapter.references(file)
-                    stem = self.destination(hub, project, folders, file, key)
+                    stem, facts = self.destination(hub, project, folders, file, short)
+                    entry.update(facts)
                     paths = self.adapter.export(file, stem)
                     entry['files'] = [file_info(Path(path), self.root) for path in paths]
                     entry.update(getattr(self.adapter, 'details', None) or {})
@@ -483,6 +534,9 @@ class Exporter:
                     trouble = self.trouble(error)
                     if trouble is not None:
                         break  # a second attempt cannot succeed either
+                    # A long path Fusion may not take: try the second time in the shortened form.
+                    short = (stem is not None and self.platform == 'win32'
+                             and windows_length(str(stem) + '.step') > WINDOWS_LIMIT)
         counts[entry['status']] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:

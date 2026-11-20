@@ -103,5 +103,13 @@ class VerifyTests(unittest.TestCase):
         self.assertIn('PROBLEM STEP has 2 solids', text)
 
 
+    def test_long_path_prefix_on_windows_only(self):
+        with unittest.mock.patch.object(verify.sys, 'platform', 'win32'), \
+                unittest.mock.patch.object(verify.os.path, 'isabs', lambda p: True):
+            self.assertEqual(verify.long_path('C:\\out\\a.step'), '\\\\?\\C:\\out\\a.step')
+            self.assertEqual(verify.long_path('\\\\srv\\s\\a'), '\\\\?\\UNC\\srv\\s\\a')
+        with unittest.mock.patch.object(verify.sys, 'platform', 'darwin'):
+            self.assertEqual(verify.long_path('/x/a.step'), '/x/a.step')
+
 if __name__ == '__main__':
     unittest.main()

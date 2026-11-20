@@ -10,8 +10,9 @@ from unittest.mock import patch
 from types import SimpleNamespace as NS
 
 from tests import fake_adsk as fake
-from fusion_bulk_export import core, power
+from fusion_bulk_export import core, names, power
 from fusion_bulk_export.core import Exporter, Selection, atomic_write, free_bytes, sanitize, walk
+from fusion_bulk_export.names import clean, fusion_path, long_path
 
 fake.install()
 from fusion_bulk_export.fusion import FusionAdapter
@@ -245,18 +246,165 @@ class ExportTests(unittest.TestCase):
         atomic_write(target, {'after': True})
         self.assertFalse(target.with_suffix('.json.tmp').exists())
 
-    def test_sanitizing_collisions_and_long_paths(self):
-        self.assertEqual(sanitize('CON.txt'), '_CON.txt')
+    def paths(self):
+        return sorted(f['path'] for e in self.manifest['entries'] for f in e['files'])
+
+    def test_real_names_with_unicode(self):
+        name = 'Motorhalterung f\u00fcr Achse Z (rev B)'
+        inner = fake.folder('\u00dcbersicht', files=[fake.File(name, 'motor')], identity='f-2')
+        self.run_export(fake.data(folders=[fake.folder('Gr\u00f6\u00dfen', folders=[inner], identity='f-1')]))
+        expected = 'Hub/Project/Gr\u00f6\u00dfen/\u00dcbersicht/' + name + ' v3'
+        self.assertEqual(self.paths(), [expected + '.f3d', expected + '.step'])
+        self.assertTrue((self.root / (expected + '.f3d')).is_file())
+        entry = self.manifest['entries'][0]
+        self.assertEqual(self.manifest['schema'], 2)
+        self.assertEqual(entry['location'], 'Hub/Project/Gr\u00f6\u00dfen/\u00dcbersicht')
+        self.assertEqual(entry['identities'], ['hub:hub-1', 'project:project-1', 'folder:f-1', 'folder:f-2'])
+        self.assertEqual((entry['base'], entry['shortened']), (name, False))
+
+    def test_same_names_in_one_folder_get_a_suffix_and_keep_it(self):
+        files = [fake.File('Bracket', 'one'), fake.File('bracket', 'two'), fake.File('Brack:et', 'three'),
+                 fake.File('Brack_et', 'four')]
+        data = fake.data(files)
+        self.run_export(data)
+        first = self.paths()
+        bases = {e['id']: e['base'] for e in self.manifest['entries']}
+        self.assertEqual((bases['one'], bases['three']), ('Bracket', 'Brack_et'))  # first come keeps the name
+        self.assertEqual(bases['two'], 'bracket~' + names.tag('file:two'))  # same name but for case
+        self.assertEqual(bases['four'], 'Brack_et~' + names.tag('file:four'))  # same after cleaning
+        self.assertEqual(len(set(p.casefold() for p in first)), 8)
+        for file in files:
+            file.versionNumber = 4
+        self.run_export(data)  # a new run, names rebuilt from the manifest: same choices
+        new = {e['id']: e['base'] for e in self.manifest['entries'] if e['version'] == 4}
+        old = {e['id']: e['base'] for e in self.manifest['entries'] if e['version'] == 3}
+        self.assertEqual(new, old)
+
+    def test_same_named_sibling_folders_stay_apart_by_id(self):
+        a, b = fake.File('Part', 'a'), fake.File('Part', 'b')
+        data = fake.data(folders=[fake.folder('Parts', [a], identity='p1'), fake.folder('Parts', [b], identity='p2')])
+        self.run_export(data)
+        locations = {e['id']: e['location'] for e in self.manifest['entries']}
+        self.assertEqual(locations['a'], 'Hub/Project/Parts')
+        self.assertTrue(locations['b'].startswith('Hub/Project/Parts~'))
+        self.assertEqual({e['base'] for e in self.manifest['entries']}, {'Part'})
+        items = list(walk(data))
+        self.assertEqual(items[1][2], ['Parts'])
+        self.assertEqual(items[1][2].ids, ['p2'])
+
+    def test_hub_named_like_a_file_of_the_output_folder(self):
+        data = fake.data([fake.File()])
+        data.dataHubs.item(0).name = 'Manifest.JSON'
+        self.run_export(data)
+        self.assertTrue(self.manifest['entries'][0]['location'].startswith('Manifest.JSON~'))
+
+    def test_clean_names(self):
+        self.assertEqual(clean('CON.txt'), '_CON.txt')
+        self.assertEqual(clean('lpt1'), '_lpt1')
+        self.assertEqual(clean('a/b:*? .'), 'a_b___')
+        self.assertEqual(clean(' x. . '), 'x')
+        self.assertEqual(clean('...'), '_')
+        self.assertEqual(clean('Cafe\u0301'), 'Caf\u00e9')  # NFC
+        self.assertEqual(clean('\u65e5\u672c\u8a9e\u306e\u90e8\u54c1'), '\u65e5\u672c\u8a9e\u306e\u90e8\u54c1')
+        self.assertEqual(len(clean('x' * 300)), 100)
+        self.assertLessEqual(len(clean('\u90e8' * 100).encode('utf-8')), 200)
         self.assertEqual(sanitize('a/b:*? .'), 'a_b___')
-        files = [fake.File('A/B', 'one'), fake.File('A:B', 'two'), fake.File('a_b', 'three')]
-        folders = [fake.folder('x' * 100, files=files)]
-        for _ in range(20):
-            folders = [fake.folder('Deep', folders=folders)]
+
+    def test_deep_long_paths_keep_full_names(self):
+        folders = [fake.folder('x' * 100, files=[fake.File('y' * 100)])]
+        for _ in range(3):
+            folders = [fake.folder('z' * 100, folders=folders)]
         self.run_export(fake.data(folders=folders))
-        paths = [f['path'] for e in self.manifest['entries'] for f in e['files']]
-        self.assertEqual(len(set(p.casefold() for p in paths)), 6)
-        self.assertTrue(all(len(str(self.root / p)) < 240 for p in paths))
-        self.assertTrue(all(' v3.' in p for p in paths))
+        entry = self.manifest['entries'][0]
+        self.assertFalse(entry['shortened'])
+        self.assertGreater(len(str(self.root / entry['files'][0]['path'])), 400)
+        self.assertEqual(entry['status'], 'done')
+
+    def test_path_too_long_for_the_system_uses_the_shortened_form(self):
+        folders = [fake.folder('x' * 100, files=[fake.File('y' * 100)])]
+        for _ in range(9):
+            folders = [fake.folder('z' * 100, folders=folders)]
+        exporter = Exporter(self.root, self.adapter)
+        exporter.platform = 'darwin'  # 1,023 bytes at most
+        exporter.run(fake.data(folders=folders))
+        entry = json.loads((self.root / 'manifest.json').read_text())['entries'][0]
+        self.assertEqual((entry['status'], entry['shortened']), ('done', True))
+        self.assertIsNone(entry['location'])
+        self.assertIn('folders~', entry['files'][0]['path'])
+        self.assertTrue((self.root / entry['files'][0]['path']).is_file())
+
+    def test_folder_that_cannot_be_created_uses_the_shortened_form(self):
+        real = os.makedirs
+
+        def refuse(path, exist_ok=False):
+            if 'Refused' in str(path):
+                raise OSError(errno.ENAMETOOLONG, 'File name too long')
+            return real(path, exist_ok=exist_ok)
+        with patch('fusion_bulk_export.core.os.makedirs', refuse):
+            self.run_export(fake.data(folders=[fake.folder('Refused', files=[fake.File()])]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual((entry['status'], entry['shortened']), ('done', True))
+
+    def test_windows_long_path_retries_shortened_after_a_failure(self):
+        file = fake.File('y' * 100)
+        file.failures = 1
+        folders = [fake.folder('x' * 100, files=[file]), ]
+        folders = [fake.folder('z' * 100, folders=folders)]
+        exporter = Exporter(self.root, self.adapter)
+        exporter.platform = 'win32'
+        exporter.run(fake.data(folders=folders))
+        entry = json.loads((self.root / 'manifest.json').read_text())['entries'][0]
+        self.assertEqual((entry['status'], entry['attempts'], entry['shortened']), ('done', 2, True))
+
+    def test_long_path_prefix(self):
+        self.assertEqual(long_path('C:\\out\\a', windows=True), '\\\\?\\C:\\out\\a')
+        self.assertEqual(long_path('C:/out/a', windows=True), '\\\\?\\C:\\out\\a')
+        self.assertEqual(long_path('\\\\server\\share\\a', windows=True), '\\\\?\\UNC\\server\\share\\a')
+        self.assertEqual(long_path('\\\\?\\C:\\a', windows=True), '\\\\?\\C:\\a')
+        self.assertEqual(long_path('relative\\a', windows=True), 'relative\\a')
+        self.assertEqual(long_path('/tmp/a', windows=False), '/tmp/a')
+        self.assertEqual(fusion_path('C:\\a', windows=True), '\\\\?\\C:\\a')
+        with patch.object(names, 'FUSION_LONG_PATHS', False):
+            self.assertEqual(fusion_path('C:\\a', windows=True), 'C:\\a')
+            self.assertTrue(names.too_long('C:\\' + 'x' * 300, 'win32'))
+        self.assertFalse(names.too_long('C:\\' + 'x' * 300, 'win32'))
+
+    def test_schema_1_folder_resumes_without_re_exporting(self):
+        old = fake.File('Old', 'old')
+        root_dir = self.root / 'Hub~12345678' / 'Project~12345678'
+        root_dir.mkdir(parents=True)
+        files = []
+        for suffix in ('.f3d', '.step'):
+            path = root_dir / ('Old~' + 'a' * 24 + ' v3' + suffix)
+            path.write_bytes(b'old copy')
+            files.append(core.file_info(path, self.root))
+        key = json.dumps(['hub-1', 'project-1', 'old', 3])
+        entry = {'key': key, 'hub': 'Hub', 'project': 'Project', 'path': [], 'name': 'Old', 'id': 'old',
+                 'version': 3, 'date': 1700000000, 'files': files, 'status': 'done', 'error': None, 'attempts': 1}
+        (self.root / 'manifest.json').write_text(json.dumps(dict(schema=1, runs=[{}], entries=[entry])))
+        new = fake.File('New', 'new')
+        _, counts = self.run_export(fake.data([old, new]))
+        self.assertEqual(counts, dict(done=1, failed=0, skipped=1))
+        self.assertEqual(old.calls, 0)
+        self.assertEqual(self.manifest['schema'], 2)
+        self.assertEqual(self.manifest['entries'][0], entry)  # untouched, files where they were
+        self.assertIn('Hub/Project/New v3.f3d', self.paths())
+        with self.assertRaises(ValueError):
+            (self.root / 'manifest.json').write_text(json.dumps(dict(schema=3, runs=[], entries=[])))
+            Exporter(self.root, self.adapter)
+
+    def test_output_folder_rules(self):
+        deep = self.root / ('o' * 150)
+        exporter = Exporter(deep, self.adapter)  # no 100-character cap any more
+        self.assertEqual(exporter.root, deep.resolve())
+        blocker = self.root / 'a-file'
+        blocker.write_text('x')
+        with self.assertRaises(ValueError) as caught:
+            Exporter(blocker, self.adapter)
+        self.assertIn('output folder', str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            Exporter(blocker / 'inside', self.adapter)
+        self.assertIn('cannot be created', str(caught.exception))
 
     def test_open_unmodified_design_is_exported_and_left_open(self):
         file = fake.File()

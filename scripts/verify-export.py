@@ -8,6 +8,7 @@ A STEP whose solid count differs from Fusion's visible solid count is a NOTE
 Exit status 0 means every check passed.
 """
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -17,11 +18,19 @@ UNCHECKED = [0]  # archive members whose compression this Python cannot read
 SOLID = re.compile(rb'=\s*(MANIFOLD_SOLID_BREP|BREP_WITH_VOIDS)\s*\(')
 
 
+def long_path(path):
+    """Exports keep their real names, so paths can pass Windows' 260 characters: use \\\\?\\."""
+    text = str(path)
+    if sys.platform != 'win32' or text.startswith('\\\\?\\') or not os.path.isabs(text):
+        return text
+    return '\\\\?\\UNC\\' + text[2:] if text.startswith('\\\\') else '\\\\?\\' + text
+
+
 def check_archive(path):
     problems = []
     unchecked = 0
     try:
-        with zipfile.ZipFile(path) as archive:
+        with zipfile.ZipFile(long_path(path)) as archive:
             names = archive.namelist()
             for info in archive.infolist():
                 try:
@@ -49,7 +58,8 @@ def check_archive(path):
 
 
 def check_step(path):
-    data = path.read_bytes()
+    with open(long_path(path), 'rb') as stream:
+        data = stream.read()
     problems = []
     if not data.lstrip().startswith(b'ISO-10303-21;'):
         problems.append('STEP header missing')
@@ -104,7 +114,7 @@ def main(argv):
             totals['solids_differ'] += 1
             (problems if strict else notes).append('STEP has %d solids, Fusion reported %d' % (solids, expected))
         print('%s: %s, %d member design(s), STEP %d bytes, %d solid(s)%s' % (
-            label, archive.suffix, members, step.stat().st_size, solids,
+            label, archive.suffix, members, os.stat(long_path(step)).st_size, solids,
             '' if expected is None else ' (Fusion: %d)' % expected))
         for problem in problems:
             print('  PROBLEM ' + problem)
