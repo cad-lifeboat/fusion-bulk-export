@@ -64,6 +64,9 @@ class File:
         # (a recompute, an updated reference), although nobody edited it.
         self.modified_on_open = False
         self.close_result = True  # what Document.close returns (Fusion can answer False)
+        # Fusion opens this design's linked designs only later: after this many adsk.doEvents
+        # (fake.do_events) calls, or never while no doEvents runs. None: at once, with it.
+        self.lazy_references = None
         # Seconds Documents.open blocks Fusion for this file (on the synthetic clock, see clock()):
         # seen on real Fusion, about 135 s for a design "locked in another team".
         self.open_seconds = 0
@@ -460,12 +463,39 @@ class Document:
         self.closed, self.isValid = True, False
         if self.owner is not None and self in self.owner.items:
             self.owner.items.remove(self)
-        # As on real Fusion: closing a design also closes the linked designs it pulled in.
-        for linked in self.pulled:
-            if linked.isValid:
-                linked.closed, linked.isValid = True, False
-                if linked.owner is not None and linked in linked.owner.items:
-                    linked.owner.items.remove(linked)
+        # As on real Fusion: closing a design also closes the linked designs it pulled in
+        # (unless the test's Documents.cascade says Fusion keeps them open).
+        if self.owner is None or getattr(self.owner, 'cascade', True):
+            for linked in self.pulled:
+                if linked.isValid:
+                    linked.closed, linked.isValid = True, False
+                    if linked.owner is not None and linked in linked.owner.items:
+                        linked.owner.items.remove(linked)
+        if self.owner is not None and hasattr(self.owner, 'after_close'):
+            self.owner.after_close(self)
+        return True
+
+
+class LocalDocument:
+    """A new, never-saved document ("Untitled"): no cloud file, shown, holding an empty design
+    unless parts is given (bodies in its root component)."""
+    def __init__(self, name='Untitled', owner=None, parts=0, visible=True):
+        self.name, self.owner = name, owner
+        self.dataFile, self.isSaved, self.isModified, self.isVisible, self.isValid = None, False, False, visible, True
+        self.closed, self.closes = False, []
+        root = component('root', [body() for _ in range(parts)])
+        self.products = NS(itemByProductType=lambda product: NS(rootComponent=root))
+
+    def close(self, save):
+        self.closes.append(save)
+        assert save is False, 'a document must be closed without saving'
+        if not self.isValid:
+            raise RuntimeError('3 : the document is no longer valid')
+        self.closed, self.isValid = True, False
+        if self.owner is not None and self in self.owner.items:
+            self.owner.items.remove(self)
+        if self.owner is not None:
+            self.owner.after_close(self)
         return True
 
 
@@ -479,9 +509,25 @@ def clock():
 
 class Documents(Collection):
     """Application.documents. Opening a design also opens the designs it references (as Fusion
-    does for an assembly), unless one of them is open already; all are listed until closed.
-    Opening a file that is open already returns that document (as the add-in assumes Fusion
-    does). Documents opened here are hidden, and modified at once if the file says so."""
+    does for an assembly), and the designs those reference, unless one of them is open already
+    in the same version (a linked design pinned to another version than the one open opens as
+    a document of its own); all are listed until closed. Opening a file that is open already
+    returns that document (as the add-in assumes Fusion does). Documents opened here are
+    hidden, and modified at once if the file says so.
+
+    What the test can choose: cascade (closing a design closes the linked designs it pulled in;
+    False: Fusion keeps them open), shown_references (the linked designs open shown), and
+    untitled, how Fusion handles its empty "Untitled" document: None (left alone), 'replace'
+    (opening a design closes a lone untouched Untitled, as Fusion replaces its empty start tab,
+    and closing the last shown document makes a new "Untitled(n)"), or 'extra' (an opened
+    hidden document becomes the active one, and closing it while active makes a new
+    "Untitled(n)", whatever else is shown)."""
+    cascade = True
+    shown_references = False
+    untitled = None
+    activeDocument = None
+    made = 0  # "Untitled(n)" documents made so far
+
     def open(self, file, visible):
         assert visible is False
         file.calls += 1
@@ -495,15 +541,49 @@ class Documents(Collection):
         for open_ in self.items:
             if open_.dataFile is not None and open_.dataFile.id == file.id:
                 return open_
+        if self.untitled == 'replace':
+            shown = [open_ for open_ in self.items if open_.isVisible]
+            if len(shown) == 1 and isinstance(shown[0], LocalDocument) and not shown[0].isModified:
+                shown[0].closed, shown[0].isValid = True, False  # Fusion replaces its empty start tab
+                self.items.remove(shown[0])
         document = self.opened(file)
+        if self.untitled == 'extra':
+            self.activeDocument = document
+        if file.lazy_references is None:
+            self.pull(document, file)
+        else:
+            PENDING.extend([lambda: None] * file.lazy_references + [lambda: self.pull(document, file)])
+        return document
+
+    def pull(self, document, file):
+        """Open the designs file links to (and theirs), as Fusion does with an assembly."""
         try:
             links = collection_items(file.childReferences)
         except Exception:
             links = []  # a file whose links cannot be listed through DataFile still opens
         for linked in links:
-            if not any(open_.dataFile is not None and open_.dataFile.id == linked.id for open_ in self.items):
-                document.pulled.append(self.opened(linked))
+            if not any(open_.dataFile is not None and open_.dataFile.id == linked.id
+                       and open_.dataFile.versionNumber == linked.versionNumber for open_ in self.items):
+                child = self.opened(linked)
+                child.isVisible = bool(self.shown_references)
+                document.pulled.append(child)
+                self.pull(child, linked)
+
+    def add_untitled(self):
+        self.made += 1
+        document = LocalDocument('Untitled(%d)' % self.made, self)
+        self.items.append(document)
+        self.activeDocument = document
         return document
+
+    def after_close(self, document):
+        """Fusion's answer to a closed document (see untitled)."""
+        if self.untitled == 'extra' and document is self.activeDocument and not document.isVisible:
+            self.add_untitled()
+        elif self.untitled == 'replace' and not any(open_.isVisible for open_ in self.items):
+            self.add_untitled()
+        elif document is self.activeDocument:
+            self.activeDocument = next((open_ for open_ in self.items if open_.isVisible), None)
 
     def opened(self, file):
         document = Document(file, self, visible=False)

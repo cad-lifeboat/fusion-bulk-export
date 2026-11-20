@@ -1125,6 +1125,7 @@ class Exporter:
             if self.error_callback:
                 self.error_callback('discovery ' + json.dumps(where, ensure_ascii=False), error)
         self.staging.clean()  # anything a stopped run left half-written
+        self.begin_documents()
         self.save()
         found = 0
         failing = []  # errors of the designs that failed one after another
@@ -1258,6 +1259,7 @@ class Exporter:
         finally:
             if tracker is not None:
                 tracker.finish()
+            self.finish_documents()
             self.staging.clean()
             link_paths(self.manifest)  # every link to its exported file, now that the run's exports are known
             self.run_info.update(finished=now(), counts=counts, found=found)
@@ -1268,6 +1270,36 @@ class Exporter:
                     raise  # with a stop reason, the folder is known to be unusable
             self.log('run finished ' + json.dumps(counts))
         return counts
+
+    def begin_documents(self):
+        """Ask the adapter (when it can) to remember the documents open in Fusion as the run
+        begins; run_info['documents_at_start'] is how many."""
+        begin = getattr(self.adapter, 'begin_run', None)
+        if begin is None:
+            return
+        try:
+            count = begin()
+        except Exception as error:
+            self.log('could not list the open documents: ' + (str(error) or type(error).__name__))
+            return
+        self.run_info['documents_at_start'] = count
+        self.log('documents open at start: %s' % count)
+
+    def finish_documents(self):
+        """At the end of the run: the adapter closes the documents the run left open (never one
+        open when it began; see FusionAdapter.finish_run). run_info records documents_at_end and
+        closed_leftovers (documents closed after their own item had finished). Never raises."""
+        finish = getattr(self.adapter, 'finish_run', None)
+        if finish is None or 'documents_at_start' not in self.run_info:
+            return
+        try:
+            count, closed = finish()
+        except Exception as error:
+            self.log('could not close the documents left open: ' + (str(error) or type(error).__name__))
+            return
+        self.run_info.update(documents_at_end=count, closed_leftovers=closed)
+        self.log('documents open at end: %s (at start %s), left open by the run and closed: %d'
+                 % (count, self.run_info['documents_at_start'], closed))
 
     def collect(self):
         """Run Python's cycle collector once (see COLLECT_AFTER_ITEM), and add its cost to

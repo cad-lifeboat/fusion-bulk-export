@@ -47,6 +47,10 @@ class FusionAdapter:
         # later even though they are open "before" a later export.
         self.left_open = LEFT_OPEN
         self.broken = BROKEN
+        # The documents open when the run began (begin_run; None outside a run): never closed.
+        self.at_start = None
+        # Documents closed after the item that left them had finished (Fusion opened them late).
+        self.late_closed = 0
         # Testing only: the recipe (core.LINK_RECIPES) for the experimental
         # "<stem> (with linked parts, experimental).f3d" of a design with linked components, or
         # None (off, the default). The Exporter sets it from core.LINKED_COPIES_ENV or the job.
@@ -100,6 +104,103 @@ class FusionAdapter:
                 ids.add(identity)
         return ids
 
+    def snapshot(self):
+        """The documents open now (OpenDocuments). Never raises: when they cannot be listed, an
+        empty snapshot that protects every document (see OpenDocuments.unknown)."""
+        try:
+            return OpenDocuments(list(collection(self.app.documents)))
+        except Exception:
+            return OpenDocuments(None)
+
+    def begin_run(self):
+        """Called by the Exporter as a run starts: remembers the documents open now, which this
+        add-in never closes (the user's, and anything else that was there). Returns how many."""
+        settle_documents()
+        self.at_start = self.snapshot()
+        self.late_closed = 0
+        return self.at_start.count
+
+    def finish_run(self):
+        """Called by the Exporter as a run ends: closes what the run left open, then returns
+        (documents open now, documents closed after their own item had finished). Never raises.
+
+        Closed: every cloud design that was not open when the run began and is hidden (this
+        add-in's own, or a linked design Fusion opened with one; the user cannot have edited a
+        hidden document), or shown but unmodified; and an empty, unmodified, never-saved
+        "Untitled" that Fusion made during the run, but only while another document stays shown
+        (with none shown, Fusion would at once make another one). Never closed: a document open
+        when the run began, a modified shown one, a local document with anything in it, and any
+        document that cannot be read."""
+        closed = 0
+        try:
+            settle_documents()
+            if self.at_start is not None:
+                documents = list(collection(self.app.documents))
+                for document in documents:  # cloud designs first: the Untitled check counts what is left shown
+                    if is_cloud(document) and self.leftover(document):
+                        closed += 1 if self.close(document) else 0
+                for document in documents:
+                    if not is_cloud(document) and self.leftover(document):
+                        closed += 1 if self.close(document) else 0
+                documents = None
+                settle_documents()
+            count = self.app.documents.count
+        except Exception:
+            count = None
+        self.at_start = None  # holds the user's documents: not kept past the run
+        closed += self.late_closed
+        self.late_closed = 0
+        return count, closed
+
+    def leftover(self, document):
+        """At the end of a run: whether document is one the run left behind and may be closed
+        (see finish_run)."""
+        if not valid(document) or self.at_start is None:
+            return False
+        identity = document_id(document)
+        if not visible(document) and identity is not None and identity in self.left_open:
+            return True
+        if self.at_start.holds(document):
+            return False
+        if is_cloud(document):
+            return not visible(document) or not modified(document)
+        return (document_key(document) is not None and not modified(document) and never_saved(document)
+                and empty_design(document) and self.other_shown(document))
+
+    def other_shown(self, document):
+        """Whether a document other than this one is shown in Fusion (closing this one then
+        does not make Fusion open a new empty "Untitled")."""
+        for other in collection(self.app.documents):
+            if other is document or same_document(other, document) or not valid(other):
+                continue
+            if document_key(other) == document_key(document):
+                continue
+            if visible(other):
+                return True
+        return False
+
+    def mine(self, document, before):
+        """After an item: whether this add-in may close document (open now) without asking.
+        before: the documents open when the item began (an OpenDocuments).
+
+        Never: a document that cannot be read, one without a cloud file (new and unsaved), one
+        open when the run began (self.at_start; except a hidden one this add-in left open,
+        LEFT_OPEN). A hidden cloud design that was not open when the run began is this
+        add-in's own (opened by it, or with a design it opened, perhaps late: Fusion can open a
+        linked design only after the item's own cleanup); without a run (at_start None) only
+        when it was not open when the item began. A shown cloud design only when it appeared
+        during this item and nobody changed it."""
+        if not valid(document) or not is_cloud(document):
+            return False
+        hidden = not visible(document)
+        if hidden and document_id(document) in self.left_open:
+            return True
+        if self.at_start is not None and self.at_start.holds(document):
+            return False
+        if hidden:
+            return self.at_start is not None or not before.holds(document)
+        return not before.holds(document) and not modified(document)
+
     def close(self, document):
         """Close a document this add-in opened, without saving. Never raises; False when Fusion
         did not close it (it is then remembered in left_open and tried again later). A document
@@ -120,29 +221,26 @@ class FusionAdapter:
         return closed
 
     def close_opened(self, before):
-        """Close the documents this add-in caused to be opened since `before` (an open_ids()
-        snapshot), without saving. Never raises.
+        """Close the documents this add-in caused to be opened since `before` (a snapshot()),
+        without saving. Never raises.
 
-        Opening an assembly makes Fusion open the designs it links to as well; left
-        open they pile up over a long run. They are opened hidden, so the user cannot have edited
-        them: Fusion may mark them modified on open (a recompute, an updated reference), and they
-        are closed all the same. Documents the user had open are in `before` and never touched;
-        a visible document that appeared meanwhile (the user opened it) is left alone too.
-        Documents are told apart only by their cloud file id (dataFile.id), never by creationId
-        or object identity (neither is stable across calls on real Fusion); a document without a
-        cloud file (a new, unsaved one) is never closed. One that closed meanwhile (with the
-        design that pulled it in) is skipped.
-        Returns how many documents this add-in opened are still open."""
+        Opening an assembly makes Fusion open the designs it links to as well (and their own
+        links), sometimes only a moment later; left open they pile up over a long run. So Fusion
+        is first let to finish (settle_documents), then every document mine() allows is closed:
+        documents are compared by cloud id and version (a linked design can open under another
+        version than one already open) and by the document object, never by creationId (not
+        stable on real Fusion). Documents open when the run began are never touched. A hidden
+        document left by an earlier item (opened late) is closed now too and counted
+        (late_closed). Returns how many documents this add-in opened are still open."""
         try:
+            settle_documents()
             for document in list(collection(self.app.documents)):
-                identity = document_id(document)
-                if identity is None or (identity in before and identity not in self.left_open):
+                if not self.mine(document, before):
                     continue
-                if not valid(document):
-                    continue  # closed already, with the design that pulled it in
-                if visible(document):
-                    continue  # shown in Fusion: the user's, whatever its state
-                self.close(document)
+                late = before.holds(document) and not visible(document)
+                if self.close(document) and late:
+                    self.late_closed += 1
+            document = None
             still = self.open_ids() & self.left_open
         except Exception:
             still = set(self.left_open)
@@ -154,8 +252,9 @@ class FusionAdapter:
     def acquire(self, data_file, what, failure, blocked=None):
         """(document, opened) for exporting data_file. A document already open for it is used
         as it is and never closed (opened False): the user's, if it has no unsaved edits and is
-        the same version (else blocked(plain reason) is raised, default failure); or one this
-        add-in left open, which is closed and opened again. Otherwise the file is opened hidden
+        the same version (else blocked(plain reason) is raised, default failure). One this
+        add-in left open, or a hidden one opened during this run (a linked design an earlier
+        assembly pulled in), is closed and opened again. Otherwise the file is opened hidden
         (opened True); failure(reason) when Fusion hands back nothing. A drawing is never
         opened: exporting one crashed Fusion (see core.DRAWING_REASON)."""
         if is_drawing(data_file):
@@ -168,12 +267,13 @@ class FusionAdapter:
             if identity in self.broken and not visible(existing):
                 # This add-in's own hidden copy, with its links removed: never exported from.
                 if self.close(existing):
-                    break  # opened afresh below
+                    continue  # opened afresh below (unless the user has it open too)
                 raise blocked('Fusion could not close a hidden copy of this %s that had its links removed; '
                               'restart Fusion, then run again.' % what)
-            if identity in self.left_open and not visible(existing):
+            own = identity in self.left_open or (self.at_start is not None and not self.at_start.holds(existing))
+            if own and not visible(existing):
                 if self.close(existing):
-                    break  # opened afresh below
+                    continue  # opened afresh below (unless the user has it open too)
                 if same_version(existing, data_file):
                     return existing, True  # still this add-in's own; closing is tried again after
                 raise blocked('Fusion could not close an older version of this %s; restart Fusion, '
@@ -184,12 +284,13 @@ class FusionAdapter:
             if not same_version(existing, data_file):
                 raise blocked('Another version of this %s is open in Fusion; close it, then run again.' % what)
             return existing, False
-        before = self.open_ids()
+        existing = None
+        before = self.snapshot()
         document = self.app.documents.open(data_file, False)
         if not document:
             raise failure('Fusion could not open the %s' % what)
         # Fusion may hand back a document that was open already: that one is not closed.
-        return document, identity not in before or identity in self.left_open
+        return document, not before.holds(document) or self.mine(document, before)
 
     def download(self, data_file, target):
         """Save a file that is not a design to target, its readable final path. Uploaded files
@@ -250,7 +351,7 @@ class FusionAdapter:
         return self.staging
 
     def export_design(self, data_file, stem):
-        before = self.open_ids()
+        before = self.snapshot()
         document, opened = None, False
         try:
             document, opened = self.acquire(data_file, 'design', RuntimeError, OpenInFusion)
@@ -267,6 +368,7 @@ class FusionAdapter:
             document = None
             # Also when opening or exporting failed: linked designs may be open by now.
             self.close_opened(before)
+            before = None
 
     def write(self, document, data_file, stem, opened=False):
         """Export an open document: <stem>.f3d and (when self.step) <stem>.step as the design is, then (only while the
@@ -667,6 +769,118 @@ def valid(document):
 def same_version(document, data_file):
     try:
         return int(document.dataFile.versionNumber) == int(data_file.versionNumber)
+    except Exception:
+        return False
+
+
+SETTLE_DOCUMENTS = 3  # adsk.doEvents calls before the open documents are compared
+
+
+def settle_documents():
+    """Let Fusion finish what it does after a document opens or closes (it can open a linked
+    design a moment later), so that a comparison of the open documents sees it. Never raises."""
+    for _ in range(SETTLE_DOCUMENTS):
+        try:
+            adsk.doEvents()
+        except Exception:
+            return
+
+
+class OpenDocuments:
+    """The documents open at one moment, for telling later whether a document was among them.
+    Kept: each one's key (document_key: cloud id and version, or a local document's name), the
+    cloud ids, and the shown documents themselves. holds(document) is True when its key was
+    there, when it is shown and its cloud id was there (the user's own document, saved
+    meanwhile as a new version), or when it is the same object (is, or ==) as a shown one.
+    A document that cannot be read always counts as held: it is never closed. Hidden documents
+    are not kept as objects: nothing here keeps a document the add-in opens alive."""
+    def __init__(self, documents):
+        self.keys, self.ids, self.shown, self.count = set(), set(), [], 0
+        self.unknown = documents is None  # the documents could not be listed: every one is held
+        for document in documents or ():
+            self.count += 1
+            key = document_key(document)
+            if key is not None:
+                self.keys.add(key)
+                if key[0] == 'cloud':
+                    self.ids.add(key[1])
+            if visible(document):
+                self.shown.append(document)
+
+    def holds(self, document):
+        if self.unknown:
+            return True
+        key = document_key(document)
+        if key is None or key in self.keys:
+            return True
+        if key[0] == 'cloud' and key[1] in self.ids and visible(document):
+            return True
+        return any(same_document(document, shown) for shown in self.shown)
+
+
+def same_document(one, other):
+    """Whether two document objects are the same document (is, or == where Fusion's objects
+    compare their documents). Never raises."""
+    if one is other:
+        return True
+    try:
+        return bool(one == other)
+    except Exception:
+        return False
+
+
+def document_key(document):
+    """('cloud', id, version) of an open document with a cloud file, ('local', name) of one
+    without (new, unsaved: Fusion names it "Untitled", "Untitled(1)"...), or None when it cannot
+    be read (such a document is never closed)."""
+    try:
+        data_file = document.dataFile
+        if data_file is not None:
+            return ('cloud', str(data_file.id), int(data_file.versionNumber))
+        name = getattr(document, 'name', None)
+        return None if name is None else ('local', str(name))
+    except Exception:
+        return None
+
+
+def is_cloud(document):
+    return document_id(document) is not None
+
+
+def modified(document):
+    """Whether a document has unsaved changes (unknown counts as modified)."""
+    try:
+        return bool(document.isModified)
+    except Exception:
+        return True
+
+
+def never_saved(document):
+    """Whether a document has never been saved (no cloud file; isSaved False where readable)."""
+    try:
+        if document.dataFile is not None:
+            return False
+        return getattr(document, 'isSaved', False) is False
+    except Exception:
+        return False
+
+
+EMPTY_PARTS = ('bRepBodies', 'allOccurrences', 'sketches', 'meshBodies', 'constructionPlanes')
+
+
+def empty_design(document):
+    """Whether a document holds an empty design: no bodies, components, sketches, meshes or
+    construction planes in its root component. Unknown counts as not empty. Never raises."""
+    try:
+        design = adsk.fusion.Design.cast(document.products.itemByProductType('DesignProductType'))
+        if not design:
+            return False
+        root = design.rootComponent
+        for name in EMPTY_PARTS:
+            items = getattr(root, name, None)
+            if items is not None and items.count:
+                return False
+        return True
     except Exception:
         return False
 
