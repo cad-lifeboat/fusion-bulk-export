@@ -195,7 +195,11 @@ def render_html(manifest, run_info, counts):
     if counts:
         out.append(counts_html(counts))
     if (run_info or {}).get('stopped_reason'):
-        out.append('<p class="stop">The run stopped itself: %s</p>' % esc(run_info['stopped_reason']))
+        from .errors import NEXT_STEP
+        reason = run_info['stopped_reason'].rstrip()
+        reason += '' if reason.endswith(('.', '?', '!')) else '.'
+        then = NEXT_STEP.get(run_info.get('stopped_code')) if run_info.get('stopped_code') == 'memory' else None
+        out.append('<p class="stop">The run stopped itself: %s</p>' % esc(reason + (' ' + then if then else '')))
     designs = [row for row in rows if row['kind'] != 'file']
     others = [row for row in rows if row['kind'] == 'file']
     totals = {}

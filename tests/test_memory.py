@@ -12,7 +12,11 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 from tests import fake_adsk as fake
-from fusion_bulk_export import core, memory, report
+import contextlib
+import importlib.util
+import io
+
+from fusion_bulk_export import core, errors, memory, report
 from fusion_bulk_export.core import Exporter, Trouble
 
 fake.install()
@@ -227,6 +231,149 @@ class RunMemoryTests(Base):
         self.assertIsNone(report.memory_line({}))
         line = report.memory_line(dict(memory=dict(last_rss=int(1.4 * GB), peak_rss=int(1.6 * GB), start_rss=int(0.8 * GB))))
         self.assertEqual(line, 'Fusion memory: 1.4 GB (at most 1.6 GB during the last run, 0.8 GB at its start).')
+
+
+class GuardRuleTests(unittest.TestCase):
+    def test_available_memory_below_the_floor_stops(self):
+        rule = core.memory_rule
+        start = dict(rss=GB, total=16 * GB, available=8 * GB)
+        self.assertIsNone(rule(start, dict(rss=2 * GB, total=16 * GB, available=int(1.6 * GB))))
+        self.assertEqual(rule(start, dict(rss=2 * GB, total=16 * GB, available=int(1.4 * GB))), 'available')
+        # 8% of a large machine is above 1.5 GB: 64 GB -> 5.12 GB.
+        self.assertEqual(rule(start, dict(rss=2 * GB, total=64 * GB, available=5 * GB)), 'available')
+        self.assertIsNone(rule(start, dict(rss=2 * GB, total=64 * GB, available=6 * GB)))
+        # Total unknown: the 1.5 GB floor alone.
+        self.assertEqual(rule(start, dict(rss=None, total=None, available=GB)), 'available')
+
+    def test_growth_counts_only_when_fusion_holds_most_of_the_memory(self):
+        rule = core.memory_rule
+        start = dict(rss=GB, total=16 * GB, available=12 * GB)
+        self.assertEqual(rule(start, dict(rss=10 * GB, total=16 * GB, available=4 * GB)), 'growth')
+        self.assertIsNone(rule(start, dict(rss=9 * GB, total=16 * GB, available=4 * GB)))   # under 60%
+        self.assertIsNone(rule(start, dict(rss=6 * GB, total=8 * GB, available=2 * GB)))    # grew 5 GB only
+        self.assertIsNone(rule(dict(rss=None), dict(rss=12 * GB, total=16 * GB, available=None)))
+        self.assertIsNone(rule(start, dict(rss=12 * GB, total=None, available=None)))
+
+    def test_nothing_known_means_no_guard(self):
+        self.assertIsNone(core.memory_rule(None, None))
+        self.assertIsNone(core.memory_rule({}, dict(rss=None, total=None, available=None)))
+
+    def test_the_test_limit_comes_from_the_environment_only_when_set(self):
+        self.assertIsNone(core.memory_test_limit({}))
+        self.assertIsNone(core.memory_test_limit({core.MEMORY_TEST_ENV: 'lots'}))
+        self.assertIsNone(core.memory_test_limit({core.MEMORY_TEST_ENV: '0'}))
+        self.assertEqual(core.memory_test_limit({core.MEMORY_TEST_ENV: '1500'}), 1500 << 20)
+        self.assertEqual(core.memory_rule({}, dict(rss=1600 << 20), 1500 << 20), 'test')
+
+
+class GuardRunTests(Base):
+    def files(self, count=6):
+        return [fake.File('Design %d' % n, 'design-%d' % n) for n in range(count)]
+
+    def test_the_run_stops_cleanly_between_items_and_the_next_run_carries_on(self):
+        files = self.files()
+        released = []
+
+        @contextlib.contextmanager
+        def awake():
+            try:
+                yield
+            finally:
+                released.append(True)
+        exporter = Exporter(self.root, self.adapter)
+        # Available memory: 5 GB at the start, then 1 GB less after each item: 4, 3, 2, 1 (stop).
+        exporter.memory_sampler = Sampler(total=16 * GB, available=5 * GB, fall=GB)
+        with patch.object(core, 'keep_awake', awake):
+            counts = exporter.run(fake.data(files))
+        info = exporter.run_info
+        self.assertEqual((info['stopped_code'], info['stopped_reason']), ('memory', 'Fusion is using a lot of memory'))
+        self.assertEqual(info['memory_rule'], 'available')
+        self.assertFalse(info['cancelled'])
+        self.assertEqual(counts['exported'], 4)
+        self.assertEqual(released, [True])
+        self.assertFalse((self.root / 'export.lock').exists())
+        self.assertFalse((self.root / 'manifest.journal').exists() and
+                         (self.root / 'manifest.journal').read_text(encoding='utf-8').strip())
+        saved = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual(sum(1 for e in saved['entries'] if e['status'] == 'done'), counts['exported'])
+        self.assertEqual(saved['runs'][-1]['stopped_code'], 'memory')
+        self.assertIn('stopped: memory (available rule)', (self.root / 'export.log').read_text(encoding='utf-8'))
+        data = report.summary(counts, info, exporter.manifest, self.root)
+        self.assertEqual(data['headline'], 'Stopped: Fusion is using a lot of memory')
+        self.assertIn('Close Fusion, open it again and run the export on the same folder. '
+                      'It carries on where it stopped.', data['notes'])
+        page = report.render_html(exporter.manifest, info, counts)
+        self.assertIn('The run stopped itself: Fusion is using a lot of memory. Close Fusion, open it again', page)
+        # After restarting Fusion: memory is back, the run carries on and finishes.
+        exporter = Exporter(self.root, self.adapter)
+        exporter.memory_sampler = Sampler()
+        later = exporter.run(fake.data(files))
+        self.assertEqual(later['exported'] + counts['exported'], 6)
+        self.assertIsNone(exporter.run_info['stopped_code'])
+
+    def test_it_stops_after_the_item_that_crossed_the_line(self):
+        exporter = Exporter(self.root, self.adapter)
+        exporter.memory_sampler = Sampler(total=16 * GB, available=int(3.2 * GB), fall=GB)
+        counts = exporter.run(fake.data(self.files()))
+        # Samples: 3.2 at the start, then 2.2 (go on), 1.2 (stop) after the second design.
+        self.assertEqual(counts['exported'], 2)
+
+    def test_growth_rule_stops_a_run(self):
+        exporter = Exporter(self.root, self.adapter)
+        exporter.memory_sampler = Sampler(rss=GB, step=4 * GB, total=16 * GB, available=12 * GB)
+        counts = exporter.run(fake.data(self.files()))
+        # rss: 1 GB at the start, then 5, 9 (grew 8 GB but under 9.6 GB), 13: stop.
+        self.assertEqual(counts['exported'], 3)
+        self.assertEqual(exporter.run_info['memory_rule'], 'growth')
+
+    def test_no_sampler_no_guard(self):
+        exporter = Exporter(self.root, self.adapter)
+        counts = exporter.run(fake.data(self.files()))
+        self.assertEqual(counts['exported'], 6)
+        self.assertIsNone(exporter.run_info['stopped_code'])
+
+    def test_up_to_date_items_are_not_sampled(self):
+        files = self.files(3)
+        Exporter(self.root, self.adapter).run(fake.data(files))
+        exporter = Exporter(self.root, self.adapter)
+        exporter.memory_sampler = sampler = Sampler(available=GB)  # would stop at once
+        counts = exporter.run(fake.data(files))
+        self.assertEqual((counts['up_to_date'], sampler.calls), (3, 1))
+        self.assertIsNone(exporter.run_info['stopped_code'])
+
+    def test_the_stop_text_is_a_plain_user_error(self):
+        known = errors.friendly(Trouble('memory', core.MEMORY_REASON))
+        self.assertEqual(known.text(), 'The export stopped: Fusion is using a lot of memory\n\n'
+                                       'Close Fusion, open it again and run the export on the same folder. '
+                                       'It carries on where it stopped.')
+
+
+spec = importlib.util.spec_from_file_location('autorun_launcher_memory', Path(__file__).parent.parent / 'scripts' / 'autorun.py')
+launcher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(launcher)
+
+
+class LauncherMemoryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def test_a_memory_stop_exits_with_its_own_status_and_one_plain_line(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        out.mkdir()
+        installed.mkdir()
+        (out / 'autorun-result.json').write_text(json.dumps(dict(
+            mode='export', counts=dict(exported=120), stopped_code='memory',
+            stopped_reason='Fusion is using a lot of memory', errors=[])))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            status = launcher.wait(installed, out, 100, sleep=lambda _: None, clock=lambda: 0)
+        self.assertEqual(status, launcher.EXIT_MEMORY)
+        self.assertEqual(launcher.EXIT_MEMORY, 75)
+        self.assertEqual(stream.getvalue().count(launcher.MEMORY_LINE), 1)
+        self.assertIn('Stopped by itself (memory): Fusion is using a lot of memory.', stream.getvalue())
+        self.assertIn('75 the export stopped itself because', launcher.__doc__.replace('\n', ' '))
 
 
 if __name__ == '__main__':

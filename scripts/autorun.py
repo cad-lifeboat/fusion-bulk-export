@@ -27,6 +27,10 @@ and its toolbar button stays available. A job sent while an export
 from the button is running is refused with a "busy" message: run the command again later.
 Environment: FUSION_APP (app name, .app or .exe path), AUTORUN_TIMEOUT_SECONDS
 (default 86400).
+
+Exit status: 0 done; 1 the job failed or was refused; 75 the export stopped itself because
+Fusion was using a lot of memory (restart Fusion and run the same command again: it carries on);
+130 interrupted (Ctrl-C).
 """
 import argparse
 import glob
@@ -63,6 +67,11 @@ def runtime_files(directory, names):
     return {name for name in names if is_runtime(relative / name)}
 ALIVE_SECONDS = 20
 INTERRUPTED = 130  # the exit status after Ctrl-C
+# Exit status of an export that stopped itself because Fusion was using a lot of memory: restart
+# Fusion and run the same command again (it carries on), or let --restart-fusion do that.
+EXIT_MEMORY = 75
+MEMORY_LINE = ('Stopped: Fusion is using a lot of memory. Close Fusion, open it again and run the same command: '
+               'it carries on where it stopped.')
 SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
 MANUAL_HINT = ('Fusion has not started the add-in. In Fusion press Shift+S and find FusionBulkExport in '
@@ -296,7 +305,10 @@ def summary(output):
         lines.append('Result: mode %s, finished %s, Fusion %s' % (
             report.get('mode'), report.get('finished'), report.get('fusion_version')))
         lines.append(count_line(report.get('counts', {})))
-        if report.get('stopped_reason'):
+        if report.get('stopped_code') == 'memory':
+            lines.append('Stopped by itself (memory): Fusion is using a lot of memory. Restart Fusion, then run '
+                         'export again to carry on.')
+        elif report.get('stopped_reason'):
             lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
         if report.get('low_space'):
             lines.append('Low disk space: %d MB free' % ((report.get('free_bytes') or 0) >> 20))
@@ -402,7 +414,12 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
         return 1
     for line in summary(output):
         print(line)
-    return 1 if any(e.get('stage') == 'autorun' for e in report.get('errors', [])) else 0
+    if any(e.get('stage') == 'autorun' for e in report.get('errors', [])):
+        return 1
+    if report.get('stopped_code') == 'memory':
+        print(MEMORY_LINE, flush=True)
+        return EXIT_MEMORY
+    return 0
 
 
 def start(args):

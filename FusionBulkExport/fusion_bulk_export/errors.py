@@ -40,6 +40,8 @@ NEXT_STEP = {
     'output_unwritable': 'Choose a folder you can write to, then export again.',
     'failing': 'Check that Fusion is online and signed in, then export again: '
                'the failed designs are tried again.',
+    'memory': 'Close Fusion, open it again and run the export on the same folder. '
+              'It carries on where it stopped.',
 }
 SIGN_IN = 'Sign in to Fusion (top right), wait until the Data Panel shows your projects, then try again.'
 

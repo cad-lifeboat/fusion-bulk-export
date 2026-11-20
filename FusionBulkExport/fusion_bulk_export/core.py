@@ -48,6 +48,53 @@ SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journa
 COLLECT_AFTER_ITEM = True
 FULL_COLLECT_EVERY = 50
 
+# The memory guard. Fusion's memory grows over a long run (by gigabytes over thousands of designs,
+# in Fusion itself), and a Fusion that runs out of memory dies with whatever it had open. Between
+# items the run stops cleanly, as if cancelled, with stopped_code 'memory', when either
+#   (a) the computer's available physical memory is below max(MEMORY_FLOOR, MEMORY_FLOOR_SHARE of
+#       its total): the computer is about to swap hard or kill something; or
+#   (b) Fusion has grown by more than MEMORY_GROWTH since the run started and holds more than
+#       MEMORY_PROCESS_SHARE of the total: it is the one using it up.
+# A rule whose figures cannot be read is not applied; with no figures at all the guard is off.
+# Restarting Fusion gives the memory back; the next run carries on where this one stopped.
+MEMORY_FLOOR = 1536 << 20          # 1.5 GB
+MEMORY_FLOOR_SHARE = 0.08
+MEMORY_GROWTH = 6 << 30            # 6 GB
+MEMORY_PROCESS_SHARE = 0.60
+MEMORY_REASON = 'Fusion is using a lot of memory'
+# For testing on a real Fusion only: with this set (a number of MB) in Fusion's environment, the
+# guard also stops once Fusion holds more than that.
+MEMORY_TEST_ENV = 'FUSION_BULK_EXPORT_TEST_MEMORY_MB'
+
+
+def memory_rule(start, last, test_limit=None):
+    """Which memory-guard rule says stop now ('available', 'growth' or 'test'), or None. start
+    and last: memory samples ({"rss", "total", "available"}, any value None when unknown)."""
+    if not last:
+        return None
+    rss, total, available = last.get('rss'), last.get('total'), last.get('available')
+    if available is not None:
+        floor = MEMORY_FLOOR if total is None else max(MEMORY_FLOOR, MEMORY_FLOOR_SHARE * total)
+        if available < floor:
+            return 'available'
+    begun = (start or {}).get('rss')
+    if rss is not None and begun is not None and total is not None:
+        if rss - begun > MEMORY_GROWTH and rss > MEMORY_PROCESS_SHARE * total:
+            return 'growth'
+    if rss is not None and test_limit is not None and rss > test_limit:
+        return 'test'
+    return None
+
+
+def memory_test_limit(environ=None):
+    """MEMORY_TEST_ENV in bytes, or None (unset or not a positive number)."""
+    value = (os.environ if environ is None else environ).get(MEMORY_TEST_ENV)
+    try:
+        megabytes = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(megabytes * (1 << 20)) if megabytes > 0 else None
+
 
 # Run counts, by what happened to each item this run.
 COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'unsupported', 'failed')
@@ -829,7 +876,8 @@ class Exporter:
             entries = {entry['key']: entry for entry in self.manifest['entries']}
             tracker = memory.Tracker(self.memory_sampler, self.run_info.setdefault('memory', {}), self.log)
             if tracker.begin() is None:
-                self.run_info.pop('memory', None)  # nothing could be sampled
+                self.run_info.pop('memory', None)  # nothing could be sampled: the guard is off
+            test_limit = memory_test_limit()
             finishing = None  # the folder in which the limit was reached: only its other files go on
             with keep_awake():
                 for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
@@ -869,9 +917,10 @@ class Exporter:
                     if status != 'verified' and str(file.fileExtension).lower() == 'f3d':
                         timing['seconds'] += self.clock() - began
                         timing['designs'] += 1
+                    sample = None
                     if status != 'verified':
                         self.collect()  # Fusion worked on this item: release what it left behind
-                        tracker.update(timing['designs'])
+                        sample = tracker.update(timing['designs'])
                     if self.reached_cloud(status, entries.get(self.item_key(hub, project, file))):
                         failing = []
                     elif status == 'failed' and (problem is not None or not failed_before):
@@ -888,6 +937,16 @@ class Exporter:
                             self.run_info.update(stopped_reason=problem.reason, stopped_code=problem.code)
                             break
                         failing = []
+                    rule = memory_rule(tracker.start, sample, test_limit) if sample is not None else None
+                    if rule is not None:
+                        # Between items, like a Cancel: everything so far is saved; a run after
+                        # restarting Fusion carries on from here.
+                        stopping = Trouble('memory', MEMORY_REASON)
+                        self.run_info.update(stopped_reason=MEMORY_REASON, stopped_code='memory', memory_rule=rule)
+                        self.log('stopped: memory (%s rule), Fusion %s MB, available %s MB' % (
+                            rule, '?' if sample.get('rss') is None else sample['rss'] >> 20,
+                            '?' if sample.get('available') is None else sample['available'] >> 20))
+                        break
                     if limit is not None and counts['exported'] >= limit and finishing is None:
                         # A small run on a large account need not list everything; the other files
                         # of this folder are still saved (they do not count towards the limit).
