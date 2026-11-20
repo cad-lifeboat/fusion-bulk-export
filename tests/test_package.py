@@ -122,14 +122,6 @@ class PackageTests(unittest.TestCase):
                 if found}
 
     def test_nothing_in_the_zip_can_change_the_fusion_account(self):
-        # selftest.py (an upload test) is being removed; until then it is the only allowed exception.
-        violations = {name: found for name, found in self.violations().items()
-                      if not name.endswith('/selftest.py')}
-        self.assertEqual(violations, {})
-
-    @unittest.skipIf((ROOT / 'FusionBulkExport' / 'fusion_bulk_export' / 'selftest.py').exists(),
-                     'selftest.py present')
-    def test_no_exceptions_once_selftest_is_gone(self):
         self.assertEqual(self.violations(), {})
 
 

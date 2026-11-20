@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Keep your designs private.** `manifest.json`, `inventory.json` and the logs contain
+        **Keep your designs private.** `manifest.json`, `index.html`, `index.csv`, `inventory.json` and the logs contain
         your project and design names. Do not attach them. Counts and error messages are enough;
         replace any names in them with `X`.
   - type: input

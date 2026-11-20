@@ -2,8 +2,9 @@ Fusion Bulk Export {version}
 ============================
 
 Saves your Autodesk Fusion designs to your own computer, as Fusion archives (.f3d)
-and STEP files, in your project and folder layout. It only reads: nothing in your
-Fusion account is changed.
+and STEP files under their real names, in your project and folder layout, together
+with your other files (PDFs, uploads, drawings as PDF). It only reads: nothing in
+your Fusion account is changed.
 
 You need Fusion installed and signed in, on macOS or Windows. Nothing else.
 
@@ -33,8 +34,10 @@ the Add-Ins tab click the green "+" and choose that folder.
 3. Export
 ---------
 Open the Utilities tab and click Fusion Bulk Export (the orange cube in the
-ADD-INS group). Choose Everything, or tick projects and folders, choose an output
-folder and click Export. Leave Fusion open and signed in until the last dialog.
+ADD-INS group). Check "Save to" (Browse... picks another folder; it is remembered),
+choose Everything or tick projects and folders, and click Export. Fusion cannot be
+used while it exports: leave it open and signed in until the last dialog. That
+dialog opens index.html, a report of everything saved and anything that failed.
 Run it again on the same folder to continue, retry failures or pick up new designs.
 
 
@@ -50,7 +53,7 @@ Help
 Instructions, questions and bug reports:
 https://github.com/cad-lifeboat/fusion-bulk-export
 
-Your output folder's manifest.json and logs contain your design names. Keep them
-private and do not attach them to issues.
+Your output folder's manifest.json, index.html, index.csv and logs contain your
+design names. Keep them private and do not attach them to issues.
 
 Not affiliated with Autodesk. Autodesk and Fusion are trademarks of Autodesk, Inc.

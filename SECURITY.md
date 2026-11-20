@@ -10,16 +10,22 @@ reply within a week.
 ## What the add-in does
 
 - **Reads only.** It lists your hubs, projects and folders, opens each design and saves a copy
-  (`.f3d` archive and `.step`) to a folder on your computer that you choose. It never uploads,
+  (`.f3d` archive, `.step` and thumbnail) to a folder on your computer that you choose. Other
+  files are downloaded as they are, and drawings are opened and saved as PDF. It never uploads,
   saves, renames, moves or deletes anything in your Fusion account. A test checks that the release
   zip contains no call that could.
 - **No network calls of its own.** All access to your account goes through Fusion's own API in the
   Fusion session you are signed in to. The add-in does not contact any other server.
-- **No telemetry.** Nothing is collected or sent anywhere. Logs and the manifest stay in your
-  output folder and in the add-in folder on your computer.
+- **No telemetry.** Nothing is collected or sent anywhere. The manifest, the report and logs
+  stay in your output folder, `errors.log` in the add-in folder, and the dialog's remembered
+  settings (last output folder and choices) in `FusionBulkExport/settings.json` in your user's
+  application-data folder.
+- **Keeping the computer awake.** During an export it runs macOS's `caffeinate` (or, on Windows,
+  asks the system not to sleep) and stops that when the export ends.
 - **Installers.** `Install (macOS).command` and `Install (Windows).bat` only copy the
   `FusionBulkExport` folder into Fusion's add-ins folder for your user. They need no administrator
   rights and change nothing else. Both are short plain-text scripts: read them before running.
 
-The files it writes (`manifest.json`, `inventory.json`, logs) contain your project and design names.
+The files it writes (`manifest.json`, `index.html`, `index.csv`, `inventory.json`, logs) contain
+your project and design names.
 Treat them as private.

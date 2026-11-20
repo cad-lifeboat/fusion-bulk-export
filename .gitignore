@@ -1,9 +1,6 @@
 __pycache__/
 *.py[cod]
 out/
-FusionBulkExport/selftest.json
-FusionBulkExport/selftest-output/
-FusionBulkExport/selftest.json.last
 FusionBulkExport/autorun.json
 FusionBulkExport/autorun.json.last
 FusionBulkExport/autorun-output/
@@ -11,7 +8,6 @@ dist/
 FusionBulkExport/errors.log
 FusionBulkExport/trace
 FusionBulkExport/trace.log
-FusionBulkExport/autorun.watch
 FusionBulkExport/autorun.alive
 FusionBulkExport/startup-error.txt
 .DS_Store

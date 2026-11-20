@@ -27,9 +27,8 @@ NEXT_STEP = ('Installed. In Fusion press Shift+S, open the Add-Ins tab, switch F
              'and tick Run on Startup.')
 
 # Files and folders the add-in creates at run time, plus caches. Never installed or packaged.
-RUNTIME_DIRS = ('__pycache__', 'autorun-output', 'selftest-output')
-RUNTIME_FILES = ('autorun.json', 'autorun.json.last', 'autorun.watch', 'autorun.alive',
-                 'selftest.json', 'selftest.json.last', 'startup-error.txt', 'errors.log',
+RUNTIME_DIRS = ('__pycache__', 'autorun-output')
+RUNTIME_FILES = ('autorun.json', 'autorun.json.last', 'autorun.alive', 'startup-error.txt', 'errors.log',
                  'trace', 'trace.log', '.DS_Store')
 RUNTIME_SUFFIXES = ('.pyc', '.pyo')
 

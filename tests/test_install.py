@@ -38,7 +38,7 @@ def fake_addin(folder):
     (folder / 'fusion_bulk_export' / '__pycache__' / 'core.cpython-312.pyc').write_bytes(b'x')
     (folder / 'autorun-output').mkdir()
     (folder / 'autorun-output' / 'autorun-result.json').write_text('{}', encoding='utf-8')
-    for name in ('autorun.json', 'autorun.watch', 'errors.log', 'startup-error.txt', 'trace'):
+    for name in ('autorun.json', 'autorun.alive', 'errors.log', 'startup-error.txt', 'trace'):
         (folder / name).write_text('run time', encoding='utf-8')
     return folder
 

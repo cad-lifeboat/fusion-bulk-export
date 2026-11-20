@@ -1,7 +1,7 @@
 # Contributing
 
 Run the tests before sending a change: `python3 -m unittest discover -s tests` (Python 3.9 or newer;
-a simulated Fusion API, no Fusion needed; the tree test also needs `node`). CI runs them on macOS,
+a simulated Fusion API, no Fusion needed) and `node tests/tree_logic_test.js`. CI runs them on macOS,
 Windows and Linux. Build the release zip with `python3 scripts/package.py`, install a checkout into
 Fusion with `python3 scripts/install.py`.
 
