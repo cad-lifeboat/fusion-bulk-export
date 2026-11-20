@@ -1,43 +1,68 @@
 #!/usr/bin/env python3
-"""Build dist/FusionBulkExport-<version>.zip: the add-in folder ready to add in Fusion.
+"""Build dist/FusionBulkExport-<version>.zip, the file people download.
 
-The zip holds one folder, FusionBulkExport/, with the add-in, its manifest, icons and
-the license. Run-time files and caches are left out.
+Layout:
+  FusionBulkExport-<version>/README.txt                 the three steps (packaging/README.txt)
+  FusionBulkExport-<version>/Install (macOS).command    copies the add-in into Fusion (executable)
+  FusionBulkExport-<version>/Install (Windows).bat      the same for Windows (CRLF line endings)
+  FusionBulkExport-<version>/FusionBulkExport/          the add-in, its manifest, icons and LICENSE
+
+Run-time files and caches are left out (the list lives in install.py).
 """
 import json
 from pathlib import Path
 import sys
 import zipfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import install  # noqa: E402  (scripts/install.py: the shared list of run-time files)
+
 ROOT = Path(__file__).resolve().parents[1]
-ADDIN = ROOT / 'FusionBulkExport'
-SKIP_DIRS = {'__pycache__', 'autorun-output', 'selftest-output'}
-SKIP_FILES = {'autorun.json', 'autorun.json.last', 'autorun.watch', 'autorun.alive',
-              'selftest.json', 'selftest.json.last', 'startup-error.txt', 'errors.log', 'trace', 'trace.log'}
+NAME = install.NAME
+DATE = (2020, 1, 1, 0, 0, 0)
+MAC_INSTALLER = 'Install (macOS).command'
+WINDOWS_INSTALLER = 'Install (Windows).bat'
 
 
-def files():
-    for path in sorted(ADDIN.rglob('*')):
-        relative = path.relative_to(ADDIN)
-        if path.is_file() and not SKIP_DIRS & set(relative.parts) and path.name not in SKIP_FILES \
-                and path.suffix not in ('.pyc', '.pyo'):
-            yield path, relative
+def version(root=ROOT):
+    manifest = root / NAME / (NAME + '.manifest')
+    return json.loads(manifest.read_text(encoding='utf-8'))['version']
 
 
-def build(out_dir=ROOT / 'dist'):
-    version = json.loads((ADDIN / 'FusionBulkExport.manifest').read_text(encoding='utf-8'))['version']
+def files(root=ROOT):
+    """(path, relative path) of every add-in file that goes in the zip."""
+    return install.addin_files(root / NAME)
+
+
+def _text(path, newline):
+    text = path.read_text(encoding='utf-8').replace('\r\n', '\n')
+    return text.replace('\n', newline).encode('utf-8')
+
+
+def _add(archive, name, data, mode=0o644):
+    info = zipfile.ZipInfo(name, date_time=DATE)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.create_system = 3  # Unix, so unzip tools honour the permission bits below
+    info.external_attr = (0o100000 | mode) << 16
+    archive.writestr(info, data)
+
+
+def build(out_dir=ROOT / 'dist', root=ROOT):
+    root = Path(root)
+    current = version(root)
+    top = '%s-%s' % (NAME, current)
+    packaging = root / 'packaging'
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / ('FusionBulkExport-%s.zip' % version)
-    with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
-        for path, relative in files():
-            info = zipfile.ZipInfo(str(Path('FusionBulkExport') / relative), date_time=(2020, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o644 << 16
-            archive.writestr(info, path.read_bytes())
-        info = zipfile.ZipInfo('FusionBulkExport/LICENSE', date_time=(2020, 1, 1, 0, 0, 0))
-        info.compress_type = zipfile.ZIP_DEFLATED
-        info.external_attr = 0o644 << 16
-        archive.writestr(info, (ROOT / 'LICENSE').read_bytes())
+    target = out_dir / ('%s.zip' % top)
+    readme = _text(packaging / 'README.txt', '\r\n').replace(b'{version}', current.encode('ascii'))
+    with zipfile.ZipFile(str(target), 'w', zipfile.ZIP_DEFLATED) as archive:
+        _add(archive, top + '/README.txt', readme)
+        _add(archive, '%s/%s' % (top, MAC_INSTALLER), _text(packaging / MAC_INSTALLER, '\n'), 0o755)
+        _add(archive, '%s/%s' % (top, WINDOWS_INSTALLER), _text(packaging / WINDOWS_INSTALLER, '\r\n'))
+        for path, relative in files(root):
+            _add(archive, '%s/%s/%s' % (top, NAME, relative.as_posix()), path.read_bytes())
+        _add(archive, '%s/%s/LICENSE' % (top, NAME), (root / 'LICENSE').read_bytes())
     return target
 
 
