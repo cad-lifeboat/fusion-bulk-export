@@ -12,14 +12,38 @@ Get all of your Fusion designs out, in one go.
 
 ## Quick start
 
-1. **Download** `FusionBulkExport-<version>.zip` from the [latest release](../../releases/latest) and unzip it.
-2. **Add it to Fusion:** **Utilities → Add-Ins** (or press **Shift+S**) → **Add-Ins** tab → green **+** → choose the unzipped `FusionBulkExport` folder → select **FusionBulkExport** → **Run**.
-3. **Export:** on the **Utilities** tab, click **Fusion Bulk Export** (the orange cube) in the **Add-Ins** panel; it is also in the **ADD-INS ▾** menu.
-   - Keep **Everything**, or pick **Choose projects or folders** to get a tree of your hubs, projects and folders. Click a row to open it; tick a box to include it. A ticked folder includes everything inside it, and a project only counts as whole when its own box is ticked.
-   - Click **Export…** and choose an empty folder with a short path (such as `Documents/FusionExport`).
-   - Wait. A progress bar shows each design and has a Cancel button, and the last dialog shows the counts.
+You need Fusion installed and signed in, on macOS or Windows. Nothing else.
 
-Leave Fusion open and signed in while it runs, and keep the computer awake. To pick up where you left off, or to catch designs added later, run it again on the same folder.
+**Step 1: Download**
+1. Open the [latest release](../../releases/latest).
+2. Under **Assets**, click `FusionBulkExport-<version>.zip`.
+3. Unzip it. You get a folder named `FusionBulkExport`. Keep it somewhere it can stay (Documents is fine): Fusion loads the add-in from there.
+
+**Step 2: Add it to Fusion (once)**
+1. In Fusion press **Shift+S** (or **Utilities → Add-Ins → Scripts and Add-Ins**).
+2. Open the **Add-Ins** tab and click the green **+**.
+3. Choose the `FusionBulkExport` folder from step 1.
+4. In the list, switch **FusionBulkExport** on (**Run**), and tick **Run on Startup** so it is there next time.
+
+**Step 3: Export**
+1. Open the **Utilities** tab and click the orange cube in the **ADD-INS** group (**Fusion Bulk Export**).
+2. Choose what to export:
+   - **Everything**: every design in every hub and project you can see.
+   - **Choose projects or folders**: a tree of your hubs, projects and folders. Click a row to open it, tick a box to include it. A ticked folder includes everything inside it.
+3. Click **Export…** and pick an empty folder with a short path, such as `Documents/FusionExport` or `C:\FusionExport`.
+4. Wait for the last dialog. It shows how many designs were done, failed and skipped, and the folder path.
+
+Leave Fusion open and signed in, and keep the computer awake, until the last dialog appears. **Cancel** is safe: what is finished stays finished. Run it again on the same folder to continue, to retry failures, or to pick up designs added later.
+
+### Big account? Go one project at a time
+
+If you have hundreds or thousands of designs, start small:
+
+1. Pick **Choose projects or folders** and tick **one** project or folder.
+2. Export it and look at the result: open a couple of the `.f3d` files in Fusion and check the counts in the last dialog.
+3. Then do the next project, or the rest, into **the same output folder**. Finished designs are checked and skipped, so nothing is done twice.
+
+What to expect: each design takes a few seconds (about 3.5 seconds each in our tests; large assemblies take longer), so 1,000 designs is roughly an hour. With **Everything**, Fusion first lists every file in every project before the first export starts; on an account with thousands of designs that listing alone took about 13 minutes, with the progress dialog showing "Discovering designs…". Going project by project avoids that wait and lets you stop at a natural point.
 
 **Let your AI do it.** If you use an AI coding agent, ask it to follow [AGENTS.md](AGENTS.md). It runs the whole backup unattended (inventory, a trial project, the full export and a check of every file) and only needs you for signing in and one click in Fusion.
 

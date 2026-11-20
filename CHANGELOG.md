@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Clearer quick start: download, add to Fusion, export, step by step.
+- Big accounts: the README, AGENTS.md and the dialog itself suggest exporting one project or folder at a time into the same output folder, with timing to expect.
+- Windows: the final dialog shows the output folder with backslashes.
+
 ## 0.2.1
 
 - Large accounts: the inventory logs progress per project, saves `inventory.json` as it goes and stops between projects when a `STOP` file appears; `--limit` stops listing as soon as it has enough designs.

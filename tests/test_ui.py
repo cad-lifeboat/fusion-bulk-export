@@ -98,6 +98,7 @@ class UItests(unittest.TestCase):
         inputs = command.commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Everything')
         self.assertFalse(inputs.find('fbx_tree').isVisible)
+        self.assertIn('one project or folder', inputs.find('fbx_tip').text)
         self.assertTrue(inputs.find('fbx_tree').htmlFileURL.endswith('/ui/tree.html'))
         self.assertTrue(self.valid(command))
         command.execute.handlers[0].notify(None)

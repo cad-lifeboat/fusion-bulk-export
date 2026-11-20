@@ -28,6 +28,9 @@ class Picker:
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
         self.mode.listItems.add(CHOOSE, False, '')
+        self.tip = inputs.addTextBoxCommandInput(
+            'fbx_tip', '', 'Hundreds or thousands of designs? Start with one project or folder '
+            '(Choose projects or folders), check it, then do the rest into the same output folder.', 3, True)
         self.tree = inputs.addBrowserCommandInput('fbx_tree', '', TREE_HTML.as_uri(), 300, 0)
         self.tree.isVisible = False
         self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
@@ -41,6 +44,7 @@ class Picker:
     def changed(self, changed_input):
         if changed_input.id == self.mode.id:
             self.tree.isVisible = self.summary.isVisible = self.choosing
+            self.tip.isVisible = not self.choosing
             self.trace('mode choosing=%s' % self.choosing)
 
     def incoming(self, action, data):
