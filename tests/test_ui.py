@@ -31,14 +31,27 @@ class UIBase(unittest.TestCase):
         self.folder = NS(title='', folder=self.temp.name, showDialog=lambda: adsk.core.DialogResults.DialogOK)
         self.progress = NS(isCancelButtonShown=False, wasCancelled=False,
                            show=lambda *args: None, hide=lambda: None)
-        self.summaries, self.errors = [], []
+        self.summaries, self.errors, self.details, self.troubles, self.opened = [], [], [], [], []
+        self.answer = adsk.core.DialogResults.DialogCancel  # to the end-of-run dialog
+        self.trouble_answer = adsk.core.DialogResults.DialogCancel  # to Retry / Stop
+        buttons = adsk.core.MessageBoxButtonTypes
+
+        def message_box(*args):
+            if len(args) > 2 and args[2] == buttons.YesNoCancelButtonType:
+                self.summaries.append(args)
+                return self.answer
+            if len(args) > 2 and args[2] == buttons.RetryCancelButtonType:
+                self.troubles.append(args)
+                return self.trouble_answer
+            self.errors.append(args)
+            return adsk.core.DialogResults.DialogOK
         self.definition = NS(commandCreated=Event(), deleteMe=lambda: None)
         self.control = NS(deleteMe=lambda: None)
         self.definitions = NS(addButtonDefinition=lambda *args: self.definition)
         self.ui = NS(createFolderDialog=lambda: self.folder,
                      createProgressDialog=lambda: self.progress,
-                     inputBox=lambda *args: self.summaries.append(args),
-                     messageBox=lambda *args: self.errors.append(args),
+                     inputBox=lambda *args: self.details.append(args),
+                     messageBox=message_box,
                      commandDefinitions=self.definitions,
                      allToolbarPanels=NS(itemById=lambda name: NS(controls=NS(addCommand=lambda definition: self.control))))
         self.file = fake.File()
@@ -59,6 +72,9 @@ class UIBase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.addCleanup(self.module.stop, None)
+        opener = patch('fusion_bulk_export.report.open_path', side_effect=self.opened.append)
+        opener.start()
+        self.addCleanup(opener.stop)
 
     def open_dialog(self):
         self.module.run(None) if not self.definition.commandCreated.handlers else None
@@ -164,19 +180,69 @@ class UItests(UIBase):
         self.assertIn('Tick at least one', self.errors[0][0])
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
 
-    def test_lifecycle_and_copyable_folder_dialog(self):
+    def test_lifecycle_summary_and_report(self):
         self.module.run(None)
         self.assertEqual(self.errors, [])
         command = self.open_dialog()
+        self.answer = self.adsk.core.DialogResults.DialogYes
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.errors, [])
         self.assertIsNone(self.module._busy['by'])  # free for command-line jobs again
         self.assertEqual(len(self.summaries), 1)
-        message, title, folder = self.summaries[0]
-        self.assertIn('Done: 1', message)
+        message, title = self.summaries[0][:2]
+        self.assertIn('1 exported now, 0 already up to date, 0 skipped (not a design), 0 failed.', message)
+        self.assertIn(self.temp.name, message)
+        self.assertNotIn('Run again', message)
         self.assertEqual(title, 'Fusion Bulk Export')
-        self.assertEqual(folder, self.temp.name)
-        self.assertTrue((Path(folder) / 'manifest.json').exists())
+        folder = Path(self.temp.name)
+        self.assertTrue((folder / 'manifest.json').exists())
+        self.assertEqual(self.opened, [folder.resolve() / 'index.html'])
+        self.assertTrue((folder / 'index.csv').exists())
+        # A second run: nothing new, all up to date; No opens the folder.
+        self.answer = self.adsk.core.DialogResults.DialogNo
+        self.open_dialog().execute.handlers[0].notify(None)
+        self.assertIn('0 exported now, 1 already up to date', self.summaries[1][0])
+        self.assertEqual(str(self.opened[1]), self.temp.name)
+
+    def test_failure_reasons_and_retry_hint(self):
+        self.file.failures = 2  # both attempts fail
+        self.open_dialog().execute.handlers[0].notify(None)
+        message = self.summaries[0][0]
+        self.assertIn('0 exported now, 0 already up to date, 0 skipped (not a design), 1 failed.', message)
+        self.assertIn('- Part: Synthetic export failure', message)
+        self.assertIn('Run again to retry the 1 failed.', message)
+        page = (Path(self.temp.name) / 'index.html').read_text()
+        self.assertIn('Synthetic export failure', page)
+        self.assertEqual(self.opened, [])  # Cancel opens nothing
+
+    def test_trouble_asks_retry_or_stop(self):
+        files = [fake.File('P%d' % n, 'f%d' % n) for n in range(7)]
+        for file in files:
+            file.failures = 2
+        self.app.data = fake.data(files)
+        self.open_dialog().execute.handlers[0].notify(None)
+        self.assertEqual(len(self.troubles), 1)
+        self.assertIn('in a row failed', self.troubles[0][0])
+        message = self.summaries[0][0]
+        self.assertIn('The export stopped: 5 designs in a row failed', message)
+        self.assertIn('signed in', message)
+        self.assertEqual(sum(file.calls for file in files), 10)
+
+    def test_trouble_retry_carries_on(self):
+        files = [fake.File('P%d' % n, 'f%d' % n) for n in range(7)]
+        for file in files[:5]:
+            file.failures = 2
+        self.app.data = fake.data(files)
+        self.trouble_answer = self.adsk.core.DialogResults.DialogRetry
+        self.open_dialog().execute.handlers[0].notify(None)
+        self.assertEqual(len(self.troubles), 1)
+        self.assertIn('2 exported now', self.summaries[0][0])
+        self.assertIn('Run again to retry the 5 failed.', self.summaries[0][0])
+
+    def test_low_space_is_reported(self):
+        with patch('fusion_bulk_export.core.free_bytes', return_value=200 << 20):
+            self.open_dialog().execute.handlers[0].notify(None)
+        self.assertIn('Low disk space: 200 MB free.', self.summaries[0][0])
 
     def test_folder_selection_cancel_does_not_open(self):
         self.folder.showDialog = lambda: self.adsk.core.DialogResults.DialogCancel
@@ -189,7 +255,7 @@ class UItests(UIBase):
         self.progress.wasCancelled = True
         self.module.Execute().notify(None)
         self.assertEqual(self.file.calls, 0)
-        self.assertIn('Cancelled', self.summaries[0][0])
+        self.assertIn('Export cancelled', self.summaries[0][0])
         self.assertTrue((Path(self.temp.name) / 'manifest.json').exists())
 
 
@@ -244,7 +310,7 @@ class FriendlyErrorTests(UIBase):
         self.module._code['export_with_dialogs'] = lambda *args: {}['boom']
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.errors, [])
-        prompt, title, details = self.summaries[-1]
+        prompt, title, details = self.details[-1]
         log = self.log / 'errors.log'
         self.assertIn(str(log), prompt)
         self.assertIn("KeyError: 'boom'", details)

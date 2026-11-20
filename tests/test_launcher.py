@@ -66,7 +66,8 @@ class LauncherTests(unittest.TestCase):
         out = self.root / 'out'
         out.mkdir()
         (out / 'autorun-result.json').write_text(json.dumps(dict(
-            mode='export', finished='t', fusion_version='v', counts=dict(done=1, failed=1, skipped=0),
+            mode='export', finished='t', fusion_version='v', counts=dict(exported=1, up_to_date=3, skipped=0, failed=1), stopped_reason='Secret folder gone',
+            stopped_code='output_missing',
             found=2, bytes=10, errors=[dict(stage='x', error='Secret Design failed')])))
         (out / 'manifest.json').write_text(json.dumps(dict(entries=[
             dict(name='Secret Design', status='done', files=[dict(bytes=4), dict(bytes=6)]),
@@ -78,7 +79,13 @@ class LauncherTests(unittest.TestCase):
             self.assertNotIn(secret, text)
         self.assertIn('design 2/2', text)
         self.assertIn('"done": 1', text)
+        self.assertIn('Counts: 1 exported now, 3 already up to date, 0 skipped, 1 failed', text)
+        self.assertIn('Stopped by itself (output_missing)', text)
         self.assertIn('10 bytes', text)
+
+    def test_status_reads_results_of_earlier_versions(self):
+        self.assertEqual(launcher.count_line(dict(done=1, failed=0, skipped=2)),
+                         'Counts: {"done": 1, "failed": 0, "skipped": 2}')
 
     def test_stop_and_status_commands(self):
         out = self.root / 'out'

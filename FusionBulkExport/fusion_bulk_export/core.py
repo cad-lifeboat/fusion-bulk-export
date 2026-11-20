@@ -23,6 +23,17 @@ SAVE_EVERY_ITEMS = 50       # rewrite manifest.json after this many finished ite
 SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journal has each one)
 
 
+# Run counts, by what happened to each item this run.
+COUNT_KEYS = ('exported', 'up_to_date', 'skipped', 'failed')
+COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed'}
+
+
+def new_counts():
+    """exported: written this run; up_to_date: already exported and checked; skipped: not a
+    design (or no design product); failed: will be tried again on the next run."""
+    return dict((key, 0) for key in COUNT_KEYS)
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -386,7 +397,7 @@ class Exporter:
         asked: 'retry' carries on (designs failed so far are retried on the next run), anything
         else stops. Without on_trouble it stops. run_info['stopped_reason'] then says why.
         """
-        counts = dict(done=0, failed=0, skipped=0)
+        counts = new_counts()
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
         if not selection.everything:
@@ -491,7 +502,7 @@ class Exporter:
         key = json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
         entry = entries.get(key)
         if entry and self.valid(entry):
-            counts['skipped'] += 1
+            counts[COUNT_OF_STATUS['verified']] += 1
             self.log('verified ' + key)  # nothing changed: nothing to save
             return 'verified'
         entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': list(folders),
@@ -537,7 +548,7 @@ class Exporter:
                     # A long path Fusion may not take: try the second time in the shortened form.
                     short = (stem is not None and self.platform == 'win32'
                              and windows_length(str(stem) + '.step') > WINDOWS_LIMIT)
-        counts[entry['status']] += 1
+        counts[COUNT_OF_STATUS[entry['status']]] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
             raise trouble  # the run's final save keeps this entry if the disk still allows

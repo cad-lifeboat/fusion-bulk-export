@@ -46,12 +46,15 @@ class AutorunTests(unittest.TestCase):
     def test_export_everything_and_consume_config(self):
         result = self.run_with()
         self.assertEqual(result['errors'], [])
-        self.assertEqual(result['counts'], dict(done=3, failed=0, skipped=1))
+        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, skipped=1, failed=0))
         self.assertEqual(result['found'], 4)
         self.assertGreater(result['bytes'], 0)
         self.assertFalse(self.config.exists())
         self.assertTrue((self.root / 'autorun.json.last').exists())
         self.assertIn('project 2/2 design 4', (self.output / 'autorun.log').read_text())
+        self.assertIn('Not a Fusion design', (self.output / 'index.html').read_text())
+        self.assertTrue((self.output / 'index.csv').is_file())
+        self.assertIsNone(result['stopped_reason'])
 
     def test_inventory_opens_nothing(self):
         result = self.run_with(mode='inventory')
@@ -76,13 +79,13 @@ class AutorunTests(unittest.TestCase):
         files = self.data.dataHubs.item(0).dataProjects.item(1).rootFolder
         files.dataFiles = None  # listing the second project would be an unreadable folder
         result = self.run_with(limit=2)
-        self.assertEqual(result['counts']['done'], 2)
+        self.assertEqual(result['counts']['exported'], 2)
         self.assertEqual(result['discovery_errors'], 0)
 
     def test_selected_project_and_limit(self):
         result = self.run_with(projects=['project-1'], limit=1)
         self.assertEqual(result['projects_matched'], 1)
-        self.assertEqual(result['counts']['done'], 1)
+        self.assertEqual(result['counts']['exported'], 1)
         self.assertEqual(self.files[3].calls, 0)
 
     def test_diagnostics_lists_api_without_account_data(self):
@@ -100,7 +103,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with(folders={'project-1': ['Sub']})
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
-        self.assertEqual(result['counts'], dict(done=0, failed=0, skipped=1))  # Sub holds only a drawing
+        self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, skipped=1, failed=0))  # Sub holds only a drawing
         self.assertEqual(self.files[0].calls + self.files[1].calls + self.files[3].calls, 0)
 
     def test_bad_folders_setting_is_reported(self):
@@ -116,10 +119,10 @@ class AutorunTests(unittest.TestCase):
         (self.output / 'STOP').write_text('')
         result = self.run_with()
         self.assertTrue(result['cancelled'])
-        self.assertEqual(result['counts']['done'], 0)
+        self.assertEqual(result['counts']['exported'], 0)
         (self.output / 'STOP').unlink()
-        self.assertEqual(self.run_with()['counts']['done'], 3)
-        self.assertEqual(self.run_with()['counts'], dict(done=0, failed=0, skipped=4))
+        self.assertEqual(self.run_with()['counts']['exported'], 3)
+        self.assertEqual(self.run_with()['counts'], dict(exported=0, up_to_date=3, skipped=1, failed=0))
 
     def test_unreadable_project_is_recorded_and_others_continue(self):
         class Failing:
@@ -130,7 +133,7 @@ class AutorunTests(unittest.TestCase):
                 raise RuntimeError('No access')
         self.data.dataHubs.item(0).dataProjects.items.append(Failing())
         result = self.run_with()
-        self.assertEqual(result['counts']['done'], 3)
+        self.assertEqual(result['counts']['exported'], 3)
         self.assertEqual(result['discovery_errors'], 1)
         self.assertIn('No access', (self.output / 'export.log').read_text())
 
@@ -176,7 +179,7 @@ class AutorunTests(unittest.TestCase):
     def test_startup_runs_pending_job_then_watches_for_more(self):
         self.config.write_text(json.dumps(dict(output=str(self.output))))
         module, events = self.start_add_in()
-        self.assertEqual(json.loads((self.output / 'autorun-result.json').read_text())['counts']['done'], 3)
+        self.assertEqual(json.loads((self.output / 'autorun-result.json').read_text())['counts']['exported'], 3)
         self.assertEqual(len(events['FusionBulkExportAutorun'].handlers), 1)
         # A later job in the same Fusion session: the poll fires the event, the handler runs it.
         module._watcher.poll()

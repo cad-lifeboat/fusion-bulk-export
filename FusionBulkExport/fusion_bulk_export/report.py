@@ -1,0 +1,211 @@
+"""The human side of an export folder: index.html and index.csv, the end-of-run summary, and
+opening the folder or report in the system's file browser.
+
+index.html is self-contained (no scripts, no network), readable in light and dark mode and
+works when opened straight from disk: every item with its status, links to its files (relative
+to the folder) and, for failures (listed first), the reason and what to do next.
+"""
+import csv
+import html
+import io
+import os
+import subprocess
+import sys
+from urllib.parse import quote
+
+from .names import long_path
+
+ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'done': 3}
+LABEL = {'failed': 'Failed', 'unreadable': 'Not read', 'skipped': 'Skipped', 'done': 'Exported'}
+
+
+def next_step(status, error):
+    """What the user can do about an item, in a few words."""
+    text = (error or '').lower()
+    if status == 'done':
+        return ''
+    if status == 'skipped':
+        if 'not a fusion design' in text or 'no fusion design' in text or 'not a fusion document' in text:
+            return 'Nothing to do: not a 3D design.'
+        return 'Nothing to do unless you need this file; open it in Fusion to check it.'
+    if status == 'unreadable':
+        return 'Check you can open this folder in Fusion, then export again.'
+    if 'unsaved changes' in text or 'close it' in text or 'close this' in text:
+        return 'Save or close this design in Fusion, then export again.'
+    if 'disk is full' in text or 'no space' in text:
+        return 'Free some disk space, then export again.'
+    return 'Export again to retry; if it keeps failing, open the design in Fusion to check it.'
+
+
+def items(manifest, run_info=None):
+    """One dict per manifest entry plus one per unreadable folder, failures first."""
+    result = []
+    for entry in manifest.get('entries', []):
+        status = entry.get('status')
+        files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
+        result.append(dict(status=status, hub=entry.get('hub') or '', project=entry.get('project') or '',
+                           folder='/'.join(entry.get('path') or []), name=entry.get('name') or '',
+                           version=entry.get('version'), files=files, reason=entry.get('error') or '',
+                           next_step=next_step(status, entry.get('error'))))
+    for problem in (run_info or {}).get('discovery_errors') or []:
+        where = list(problem.get('path') or [])
+        result.append(dict(status='unreadable', hub=where[0] if where else '',
+                           project=where[1] if len(where) > 1 else '', folder='/'.join(where[2:]),
+                           name='(folder)', version=None, files=[], reason=problem.get('error') or '',
+                           next_step=next_step('unreadable', problem.get('error'))))
+    result.sort(key=lambda i: (ORDER.get(i['status'], 9), i['hub'].casefold(), i['project'].casefold(),
+                               i['folder'].casefold(), i['name'].casefold()))
+    return result
+
+
+def link(path):
+    """A relative URL for a manifest file path (forward slashes), safe for any name."""
+    return '/'.join(quote(part) for part in path.split('/'))
+
+
+STYLE = '''
+:root { color-scheme: light dark; --bg: #fff; --text: #1f2328; --muted: #5d6670; --line: #d8dee4;
+  --bad: #b42318; --warn: #8a5a00; --good: #1a7f37; --link: #0a5fb4; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #16181c; --text: #e3e6ea; --muted: #9aa4b1; --line: #343a42;
+    --bad: #ff8178; --warn: #e3b341; --good: #56d364; --link: #79b8ff; } }
+body { background: var(--bg); color: var(--text); margin: 24px;
+  font: 14px/1.45 -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 24px 0 8px; }
+.muted { color: var(--muted); } a { color: var(--link); }
+.counts span { display: inline-block; margin: 8px 16px 0 0; }
+table { border-collapse: collapse; width: 100%; } th, td { text-align: left; vertical-align: top;
+  padding: 6px 8px; border-bottom: 1px solid var(--line); } th { color: var(--muted); font-weight: 600; }
+.failed, .unreadable { color: var(--bad); font-weight: 600; } .skipped { color: var(--warn); }
+.done { color: var(--good); } .stop { border-left: 4px solid var(--bad); padding: 4px 12px; }
+'''
+
+
+def render_html(manifest, run_info, counts):
+    rows = items(manifest, run_info)
+    esc = html.escape
+    out = ['<!doctype html>', '<html lang="en"><head><meta charset="utf-8">',
+           '<meta name="viewport" content="width=device-width, initial-scale=1">',
+           '<title>Fusion Bulk Export report</title><style>' + STYLE + '</style></head><body>',
+           '<h1>Fusion Bulk Export report</h1>']
+    finished = (run_info or {}).get('finished') or ''
+    out.append('<div class="muted">Last run finished %s. This page lists everything in this folder\'s '
+               'manifest.json.</div>' % esc(finished))
+    if counts:
+        out.append('<div class="counts"><span>Exported now: <b>%d</b></span><span>Already up to date: '
+                   '<b>%d</b></span><span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b></span></div>'
+                   % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('skipped', 0),
+                      counts.get('failed', 0)))
+    if (run_info or {}).get('stopped_reason'):
+        out.append('<p class="stop">The run stopped itself: %s</p>' % esc(run_info['stopped_reason']))
+    totals = {}
+    for row in rows:
+        totals[row['status']] = totals.get(row['status'], 0) + 1
+    out.append('<div class="muted">In this folder: %d exported, %d failed, %d skipped%s.</div>'
+               % (totals.get('done', 0), totals.get('failed', 0), totals.get('skipped', 0),
+                  ', %d folders not read' % totals['unreadable'] if totals.get('unreadable') else ''))
+    out.append('<h2>Items</h2><table><thead><tr><th>Status</th><th>Project</th><th>Folder</th><th>Design</th>'
+               '<th>Files</th><th>Reason and next step</th></tr></thead><tbody>')
+    for row in rows:
+        files = ' '.join('<a href="%s">%s</a>' % (esc(link(path)), esc(path.rsplit('.', 1)[-1].upper()))
+                         for path in row['files'])
+        name = row['name'] + (' v%s' % row['version'] if row['version'] is not None else '')
+        why = esc(row['reason'])
+        if row['next_step']:
+            why += ('<br>' if why else '') + '<span class="muted">' + esc(row['next_step']) + '</span>'
+        out.append('<tr><td class="%s">%s</td><td>%s<div class="muted">%s</div></td><td>%s</td><td>%s</td>'
+                   '<td>%s</td><td>%s</td></tr>'
+                   % (esc(row['status'] or ''), esc(LABEL.get(row['status'], row['status'] or '')),
+                      esc(row['project']), esc(row['hub']), esc(row['folder']), esc(name), files, why))
+    if not rows:
+        out.append('<tr><td colspan="6" class="muted">Nothing exported yet.</td></tr>')
+    out.append('</tbody></table></body></html>')
+    return '\n'.join(out) + '\n'
+
+
+def render_csv(manifest, run_info):
+    stream = io.StringIO()
+    writer = csv.writer(stream, lineterminator='\r\n')
+    writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
+                     'reason', 'next_step'])
+    for row in items(manifest, run_info):
+        archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '')
+        step = next((p for p in row['files'] if p.lower().endswith(('.step', '.stp'))), '')
+        writer.writerow([row['status'], row['hub'], row['project'], row['folder'], row['name'],
+                         '' if row['version'] is None else row['version'], archive, step, row['reason'],
+                         row['next_step']])
+    return stream.getvalue()
+
+
+def _write(path, text, encoding):
+    temporary = str(path) + '.tmp'
+    with open(long_path(temporary), 'w', encoding=encoding, newline='') as stream:
+        stream.write(text)
+    os.replace(long_path(temporary), long_path(path))
+
+
+def write(exporter, counts=None):
+    """Write index.html and index.csv into the exporter's folder; returns their paths."""
+    root = exporter.root
+    run_info = exporter.run_info
+    page, table = root / 'index.html', root / 'index.csv'
+    _write(page, render_html(exporter.manifest, run_info, counts or run_info.get('counts')), 'utf-8')
+    _write(table, render_csv(exporter.manifest, run_info), 'utf-8-sig')  # utf-8-sig: Excel reads it
+    return page, table
+
+
+def failure_reasons(manifest, run_info=None, limit=3):
+    """Up to limit "name: reason" lines for the items that failed."""
+    lines = []
+    for row in items(manifest, run_info):
+        if row['status'] not in ('failed', 'unreadable'):
+            break
+        where = row['name'] if row['status'] == 'failed' else ' / '.join(
+            part for part in (row['project'], row['folder']) if part)
+        lines.append('%s: %s' % (where, row['reason'] or 'unknown reason'))
+        if len(lines) == limit:
+            break
+    return lines
+
+
+def summary_text(counts, run_info, manifest, output):
+    """The end-of-run dialog text (without the question of what to open)."""
+    if run_info.get('cancelled'):
+        head = 'Export cancelled. Run it again to carry on.'
+    elif run_info.get('stopped_reason'):
+        head = 'The export stopped: ' + run_info['stopped_reason']
+    else:
+        head = 'Export finished.'
+    lines = [head, '',
+             '%d exported now, %d already up to date, %d skipped (not a design), %d failed.'
+             % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('skipped', 0),
+                counts.get('failed', 0))]
+    reasons = failure_reasons(manifest, run_info)
+    if reasons:
+        lines += ['', 'Failures:'] + ['- ' + line for line in reasons]
+    unreadable = len(run_info.get('discovery_errors') or [])
+    if unreadable:
+        lines.append('%d folder(s) could not be read (listed in the report).' % unreadable)
+    if counts.get('failed'):
+        lines += ['', 'Run again to retry the %d failed.' % counts['failed']]
+    if run_info.get('stopped_code'):
+        from .errors import NEXT_STEP
+        step = NEXT_STEP.get(run_info['stopped_code'])
+        if step:
+            lines += ['', step]
+    if run_info.get('low_space'):
+        free = run_info.get('free_bytes')
+        lines += ['', 'Low disk space: %s free.' % ('%d MB' % (free >> 20) if free is not None else 'little')]
+    lines += ['', 'Saved in: ' + str(output)]
+    return '\n'.join(lines)
+
+
+def open_path(path, platform=None, run=None, startfile=None):
+    """Show a file or folder in the system's file browser or default app."""
+    platform = sys.platform if platform is None else platform
+    if platform == 'win32':
+        (startfile or getattr(os, 'startfile'))(str(path))
+    elif platform == 'darwin':
+        (run or subprocess.Popen)(['open', str(path)])
+    else:
+        (run or subprocess.Popen)(['xdg-open', str(path)])

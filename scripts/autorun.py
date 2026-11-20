@@ -151,6 +151,14 @@ def install(installed, output, mode, projects=None, limit=None, folders=None):
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
 
 
+def count_line(counts):
+    """The run's counts in words; results of versions before 0.3 had done/failed/skipped."""
+    if 'exported' in counts:
+        return ('Counts: %d exported now, %d already up to date, %d skipped, %d failed'
+                % tuple(counts.get(key, 0) for key in ('exported', 'up_to_date', 'skipped', 'failed')))
+    return 'Counts: ' + json.dumps(counts, sort_keys=True)
+
+
 def summary(output):
     """Counts only: manifests and logs hold design names, which stay private."""
     lines = []
@@ -159,7 +167,11 @@ def summary(output):
         report = json.loads(result.read_text(encoding='utf-8'))
         lines.append('Result: mode %s, finished %s, Fusion %s' % (
             report.get('mode'), report.get('finished'), report.get('fusion_version')))
-        lines.append('Counts: ' + json.dumps(report.get('counts', {})))
+        lines.append(count_line(report.get('counts', {})))
+        if report.get('stopped_reason'):
+            lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
+        if report.get('low_space'):
+            lines.append('Low disk space: %d MB free' % ((report.get('free_bytes') or 0) >> 20))
         for key in ('found', 'cancelled', 'discovery_errors', 'bytes'):
             if key in report:
                 lines.append('%s: %s' % (key, report[key]))
@@ -178,6 +190,8 @@ def summary(output):
         safe = [l for l in log.read_text(encoding='utf-8').splitlines() if SAFE_LOG.match(l)]
         if safe:
             lines.append('Last progress: ' + safe[-1])
+    if (output / 'index.html').is_file():
+        lines.append('Report: ' + str(output / 'index.html'))
     if (output / 'STOP').exists():
         lines.append('STOP is set; the export pauses between designs.')
     return lines or ['Nothing in ' + str(output) + ' yet.']

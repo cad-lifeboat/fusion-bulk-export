@@ -11,7 +11,9 @@ Configuration (all paths absolute):
 "diagnostics" writes diagnostics.json (Fusion version, the export-related API
 members and text commands this build offers) for bug reports; it reads no designs.
 "inventory" writes inventory.json (every hub, project and design with ids and
-versions) without opening anything. Creating a file named STOP in the output
+versions) without opening anything. An export also writes index.html and index.csv (the
+human-readable report) into the output folder; counts in autorun-result.json are exported,
+up_to_date, skipped and failed. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
 
 A job that arrives while an export from the toolbar button is running is not started: its
@@ -28,6 +30,7 @@ import adsk.core
 
 from .core import Exporter, Listing, Selection, atomic_write, collection, now, select_projects, walk
 from .fusion import FusionAdapter
+from .report import write as write_report
 
 
 class Log:
@@ -249,12 +252,21 @@ def run_autorun(app, config_path):
                     log.write('project %d/%d design %d' % (state['project'], state['projects'], state['design']))
                 adsk.doEvents()
 
-            log.result['counts'] = exporter.run(
-                data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
-                selection=selection)
-            log.result.update(found=exporter.run_info.get('found'),
-                              cancelled=exporter.run_info['cancelled'],
-                              discovery_errors=len(exporter.run_info['discovery_errors']),
+            try:
+                log.result['counts'] = exporter.run(
+                    data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
+                    selection=selection)
+            finally:
+                try:
+                    write_report(exporter)
+                except OSError as error:
+                    log.write('report not written: ' + type(error).__name__)
+            info = exporter.run_info
+            log.result.update(found=info.get('found'),
+                              cancelled=info['cancelled'],
+                              stopped_reason=info.get('stopped_reason'), stopped_code=info.get('stopped_code'),
+                              low_space=info.get('low_space'), free_bytes=info.get('free_bytes'),
+                              discovery_errors=len(info['discovery_errors']),
                               bytes=sum(f['bytes'] for e in exporter.manifest['entries']
                                         if e['status'] == 'done' for f in e['files']))
     except Exception as error:
