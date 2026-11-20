@@ -70,7 +70,7 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 8. **The rest.**
    - **Hundreds of designs or more: one project at a time.** Tell the person, then run
      `export OUT --project ID` per project into the same OUT, and `check OUT` after each.
-     About 3–4 seconds per design in our small tests; complex designs take much longer,
+     About 3 to 9 seconds per design so far; complex designs take much longer,
      so time the first project.
    - Otherwise: `python3 scripts/autorun.py export OUT`.
    - Only part of the account: `--project ID` for whole projects, `--folder ID:Folder/Sub`

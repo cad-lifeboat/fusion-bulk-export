@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Install steps match Fusion's current Scripts and Add-Ins window: no Add-Ins tab; tick Run on Startup before switching Run on.
+- README: timing is given as a range (3 to 9 seconds per design so far), from more accounts.
 
 ## 0.3.0
 
