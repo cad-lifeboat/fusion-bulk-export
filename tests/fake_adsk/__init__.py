@@ -476,19 +476,38 @@ class OldCommand(Command):
 
 class CommandDefinition:
     """A button definition. execute() starts the command: commandCreated is notified with a new
-    Command (made by make_command, so a test can choose an older one)."""
+    Command (made by make_command, so a test can choose an older one). How Fusion answers is
+    the test's choice (execute_mode): 'now' (commandCreated inside execute(), returns True),
+    'later' (returns True; commandCreated comes when Fusion is idle: queued on later, a
+    CustomEvents, run by its pump()), 'never' (returns True, commandCreated never comes),
+    'false' (returns False, nothing starts) or 'raise'."""
     def __init__(self, identity, name='', make_command=Command):
         self.id, self.name = identity, name
         self.commandCreated = Event()
         self.make_command = make_command
         self.commands = []
         self.deleted = False
+        self.execute_mode, self.later = 'now', None
+        self.calls = 0
 
     def execute(self, inputs=None):
+        self.calls += 1
+        if self.execute_mode == 'raise':
+            raise RuntimeError('3 : synthetic: the command cannot be started')
+        if self.execute_mode == 'false':
+            return False
+        if self.execute_mode == 'never':
+            return True
+        if self.execute_mode == 'later':
+            self.later.queue.append(self.create)
+            return True
+        self.create()
+        return True
+
+    def create(self):
         command = self.make_command()
         self.commands.append(command)
         self.commandCreated.notify(NS(command=command))
-        return True
 
     def deleteMe(self):
         self.deleted = True
@@ -532,7 +551,13 @@ class CustomEvents:
         return True
 
     def pump(self):
+        """Fusion is idle: handle what was fired, in order (and other work queued here, such as
+        a command started with CommandDefinition.execute_mode 'later')."""
         while self.queue:
-            name, info = self.queue.pop(0)
+            item = self.queue.pop(0)
+            if callable(item):
+                item()
+                continue
+            name, info = item
             if name in self.events:
                 self.events[name].notify(NS(additionalInfo=info))

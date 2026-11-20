@@ -28,9 +28,8 @@ class ScreensTests(unittest.TestCase):
         self.assertIn('placeholder="%s"' % screens.FILTER, page)
         self.assertEqual(screens.RESULTS_TITLE, results.TITLE)
         self.assertEqual(screens.CLOSE, results.CLOSE)
-        script = (ROOT / 'FusionBulkExport' / 'ui' / 'summary.js').read_text(encoding='utf-8')
-        for label in screens.PAGE_BUTTONS + (screens.SAVED_IN,):
-            self.assertIn("'%s'" % label, script)
+        self.assertEqual(screens.PAGE_BUTTONS, tuple(label for _, label in results.BUTTONS))
+        self.assertEqual(screens.SAVED_IN, results.SAVED_IN)
 
     def test_progress_text_is_what_the_add_in_writes(self):
         self.assertEqual(command.describe(screens.PROGRESS_STATE).replace('%%', '%'), screens.PROGRESS_TEXT)

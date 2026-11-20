@@ -89,6 +89,19 @@ class UIBase(unittest.TestCase):
         opener = patch('fusion_bulk_export.report.open_path', side_effect=self.opened.append)
         opener.start()
         self.addCleanup(opener.stop)
+        # The check CHECK_SECONDS after an export runs when a test says so (run_checks()).
+        self.timers = []
+        tests = self
+
+        class Timer:
+            def __init__(self, seconds, function):
+                self.seconds, self.function, self.daemon = seconds, function, False
+
+            def start(self):
+                tests.timers.append(self)
+        timer = patch.object(self.module, '_Timer', Timer)
+        timer.start()
+        self.addCleanup(timer.stop)
 
     @property
     def definition(self):
@@ -103,17 +116,40 @@ class UIBase(unittest.TestCase):
         return command
 
     def export(self):
-        """Open the dialog and press Export."""
-        self.open_dialog().execute.handlers[0].notify(None)
+        """Open the dialog and press Export: Fusion runs the command's execute, then ends it."""
+        command = self.open_dialog()
+        command.execute.handlers[0].notify(None)
+        self.end(command)
+
+    @staticmethod
+    def end(command):
+        """Fusion ends a command after its execute: its destroy handlers run."""
+        command.destroy.notify(NS())
 
     def results(self):
         """Fusion goes idle after the export command: the custom event starts the results
-        dialog. Returns (its command, the data its page shows, the summary's plain text)."""
+        dialog. Returns (its command, the summary data it shows, the summary's plain text)."""
         self.custom.pump()
         command = self.definitions.itemById('FusionBulkExportResults').commands[-1]
-        data = self.page(command, 'summary')
-        self.page(command, 'shown')
-        return command, data, self.module._results['last']['text']
+        data = self.module._results['view'].data
+        return command, data, data['text']
+
+    def run_checks(self):
+        """CHECK_SECONDS later: the timers fire their custom event, which Fusion then handles."""
+        while self.timers:
+            self.timers.pop(0).function()
+            self.custom.pump()
+
+    @staticmethod
+    def page_file(command):
+        """The page file the results dialog shows (from its URL)."""
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
+        return Path(url2pathname(urlparse(command.commandInputs.find('fbx_results').htmlFileURL).path))
+
+    def fallback_log(self):
+        path = self.addin / 'results-fallback.log'
+        return path.read_text(encoding='utf-8').splitlines() if path.exists() else []
 
     def change(self, command, control):
         command.inputChanged.handlers[0].notify(NS(input=control))
@@ -283,34 +319,47 @@ class UItests(UIBase):
         self.assertEqual(results.name, TITLE)
         self.assertEqual(results.commands, [])
         self.assertEqual(len(self.custom.queue), 1)
+        self.end(command)
+        self.assertEqual(results.commands, [])  # the event starts it, not the destroy handler
         dialog, data, text = self.results()
         self.assertEqual(self.plain, [])
         self.assertEqual(data['headline'], 'Finished')
         self.assertEqual(data['rows'], [['Exported now', 1]])
         self.assertEqual(data['output'], self.temp.name)
-        self.assertTrue(data['has_report'])
-        self.assertNotIn('report', data)  # the page gets no paths but the folder's
         self.assertEqual(data['retry'], '')
         # One button, Close: OK hidden, Cancel renamed; the page across the whole dialog.
         self.assertFalse(dialog.isOKButtonVisible)
         self.assertEqual(dialog.cancelButtonText, 'Close')
         page = dialog.commandInputs.find('fbx_results')
-        self.assertTrue(page.htmlFileURL.endswith('/ui/summary.html'))
         self.assertTrue(page.isFullWidth)
         self.assertEqual(page.name, '')
+        # The page is this run's file in the app-data folder (beside settings.json), not in the
+        # export folder or the add-in's, with the summary already in it: no message needed.
+        shown = self.page_file(dialog)
+        self.assertEqual(shown.parent, self.settings.parent)
         self.assertNotIn(self.temp.name, page.htmlFileURL)
+        html = shown.read_text(encoding='utf-8')
+        self.assertIn('<h1 class="finished">Finished</h1>', html)
+        self.assertIn('<span class="label">Exported now</span><span class="value">1</span>', html)
+        self.assertIn('>Open report</button>', html)
+        self.assertIn('>Open folder</button>', html)
+        self.assertNotIn('src="summary.js"', html)  # the script is in the page itself
         folder = Path(self.temp.name)
         self.assertTrue((folder / 'manifest.json').exists())
         self.assertTrue((folder / 'index.csv').exists())
+        self.assertEqual(self.page(dialog, 'ready'), {'ok': True})  # logged only
         self.assertEqual(self.page(dialog, 'open', {'what': 'report'}), {'ok': True})
         self.assertEqual([str(path) for path in self.opened], [str(folder.resolve() / 'index.html')])
         self.assertEqual(self.page(dialog, 'open', {'what': 'folder'}), {'ok': True})
         self.assertEqual(str(self.opened[1]), self.temp.name)
-        # Enter or Escape on the page ends the command.
+        # Enter or Escape on the page ends the command; its page is deleted.
         self.assertEqual(self.page(dialog, 'close'), {'ok': True})
         self.assertEqual(dialog.executed, [True])
         self.assertIsNone(self.module._results['view'])
+        self.assertFalse(shown.exists())
+        self.run_checks()
         self.assertEqual(self.plain, [])
+        self.assertEqual(self.fallback_log(), [])
         # A second run: nothing new, all up to date.
         self.export()
         data = self.results()[1]
@@ -322,10 +371,13 @@ class UItests(UIBase):
         with patch('fusion_bulk_export.report.open_path', side_effect=OSError('no viewer')):
             reply = self.page(dialog, 'open', {'what': 'report'})
         self.assertIn('Could not open it (no viewer)', reply['error'])
+        self.assertEqual(reply['path'], str(Path(self.temp.name).resolve() / 'index.html'))  # to copy
         self.assertEqual(self.errors, [])
 
-    def assert_fallback(self):
-        """The summary went to a plain message box: OK only, with the folder and report paths."""
+    def assert_fallback(self, reason):
+        """The summary went to a plain message box: OK only, with the folder and report paths,
+        and only that: no results dialog, and why in results-fallback.log."""
+        self.run_checks()  # nothing more shows later
         self.assertEqual(len(self.plain), 1, self.plain)
         text, title, buttons = self.plain[0][:3]
         self.assertEqual(buttons, self.adsk.core.MessageBoxButtonTypes.OKButtonType)
@@ -337,28 +389,109 @@ class UItests(UIBase):
         self.assertNotIn('Traceback', text)
         self.assertEqual(self.errors, [])
         self.assertEqual(self.details, [])
+        self.assertIsNone(self.module._results['view'])  # no dialog
+        log = self.fallback_log()
+        self.assertEqual(len(log), 1, log)
+        self.assertIn(reason, log[0])
+        self.assertNotIn(self.temp.name, log[0])
+        self.assertNotIn('Part', log[0])
+
+    def assert_dialog_only(self):
+        """The results dialog shows, and no message box (now or after the check)."""
+        self.run_checks()
+        self.assertIsNotNone(self.module._results['view'])
+        self.assertEqual(self.plain, [])
+        self.assertEqual(self.fallback_log(), [])
 
     def test_fallback_without_html_inputs(self):
         self.module.run(None)
         self.definitions.itemById('FusionBulkExportResults').make_command = lambda: fake.Command(fake.OldInputs())
         self.export()
         self.custom.pump()
-        self.assert_fallback()
+        self.assert_fallback('commandCreated raised RuntimeError: this Fusion has no HTML inputs')
         command = self.definitions.itemById('FusionBulkExportResults').commands[-1]
         self.assertTrue(command.isAutoExecute)  # the empty dialog is not shown
 
-    def test_fallback_when_the_event_cannot_be_fired(self):
-        self.module.run(None)
-        self.app.fireCustomEvent = lambda name, info: False
-        self.export()
-        self.assert_fallback()
+    def test_when_the_event_cannot_be_fired_the_export_commands_end_starts_the_dialog(self):
+        for fired in (False, None, 'raise'):
+            with self.subTest(fired=fired):
+                self.plain.clear()
 
-    def test_fallback_when_the_command_cannot_start(self):
+                def fire(name, info, fired=fired):
+                    if fired == 'raise':
+                        raise RuntimeError('synthetic')
+                    return fired
+                self.app.fireCustomEvent = fire
+                command = self.open_dialog()
+                command.execute.handlers[0].notify(None)
+                self.assertIsNone(self.module._results['view'])
+                self.end(command)  # the export command ended: its destroy handler starts it
+                self.assertIsNotNone(self.module._results['view'])
+                self.assertEqual(self.plain, [])
+                self.module._results['view'].command.destroy.notify(NS())
+
+    def test_a_late_event_after_the_destroy_start_shows_nothing_more(self):
+        # The event says it was not fired, but Fusion delivers it anyway after the export ended.
         self.module.run(None)
-        self.definitions.itemById('FusionBulkExportResults').execute = lambda: {}['no such command']
+        self.app.fireCustomEvent = lambda name, info: self.custom.fire(name, info) and False
+        self.export()
+        definition = self.definitions.itemById('FusionBulkExportResults')
+        self.assertEqual(len(definition.commands), 1)
+        self.custom.pump()
+        self.assertEqual(definition.calls, 1)
+        self.assert_dialog_only()
+
+    def test_fallback_when_execute_raises(self):
+        self.module.run(None)
+        self.definitions.itemById('FusionBulkExportResults').execute_mode = 'raise'
         self.export()
         self.custom.pump()
-        self.assert_fallback()
+        self.assert_fallback('definition.execute() raised RuntimeError')
+
+    def test_fallback_when_execute_returns_false(self):
+        self.module.run(None)
+        self.definitions.itemById('FusionBulkExportResults').execute_mode = 'false'
+        self.export()
+        self.custom.pump()
+        self.assert_fallback('definition.execute() returned False')
+
+    def test_command_created_later_still_shows_the_dialog(self):
+        self.module.run(None)
+        definition = self.definitions.itemById('FusionBulkExportResults')
+        definition.execute_mode, definition.later = 'later', self.custom
+        self.export()
+        self.custom.pump()  # the event's execute() returns at once; commandCreated follows
+        self.assertEqual(len(definition.commands), 1)
+        self.assert_dialog_only()
+
+    def test_fallback_when_command_created_never_comes(self):
+        self.module.run(None)
+        definition = self.definitions.itemById('FusionBulkExportResults')
+        definition.execute_mode = 'never'
+        self.export()
+        self.custom.pump()
+        self.assertEqual(self.plain, [])  # not yet: Fusion may be slow
+        self.assert_fallback('commandCreated did not run within')
+        # Fusion builds it after all, too late: it ends without a dialog (the box showed).
+        definition.create()
+        self.assertTrue(definition.commands[-1].isAutoExecute)
+        self.assertEqual(len(self.plain), 1)
+
+    def test_neither_the_event_nor_the_destroy_handler_start_it_then_the_check_does(self):
+        self.module.run(None)
+        self.app.fireCustomEvent = lambda name, info: self.custom.fire(name, info) if info.startswith('check') else True
+        command = self.open_dialog()
+        command.execute.handlers[0].notify(None)  # and Fusion never ends the export command
+        self.custom.pump()
+        self.assertIsNone(self.module._results['view'])
+        self.assert_dialog_only()
+
+    def test_fallback_when_the_page_cannot_be_written(self):
+        self.module.run(None)
+        with patch('fusion_bulk_export.results.write_page', side_effect=PermissionError(13, 'Permission denied')):
+            self.export()
+        self.assert_fallback('results page not written: PermissionError: [Errno 13] Permission denied')
+        self.assertEqual(self.definitions.itemById('FusionBulkExportResults').commands, [])
 
     def test_fallback_without_the_results_command(self):
         self.definitions.addButtonDefinition('FusionBulkExportResults', 'left over')  # a stale one is replaced
@@ -366,21 +499,26 @@ class UItests(UIBase):
         self.assertIsNotNone(self.module._results['definition'])
         self.module.remove_results()
         self.export()
-        self.assert_fallback()
+        self.assert_fallback('results command or event not registered')
 
-    def test_fallback_when_the_page_never_showed_the_results(self):
-        self.export()
-        self.custom.pump()
-        command = self.definitions.itemById('FusionBulkExportResults').commands[-1]
-        self.assertEqual(self.plain, [])
-        command.destroy.notify(NS())  # closed without the page saying it showed them
-        self.assert_fallback()
-
-    def test_closing_after_the_page_showed_them_shows_nothing_more(self):
+    def test_a_page_that_never_says_anything_still_shows_the_results_and_closes_quietly(self):
+        # Fusion drops the page's messages: the summary is in the page itself, and closing the
+        # dialog shows no message box.
         self.export()
         command = self.results()[0]
-        command.destroy.notify(NS())
+        self.assertIn('Exported now', self.page_file(command).read_text(encoding='utf-8'))
+        self.end(command)
+        self.run_checks()
         self.assertEqual(self.plain, [])
+        self.assertEqual(self.fallback_log(), [])
+        self.assertEqual(list(self.settings.parent.glob('results-page-*')), [])
+
+    def test_pages_left_by_an_earlier_session_are_deleted_at_start(self):
+        left = self.settings.parent / 'results-page-1-1.html'
+        left.write_text('old')
+        self.module.run(None)
+        self.assertFalse(left.exists())
+        self.assertTrue(self.settings.exists())
 
     def test_older_fusion_names_the_ok_button_close(self):
         self.module.run(None)
@@ -397,11 +535,33 @@ class UItests(UIBase):
         results.execute()
         self.assertTrue(results.commands[-1].isAutoExecute)  # nothing to show yet
         self.export()
-        self.results()
+        command = self.results()[0]
+        self.end(command)
         results.execute()
-        self.assertEqual(self.page(results.commands[-1], 'summary')['headline'], 'Finished')
+        self.assertIn('Finished', self.page_file(results.commands[-1]).read_text(encoding='utf-8'))
+        self.assertEqual(self.plain, [])
 
-    def test_names_reach_the_page_as_data_only(self):
+    def test_the_handlers_and_state_outlive_a_package_reload(self):
+        # The export dialog reloads the package (forget_package); the results' state and
+        # handlers live in the entry file, so the run started before still shows.
+        self.module.run(None)
+        command = self.open_dialog()
+        command.execute.handlers[0].notify(None)
+        import sys
+        saved = {name: module for name, module in sys.modules.items() if name.startswith('fusion_bulk_export')}
+        for name in saved:
+            del sys.modules[name]
+        self.addCleanup(sys.modules.update, saved)
+        self.end(command)
+        self.custom.pump()
+        self.assertIsNotNone(self.module._results['view'])
+        self.assertIn(self.module.ResultsCreated, [type(h) for h in self.module._handlers])
+        self.module.stop(None)
+        self.assertEqual(self.module._handlers, [])
+        self.assertIsNone(self.module._results['definition'])
+        self.assertNotIn('FusionBulkExportShowResults', self.custom.events)
+
+    def test_names_reach_the_page_escaped(self):
         odd = fake.File('<b>Bad</b> & "x"', 'odd')
         odd.failures = 2
         self.app.data = fake.data([odd])
@@ -409,6 +569,9 @@ class UItests(UIBase):
         command, data, _ = self.results()
         self.assertEqual(data['failures'][0]['name'], '<b>Bad</b> & "x"')
         self.assertNotIn('Bad', command.commandInputs.find('fbx_results').htmlFileURL)
+        html = self.page_file(command).read_text(encoding='utf-8')
+        self.assertNotIn('<b>Bad</b>', html)
+        self.assertIn('&lt;b&gt;Bad&lt;/b&gt; &amp; &quot;x&quot;:', html)
 
     def test_failure_reasons_and_retry_hint(self):
         self.file.failures = 2  # both attempts fail
@@ -724,7 +887,7 @@ class FriendlyErrorTests(UIBase):
     def test_old_fusion_offers_everything_only(self):
         self.module.run(None)
         command = NS(execute=Event(), inputChanged=Event(), validateInputs=Event(), incomingFromHTML=Event(),
-                     commandInputs=fake.OldInputs(),
+                     destroy=Event(), commandInputs=fake.OldInputs(),
                      setDialogInitialSize=lambda w, h: None, setDialogMinimumSize=lambda w, h: None)
         self.definition.commandCreated.handlers[-1].notify(NS(command=command))
         self.assertEqual(self.errors, [])
@@ -901,20 +1064,22 @@ class TreeLayoutContractTests(UIBase):
 
 
 class ResultsSwitchTests(UIBase):
-    """results.DIALOG_ENABLED: one switch for the results dialog, off by default for now."""
+    """results.DIALOG_ENABLED: one switch for the results dialog, on as shipped."""
     results_dialog = False
 
-    def test_off_by_default_the_summary_goes_straight_to_a_message_box(self):
+    def test_on_as_shipped(self):
         from fusion_bulk_export import results
         source = Path(results.__file__).read_text(encoding='utf-8')
-        self.assertEqual(re.findall(r'^DIALOG_ENABLED = (.*)$', source, re.M), ['False'])  # the shipped default
-        self.assertIs(results.DIALOG_ENABLED, False)
+        self.assertEqual(re.findall(r'^DIALOG_ENABLED = (.*)$', source, re.M), ['True'])  # the shipped default
+
+    def test_off_the_summary_goes_straight_to_a_message_box(self):
         self.export()
         self.assertIsNone(self.definitions.itemById('FusionBulkExportResults'))  # never registered
         self.assertEqual(self.custom.queue, [])  # nothing fired
         self.assertEqual(len(self.plain), 1)
         self.assertTrue(self.plain[0][0].startswith('Finished'))
         self.assertIn('Exported now', self.plain[0][0])
+        self.assertIn('switched off', self.fallback_log()[0])
 
     def test_on_it_shows_the_results_dialog(self):
         with patch('fusion_bulk_export.results.DIALOG_ENABLED', True):
@@ -922,6 +1087,89 @@ class ResultsSwitchTests(UIBase):
             self.custom.pump()
         self.assertEqual(self.plain, [])
         self.assertEqual(len(self.definitions.itemById('FusionBulkExportResults').commands), 1)
+
+
+class ResultsTraceTests(UIBase):
+    def test_every_stage_is_traced_with_the_switch_file(self):
+        (self.addin / 'trace').write_text('')
+        with patch.object(self.module, '_DIR', str(self.addin)):
+            self.export()
+            command = self.results()[0]
+            self.page(command, 'ready')
+            self.page(command, 'open', {'what': 'folder'})
+            self.end(command)
+            self.run_checks()
+        log = (self.addin / 'trace.log').read_text(encoding='utf-8')
+        for stage in ('results definition created', 'results event registered', 'results page written, run 1',
+                      'results event fired: True', 'export command destroyed', 'results event handler: show:1',
+                      'results definition found', 'results execute returned: True', 'results commandCreated',
+                      'results: browser input added', 'results dialog built', 'results page says: ready',
+                      'results page says: open', 'results page answered: ok', 'results dialog closed',
+                      'results event handler: check:1', 'results check: closed'):
+            self.assertIn(stage.replace(':1', ':N').replace('run 1', 'run N'), re.sub(r'(:|run )\d+', r'\1N', log))
+        self.assertNotIn(self.temp.name, log)
+
+    def test_the_fallback_reason_is_traced_and_logged_without_the_switch_file(self):
+        self.module.run(None)
+        self.definitions.itemById('FusionBulkExportResults').execute_mode = 'false'
+        self.export()
+        self.custom.pump()
+        self.assertFalse((self.addin / 'trace.log').exists())
+        self.assertIn('definition.execute() returned False', self.fallback_log()[0])
+
+
+class ResultsPageTests(unittest.TestCase):
+    """The page the add-in writes for each run: the summary is in it as HTML, readable with no
+    script; names escaped; the script inlined; nothing loaded from outside."""
+    def setUp(self):
+        fake.install()
+        from fusion_bulk_export import report, results
+        self.results, self.report = results, report
+        self.data = dict(headline='Stopped: The disk is full.', rows=[['Exported now', 0], ['Already up to date', 0],
+                         ['Failed', 5]], failures=[dict(name='D%d <i>' % n, reason='r & s') for n in range(3)],
+                         more=2, retry='Run again to retry the 5 failed.', notes=['Low disk space: 200 MB free.'],
+                         output='/Users/you/<Export>', report='')
+
+    def text(self, html):
+        """What a reader sees with scripts off: the page's text without tags or the script."""
+        import html as markup
+        body = re.sub(r'<script>.*?</script>', '', html, flags=re.S)
+        body = re.sub(r'<style>.*?</style>', '', body, flags=re.S)
+        return ' '.join(markup.unescape(re.sub(r'<[^>]+>', ' ', body)).split())
+
+    def test_the_summary_reads_without_scripts(self):
+        html = self.results.page_html(self.data)
+        text = self.text(html)
+        for part in ('Stopped: The disk is full.', 'Exported now 0', 'Failed 5', 'D0 <i>: r & s',
+                     'and 2 more in the report', 'Run again to retry the 5 failed.', 'Low disk space: 200 MB free.',
+                     'Saved in /Users/you/<Export>', 'Open folder'):
+            self.assertIn(part, text)
+        self.assertNotIn('Already up to date', text)  # a zero row other than the first
+        self.assertNotIn('Open report', text)  # no report was written
+        self.assertIn('<h1 class="stopped">', html)
+        self.assertIn('class="count failed"', html)
+        self.assertNotIn('<i>', html)
+        self.assertNotIn('src=', html)
+        self.assertNotIn('http', html)
+        self.assertIn('function deliver(', html)  # the buttons' script, inlined
+        self.assertNotIn('<!--SUMMARY-->', html)
+
+    def test_written_into_the_folder_given_and_removed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            first = self.results.write_page(dict(self.data, report='/r/index.html'), folder)
+            self.assertEqual(first.parent, Path(folder))
+            self.assertIn('data-path="/r/index.html">Open report</button>', first.read_text(encoding='utf-8'))
+            (Path(folder) / 'settings.json').write_text('{}')
+            self.results.remove_pages(folder)
+            self.assertEqual(sorted(p.name for p in Path(folder).iterdir()), ['settings.json'])
+
+    def test_a_damaged_template_raises(self):
+        with tempfile.TemporaryDirectory() as folder:
+            broken = Path(folder) / 'summary.html'
+            broken.write_text('<html></html>')
+            with patch.object(self.results, 'TEMPLATE', broken):
+                with self.assertRaises(ValueError):
+                    self.results.page_html(self.data)
 
 
 class HeartbeatTests(UIBase):

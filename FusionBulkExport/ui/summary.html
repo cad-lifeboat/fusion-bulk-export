@@ -44,11 +44,17 @@
   button:hover { background: var(--hover); }
   button:focus-visible { outline: 2px solid var(--tick); outline-offset: 1px; }
   .status { min-height: 18px; margin-top: 6px; color: var(--bad); overflow-wrap: anywhere; }
-  .waiting { color: var(--muted); font-style: italic; }
+  .manual { margin-top: 6px; }
+  .manual[hidden] { display: none; }
+  .manual-row { display: flex; gap: 6px; margin-top: 4px; }
+  .path { flex: 1 1 auto; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--field); color: var(--text); font: 11px ui-monospace, Menlo, Consolas, monospace; }
 </style>
 </head>
 <body>
-  <div id="page" tabindex="-1"><div class="waiting">Loading the results…</div></div>
+  <div id="page" tabindex="-1">
+<!--SUMMARY-->
+</div>
   <script src="summary.js"></script>
 </body>
 </html>

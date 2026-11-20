@@ -1,41 +1,14 @@
-// The results page shown when an export from the button ends. Pure logic first (tested with
-// node), then the page wiring, which only runs inside Fusion's dialog. Every name and path is
-// set with textContent, never as HTML.
+// The results page's buttons. The summary itself is already in the page as plain HTML (the
+// add-in writes the page for each run, see results.py), so it shows with no script and no
+// message from Fusion. This script only wires Open report, Open folder, Enter and Escape to the
+// add-in (adsk.fusionSendData, answered through incomingFromHTML). A click that gets no answer
+// within CLICK_TIMEOUT_MS shows the path as selectable text with a Copy button, so nobody is
+// stuck. Pure logic first (tested with node), then the page wiring. Text is set with
+// textContent and value, never as HTML.
 'use strict';
 
-const BRIDGE_TIMEOUT_MS = 5000;  // how long to wait for Fusion's page bridge before saying so
-const FAILURES_SHOWN = 3;
-
-// The add-in's summary data (report.summary()), made safe to show whatever arrives: strings,
-// whole numbers, lists. The first row ("Exported now") always shows; other zero rows do not.
-function normalise(data) {
-  data = data && typeof data === 'object' ? data : {};
-  const text = function (v) { return v === undefined || v === null ? '' : String(v); };
-  const rows = (Array.isArray(data.rows) ? data.rows : []).filter(function (row, index) {
-    return Array.isArray(row) && row.length === 2 && (index === 0 || Number(row[1]) !== 0);
-  }).map(function (row) { return { label: text(row[0]), value: Math.max(0, Math.floor(Number(row[1]) || 0)) }; });
-  const failures = (Array.isArray(data.failures) ? data.failures : []).slice(0, FAILURES_SHOWN).map(function (f) {
-    return { name: text(f && f.name), reason: text(f && f.reason) };
-  });
-  const more = Math.max(0, Math.floor(Number(data.more) || 0));
-  const headline = text(data.headline) || 'Finished';
-  return {
-    headline: headline,
-    tone: headline.indexOf('Stopped') === 0 ? 'stopped' : headline.indexOf('Cancelled') === 0 ? 'cancelled' : 'finished',
-    rows: rows,
-    failures: failures,
-    more: more ? 'and ' + more + ' more in the report' : '',
-    retry: text(data.retry),
-    notes: (Array.isArray(data.notes) ? data.notes : []).map(text),
-    output: text(data.output),
-    hasReport: !!data.has_report
-  };
-}
-
-// A CSS class for a count row from its label: "Failed" -> "failed".
-function rowClass(label) {
-  return String(label).toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
-}
+const CLICK_TIMEOUT_MS = 2000;  // a click not answered by then shows the path to copy
+const READY_DELAY_MS = 800;     // Fusion drops a message sent at once on load (seen on real Fusion)
 
 // What a key does on the page: Escape closes; Enter closes unless a button has the focus
 // (then the button itself is pressed).
@@ -45,121 +18,115 @@ function keyAction(key, onButton) {
   return null;
 }
 
+// Send action to the add-in and settle within timeoutMs: {ok: true}, {error, path} (the add-in's
+// own answer) or {timeout: true} (no answer: the bridge is missing, the message was lost, or the
+// reply never came). send is adsk.fusionSendData; it returns the reply as a Promise (newer
+// Fusion) or a string. Never rejects.
+function deliver(send, action, data, timeoutMs, timer) {
+  return new Promise(function (resolve) {
+    let done = false;
+    const finish = function (value) { if (!done) { done = true; resolve(value); } };
+    timer(function () { finish({ timeout: true }); }, timeoutMs);
+    let reply;
+    try {
+      if (typeof send !== 'function') return;  // no bridge: the timer answers
+      reply = send(action, JSON.stringify(data || {}));
+    } catch (error) {
+      finish({ error: String(error && error.message || error) });
+      return;
+    }
+    Promise.resolve(reply).then(function (text) {
+      if (text === undefined || text === null || text === '') return;  // no answer: wait for the timer
+      let value;
+      try { value = typeof text === 'string' ? JSON.parse(text) : text; } catch (e) { value = null; }
+      finish(value && typeof value === 'object' ? value : { ok: true });
+    }, function (error) { finish({ error: String(error && error.message || error) }); });
+  });
+}
+
+// What the page says after a click on Open report / Open folder, from deliver()'s result:
+// null (it opened) or {text, path} (shown with the path to copy).
+function clickOutcome(result, path) {
+  if (result && result.ok) return null;
+  if (result && result.timeout) {
+    return { text: 'Fusion did not answer. Copy the path and open it from your file browser:', path: path };
+  }
+  const why = String(result && result.error || 'It could not be opened.');
+  return { text: why + ' Copy the path and open it from your file browser:', path: (result && result.path) || path };
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { BRIDGE_TIMEOUT_MS: BRIDGE_TIMEOUT_MS, FAILURES_SHOWN: FAILURES_SHOWN, normalise: normalise,
-                     rowClass: rowClass, keyAction: keyAction };
+  module.exports = { CLICK_TIMEOUT_MS: CLICK_TIMEOUT_MS, READY_DELAY_MS: READY_DELAY_MS, keyAction: keyAction,
+                     deliver: deliver, clickOutcome: clickOutcome };
 }
 
 // ---- Page wiring (inside Fusion only) ----
 if (typeof document !== 'undefined') {
-  function ask(action, data) {
-    // Fusion returns the add-in's reply as a Promise (newer builds) or a string.
-    const reply = adsk.fusionSendData(action, JSON.stringify(data || {}));
-    return Promise.resolve(reply).then(function (text) { return text ? JSON.parse(text) : null; });
+  const bridge = function () {
+    return typeof adsk !== 'undefined' && adsk && typeof adsk.fusionSendData === 'function'
+      ? function (action, data) { return adsk.fusionSendData(action, data); } : null;
+  };
+  const byId = function (id) { return document.getElementById(id); };
+  const status = function (text) { const s = byId('status'); if (s) s.textContent = text || ''; };
+
+  function manual(outcome) {
+    const box = byId('manual');
+    if (!box) return;
+    if (!outcome) { box.hidden = true; return; }
+    byId('manual-label').textContent = outcome.text;
+    byId('manual-path').value = outcome.path || '';
+    box.hidden = false;
   }
 
-  function el(tag, className, text) {
-    const e = document.createElement(tag);
-    if (className) e.className = className;
-    if (text !== undefined) e.textContent = text;
-    return e;
+  function copy() {
+    const field = byId('manual-path');
+    let copied = false;
+    try { field.focus(); field.select(); copied = !!document.execCommand('copy'); } catch (e) { copied = false; }
+    if (!copied && typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(field.value).then(function () { status('Copied.'); },
+        function () { status('Selected: press Ctrl+C (Cmd+C on a Mac) to copy.'); });
+      return;
+    }
+    status(copied ? 'Copied.' : 'Selected: press Ctrl+C (Cmd+C on a Mac) to copy.');
   }
 
-  let statusLine = null;
-
-  function status(text) {
-    if (statusLine) statusLine.textContent = text || '';
-  }
-
-  function open(what) {
-    status('');
-    ask('open', { what: what }).then(function (reply) {
-      if (reply && reply.error) status(reply.error);
-    }, function (error) { status(String(error && error.message || error)); });
-  }
-
-  function button(label, action) {
-    const b = el('button', '', label);
-    b.type = 'button';
-    b.onclick = action;
-    return b;
-  }
-
-  function render(data) {
-    const v = normalise(data);
-    const page = document.getElementById('page');
-    page.textContent = '';
-    page.appendChild(el('h1', v.tone, v.headline));
-    const counts = el('div', 'counts');
-    v.rows.forEach(function (row) {
-      const line = el('div', 'count ' + rowClass(row.label));
-      line.title = row.label;
-      line.append(el('span', 'label', row.label), el('span', 'value', String(row.value)));
-      counts.appendChild(line);
+  function open(button) {
+    const what = button.getAttribute('data-open');
+    const path = button.getAttribute('data-path') || '';
+    status('Opening…');
+    manual(null);
+    deliver(bridge(), 'open', { what: what }, CLICK_TIMEOUT_MS, setTimeout).then(function (result) {
+      status('');
+      manual(clickOutcome(result, path));
     });
-    page.appendChild(counts);
-    if (v.failures.length) {
-      const list = el('ul', 'failures');
-      v.failures.forEach(function (f) {
-        const li = el('li', 'failure');
-        const name = el('span', 'name', f.name + ':');
-        name.title = f.name;  // the whole name, when it ends in an ellipsis
-        li.append(name, el('span', 'reason', f.reason));
-        list.appendChild(li);
-      });
-      page.appendChild(list);
-      if (v.more) page.appendChild(el('div', 'more', v.more));
-    }
-    if (v.retry) page.appendChild(el('div', 'retry', v.retry));
-    if (v.notes.length) {
-      const notes = el('ul', 'notes');
-      v.notes.forEach(function (n) { notes.appendChild(el('li', '', n)); });
-      page.appendChild(notes);
-    }
-    page.appendChild(el('div', 'folder-label', 'Saved in'));
-    page.appendChild(el('div', 'folder', v.output));
-    const actions = el('div', 'actions');
-    if (v.hasReport) actions.appendChild(button('Open report', function () { open('report'); }));
-    actions.appendChild(button('Open folder', function () { open('folder'); }));
-    page.appendChild(actions);
-    statusLine = el('div', 'status');
-    statusLine.setAttribute('role', 'status');
-    page.appendChild(statusLine);
-    page.focus();  // Enter and Escape close the dialog from here
   }
 
-  function message(text) {
-    const page = document.getElementById('page');
-    page.textContent = '';
-    page.appendChild(el('div', 'waiting', text));
+  function close() {
+    deliver(bridge(), 'close', {}, CLICK_TIMEOUT_MS, setTimeout).then(function (result) {
+      if (!result || !result.ok) status('Use the Close button.');
+    });
   }
 
-  // Messages from the add-in (BrowserCommandInput.sendInfoToHTML): none are sent, but the page
-  // answers like the tree page does.
   window.fusionJavaScriptHandler = { handle: function () { return 'OK'; } };
   window.addEventListener('load', function () {
+    const buttons = document.querySelectorAll('button[data-open]');
+    for (let i = 0; i < buttons.length; i++) {
+      const b = buttons[i];
+      b.addEventListener('click', function () { open(b); });
+    }
+    const copyButton = byId('copy');
+    if (copyButton) copyButton.addEventListener('click', copy);
     document.addEventListener('keydown', function (e) {
       const target = e.target || {};
       if (keyAction(e.key, String(target.tagName || '').toUpperCase() === 'BUTTON') === 'close') {
         e.preventDefault();
-        ask('close').then(function (reply) { if (reply && reply.error) status(reply.error); }, function () {});
+        close();
       }
     });
-    const started = Date.now();
-    (function start() {
-      if (typeof adsk === 'undefined' || !adsk.fusionSendData) {
-        if (Date.now() - started < BRIDGE_TIMEOUT_MS) setTimeout(start, 100);
-        else message('Fusion did not send the results. Close this dialog to see them in a message.');
-        return;
-      }
-      ask('summary').then(function (reply) {
-        if (!reply || reply.error) throw new Error((reply && reply.error) || 'No answer from Fusion.');
-        render(reply);
-        ask('shown');  // without this, closing the dialog shows the results in a message instead
-      }).catch(function (error) {
-        message('Could not show the results (' + String(error && error.message || error) + '). ' +
-                'Close this dialog to see them in a message.');
-      });
-    })();
+    const page = byId('page');
+    if (page) page.focus();  // Enter and Escape close the dialog from here
+    // Only for the add-in's trace: says the page loaded. Nothing waits for it.
+    setTimeout(function () { const send = bridge(); if (send) deliver(send, 'ready', {}, CLICK_TIMEOUT_MS, setTimeout); },
+               READY_DELAY_MS);
   });
 }
