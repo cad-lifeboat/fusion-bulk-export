@@ -46,7 +46,7 @@ class AutorunTests(unittest.TestCase):
     def test_export_everything_and_consume_config(self):
         result = self.run_with()
         self.assertEqual(result['errors'], [])
-        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=1, files_up_to_date=0, skipped=0, failed=0))
+        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=1, files_up_to_date=0, skipped=0, unsupported=0, failed=0))
         self.assertEqual(result['found'], 4)
         self.assertGreater(result['bytes'], 0)
         self.assertFalse(self.config.exists())
@@ -126,7 +126,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with(folders={'project-1': ['Sub']})
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
-        self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, files=1, files_up_to_date=0, skipped=0, failed=0))  # Sub holds only an uploaded PDF
+        self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, files=1, files_up_to_date=0, skipped=0, unsupported=0, failed=0))  # Sub holds only an uploaded PDF
         self.assertEqual(self.files[0].calls + self.files[1].calls + self.files[3].calls, 0)
 
     def test_folder_selection_by_id_even_with_a_slash_in_its_name(self):
@@ -193,7 +193,7 @@ class AutorunTests(unittest.TestCase):
 
     def test_designs_only(self):
         result = self.run_with(designs_only=True)
-        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=0, files_up_to_date=0, skipped=1, failed=0))
+        self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=0, files_up_to_date=0, skipped=1, unsupported=0, failed=0))
         self.assertFalse(result['other_files'])
         self.assertEqual(self.files[2].downloads, [])
         result = self.run_with(designs_only='yes')
@@ -224,7 +224,7 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(result['counts']['exported'], 0)
         (self.output / 'STOP').unlink()
         self.assertEqual(self.run_with()['counts']['exported'], 3)
-        self.assertEqual(self.run_with()['counts'], dict(exported=0, up_to_date=3, files=0, files_up_to_date=1, skipped=0, failed=0))
+        self.assertEqual(self.run_with()['counts'], dict(exported=0, up_to_date=3, files=0, files_up_to_date=1, skipped=0, unsupported=0, failed=0))
 
     def test_unreadable_project_is_recorded_and_others_continue(self):
         class Failing:

@@ -158,8 +158,8 @@ def read_manifest(root):
     return manifest
 
 
-NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'failed', 'step_ok',
-              'solids_match', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
+NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
+              'step_ok', 'solids_match', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
               'failed_checks', 'members_not_crc_checked')
 
 
@@ -180,6 +180,9 @@ def check_folder(root, strict=False, show=None):
         if status != 'done':
             # A skip is recorded with its reason (not a design, or a file Fusion cannot hand
             # out): nothing to check. Anything else has not been exported yet.
+            if status == 'unsupported':
+                totals['unsupported'] += 1  # a type Fusion cannot export: nothing to check
+                continue
             if status == 'skipped':
                 totals['skipped'] += 1
                 if str(entry.get('error') or '').startswith('Not a Fusion design'):

@@ -7,15 +7,13 @@ import time
 
 import adsk.core
 import adsk.fusion
-from .core import NonDesign, NotSaved, OpenInFusion, collection, disk_full
+from .core import NATIVE_REASON, UNSUPPORTED, NonDesign, NotSaved, OpenInFusion, collection, disk_full
 from .names import fusion_path, long_path
 from .staging import Staging
 
-# Fusion's own types other than designs and drawings: DataFile.download refuses them ("file
-# type not available for download", seen on real Fusion for .f2d, .fsch, .fbrd and .flbr) and
-# there is no export for them in the API, so they are skipped without asking.
-FUSION_NATIVE = {'f2d', 'f2t', 'fsch', 'fbrd', 'flbr', 'fprj', 'cam360'}
-NATIVE_REASON = 'Fusion cannot export this file type through its API'
+# Fusion's own types other than designs (core.UNSUPPORTED): the exporter records them without
+# asking Fusion; download() refuses them too, in case it is ever handed one.
+FUSION_NATIVE = UNSUPPORTED | {'f2d'}
 # Seen on real Fusion: the first execute() on a freshly opened drawing returns True and writes
 # nothing; a second one writes the PDF at once. So: execute, wait PDF_FIRST_WAIT_SECONDS; if no
 # file, execute again and wait PDF_WAIT_SECONDS; then give up.

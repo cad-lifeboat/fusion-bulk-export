@@ -66,6 +66,17 @@ class VerifyTests(unittest.TestCase):
         self.assertIn('"not_designs": 1', text)
         self.assertIn('"solids_match": 1', text)
 
+    def test_unsupported_files_are_not_failures(self):
+        self.build()
+        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest['entries'].append(dict(id='b', name='Board', kind='file', status='unsupported', files=[],
+                                        error='Fusion cannot export this file type through its API (.fbrd)'))
+        (self.root / 'manifest.json').write_text(json.dumps(manifest))
+        status, text = self.run_check()
+        self.assertEqual(status, 0, text)
+        self.assertIn('"unsupported": 1', text)
+        self.assertIn('"failed_checks": 0', text)
+
     def test_plain_archive_passes(self):
         self.build(archive='.f3d')
         self.assertEqual(self.run_check()[0], 0)

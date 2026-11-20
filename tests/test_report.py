@@ -18,6 +18,10 @@ def entry(name, status, error=None, files=(), path=()):
                 files=[dict(path=p, sha256='x', bytes=1) for p in files])
 
 
+def rows_of(table):
+    return list(csv.DictReader(io.StringIO(Path(table).read_text(encoding='utf-8-sig'))))
+
+
 class ReportTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -160,14 +164,43 @@ class ReportTests(unittest.TestCase):
         self.assertLess(text.index('<h2>Other files</h2>'), text.index('Spec'))
         self.assertIn('Other files saved: <b>1</b>', text)
         self.assertIn('href="Hub/Proj/Spec.pdf">PDF</a>', text)
-        self.assertIn('open it in Fusion and export or download it by hand', text)
-        self.assertIn('1 other files saved, 1 not saved', text)
+        # A file type Fusion cannot export, recorded as a skip by an older version, reads as not supported.
+        self.assertIn('<td class="unsupported">Not supported</td>', text)
+        self.assertIn('use File &gt; Export', text)
+        self.assertIn('1 other files saved, 0 not saved; 1 not supported by Fusion&#x27;s export '
+                      '(electronics, drawings)', text)
         rows = list(csv.DictReader(io.StringIO(table.read_text(encoding='utf-8-sig'))))
         spec = next(r for r in rows if r['design'] == 'Spec')
         self.assertEqual((spec['kind'], spec['file'], spec['archive']), ('file', 'Hub/Proj/Spec.pdf', ''))
         self.assertEqual(next(r for r in rows if r['design'] == 'Bad')['kind'], 'design')
         rows = report.summary(self.run_info['counts'], self.run_info, self.manifest, '/out')['rows']
         self.assertEqual(rows, [['Exported now', 1], ['Other files saved', 1], ['Skipped', 2], ['Failed', 2]])
+        statuses = {r['design']: r['status'] for r in rows_of(table)}
+        self.assertEqual(statuses['Drawing'], 'unsupported')
+
+    def test_unsupported_files_are_neutral_and_apart_from_failures_and_skips(self):
+        boards = []
+        for number in range(6):
+            board = entry('Board %d' % number, 'unsupported',
+                          'Fusion cannot export this file type through its API (.fbrd)')
+            board['kind'] = 'file'
+            boards.append(board)
+        self.manifest = dict(entries=[entry('Good', 'done', files=['Hub/Proj/Good v2.f3d'])] + boards)
+        self.run_info['discovery_errors'] = []
+        counts = dict(exported=1, up_to_date=0, files=0, files_up_to_date=0, skipped=0, unsupported=6, failed=0)
+        data = report.summary(counts, self.run_info, self.manifest, '/out')
+        text = report.text_of(data)
+        self.assertIn("6 not supported by Fusion's export (electronics, drawings)", text)
+        self.assertNotIn('could not be saved', text)
+        self.assertNotIn('Failed', text)
+        self.assertNotIn('Skipped', text)
+        page = report.render_html(self.manifest, self.run_info, counts)
+        self.assertIn('Not supported by Fusion\'s export: <b>6</b>', page)
+        self.assertIn('Failed: <b>0</b>', page)
+        self.assertIn('0 other files saved, 0 not saved; 6 not supported', page)
+        statuses = [r['status'] for r in csv.DictReader(io.StringIO(report.render_csv(self.manifest, self.run_info)))]
+        self.assertEqual(statuses, ['unsupported'] * 6 + ['done'])
+        self.assertEqual(report.next_step('unsupported', ''), report.UNSUPPORTED_NEXT)
 
     def test_designs_only_skip_says_how_to_save_it(self):
         self.assertIn('Also save other files', report.next_step('skipped', 'Not a Fusion design: pdf'))

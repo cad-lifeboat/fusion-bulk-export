@@ -13,11 +13,16 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-from .core import LINKS_UNREADABLE
+from .core import LINKS_UNREADABLE, NATIVE_REASON
 from .names import long_path
 
-ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'warning': 3, 'done': 4}
-LABEL = {'failed': 'Failed', 'unreadable': 'Not read', 'skipped': 'Skipped', 'done': 'Exported'}
+ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'unsupported': 3, 'warning': 4, 'done': 5}
+LABEL = {'failed': 'Failed', 'unreadable': 'Not read', 'skipped': 'Skipped', 'unsupported': 'Not supported',
+         'done': 'Exported'}
+# Files Fusion's API cannot export (electronics, drawings): neither failures nor left out by the
+# user, so they are counted and named apart from both.
+UNSUPPORTED_TEXT = "%d not supported by Fusion's export (electronics, drawings)"
+UNSUPPORTED_NEXT = 'Nothing to do here. If you need it, open it in Fusion and use File > Export.'
 LINKS_OUT_OF_DATE = ('Some of its links are out of date: a linked design has a newer version than this design '
                      'uses. The export holds the versions it uses; open it in Fusion and update its links '
                      'if you want the newer ones.')
@@ -30,6 +35,8 @@ def next_step(status, error):
     text = (error or '').lower()
     if status == 'done':
         return ''
+    if status == 'unsupported':
+        return UNSUPPORTED_NEXT
     if status == 'skipped':
         if 'drawing pdfs are off' in text:
             return ('Tick "Also export drawings as PDF" (command line: --drawings) and export again to include '
@@ -63,7 +70,7 @@ def items(manifest, run_info=None):
     """One dict per manifest entry plus one per unreadable folder, failures first."""
     result = []
     for entry in manifest.get('entries', []):
-        status = entry.get('status')
+        status = shown_status(entry)
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
         warnings = [str(w) for w in entry.get('warnings') or []] if status == 'done' else []
         picture = (entry.get('thumbnail') or {}).get('path') if status == 'done' else None
@@ -91,6 +98,21 @@ def items(manifest, run_info=None):
     return result
 
 
+def shown_status(entry):
+    """An entry's status as reported: a skip of a file type Fusion cannot export, recorded by a
+    version before "unsupported" existed, is reported as unsupported too."""
+    status = entry.get('status')
+    if status == 'skipped' and entry.get('kind') == 'file' and str(entry.get('error') or '').startswith(
+            NATIVE_REASON):
+        return 'unsupported'
+    return status
+
+
+def unsupported_count(manifest):
+    """How many files in the folder Fusion's API cannot export."""
+    return sum(1 for entry in manifest.get('entries', []) if shown_status(entry) == 'unsupported')
+
+
 def link(path):
     """A relative URL for a manifest file path (forward slashes), safe for any name."""
     return '/'.join(quote(part) for part in path.split('/'))
@@ -110,7 +132,7 @@ h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 24px 0 8p
 table { border-collapse: collapse; width: 100%; } th, td { text-align: left; vertical-align: top;
   padding: 6px 8px; border-bottom: 1px solid var(--line); } th { color: var(--muted); font-weight: 600; }
 .failed, .unreadable { color: var(--bad); font-weight: 600; } .skipped { color: var(--warn); }
-.done { color: var(--good); } img.thumb { width: 64px; height: 64px; object-fit: contain;
+.unsupported { color: var(--muted); } .done { color: var(--good); } img.thumb { width: 64px; height: 64px; object-fit: contain;
   float: left; margin-right: 8px; } .warn { color: var(--warn); } .stop { border-left: 4px solid var(--bad); padding: 4px 12px; }
 '''
 
@@ -118,9 +140,11 @@ table { border-collapse: collapse; width: 100%; } th, td { text-align: left; ver
 def counts_html(counts):
     return ('<div class="counts"><span>Exported now: <b>%d</b></span><span>Already up to date: <b>%d</b></span>'
             '<span>Other files saved: <b>%d</b></span><span>Other files up to date: <b>%d</b></span>'
-            '<span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b>'
-            '</span></div>' % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
-                               counts.get('files_up_to_date', 0), counts.get('skipped', 0), counts.get('failed', 0)))
+            '<span>Skipped: <b>%d</b></span><span>Not supported by Fusion\'s export: <b>%d</b></span>'
+            '<span>Failed: <b>%d</b></span></div>'
+            % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
+               counts.get('files_up_to_date', 0), counts.get('skipped', 0), counts.get('unsupported', 0),
+               counts.get('failed', 0)))
 
 
 def table_html(rows, heading, column):
@@ -187,7 +211,10 @@ def render_html(manifest, run_info, counts):
                ', %d folders not read' % totals['unreadable'] if totals.get('unreadable') else ''))
     if others:
         saved = sum(1 for row in others if row['status'] == 'done')
-        line += '; %d other files saved, %d not saved' % (saved, len(others) - saved)
+        unsupported = sum(1 for row in others if row['status'] == 'unsupported')
+        line += '; %d other files saved, %d not saved' % (saved, len(others) - saved - unsupported)
+        if unsupported:
+            line += '; ' + UNSUPPORTED_TEXT % unsupported
     stale = links_out_of_date(manifest)
     if stale:
         line += '; %d with out-of-date links (a note, not a failure)' % stale
@@ -328,6 +355,9 @@ def summary(counts, run_info, manifest, output, page=None):
     long_paths = long_path_count(manifest)
     if long_paths:
         notes.append(LONG_PATHS % long_paths)
+    unsupported = unsupported_count(manifest)
+    if unsupported:
+        notes.append((UNSUPPORTED_TEXT % unsupported) + '; not failures, the report lists them.')
     left_out = drawings_off(manifest)
     if left_out:
         notes.append('%d drawing(s) left out: drawing PDFs are off.' % left_out)

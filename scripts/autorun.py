@@ -176,10 +176,13 @@ def count_line(counts):
     """The run's counts in words; results of versions before 0.3 had done/failed/skipped."""
     if 'exported' in counts:
         unchanged = counts.get('files_up_to_date', 0)
-        return ('Counts: %d exported now, %d already up to date, %d other files saved%s, %d skipped, %d failed'
+        unsupported = counts.get('unsupported', 0)
+        return ('Counts: %d exported now, %d already up to date, %d other files saved%s, %d skipped, %d failed%s'
                 % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
                    ', %d other files already up to date' % unchanged if unchanged else '',
-                   counts.get('skipped', 0), counts.get('failed', 0)))
+                   counts.get('skipped', 0), counts.get('failed', 0),
+                   ("; %d not supported by Fusion's export (electronics, drawings)" % unsupported
+                    if unsupported else '')))
     return 'Counts: ' + json.dumps(counts, sort_keys=True)
 
 
@@ -214,6 +217,12 @@ def summary(output):
                 statuses[entry.get('status')] = statuses.get(entry.get('status'), 0) + 1
             lines.append('%s: %d entries %s%s' % (label, len(chosen), json.dumps(statuses, sort_keys=True),
                                                   ', %d bytes' % size if kind is None else ''))
+        unsupported = sum(1 for e in entries if e.get('status') == 'unsupported' or (
+            e.get('status') == 'skipped' and e.get('kind') == 'file'
+            and str(e.get('error') or '').startswith('Fusion cannot export this file type')))
+        if unsupported:
+            lines.append("Not supported: %d not supported by Fusion's export (electronics, drawings); "
+                         'not failures' % unsupported)
         warned = sum(1 for e in entries if e.get('status') == 'done' and e.get('warnings'))
         if warned:
             lines.append('Warnings: %d item(s) exported with a warning (see the report)' % warned)

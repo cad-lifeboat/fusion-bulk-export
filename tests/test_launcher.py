@@ -306,6 +306,22 @@ class LauncherTests(unittest.TestCase):
                          'Counts: 0 exported now, 1 already up to date, 0 other files saved, '
                          '2 other files already up to date, 0 skipped, 0 failed')
 
+    def test_status_counts_unsupported_files_apart_from_failures(self):
+        out = self.root / 'out'
+        out.mkdir()
+        (out / 'manifest.json').write_text(json.dumps(dict(entries=[
+            dict(name='Secret Board', kind='file', status='unsupported', files=[],
+                 error='Fusion cannot export this file type through its API (.fbrd)'),
+            dict(name='Secret Old', kind='file', status='skipped', files=[],
+                 error='Fusion cannot export this file type through its API (.fsch)')])))
+        text = '\n'.join(launcher.summary(out))
+        self.assertIn("Not supported: 2 not supported by Fusion's export (electronics, drawings); not failures", text)
+        self.assertNotIn('Secret', text)
+        self.assertEqual(launcher.count_line(dict(exported=1, up_to_date=0, files=0, skipped=0, unsupported=6,
+                                                  failed=0)),
+                         "Counts: 1 exported now, 0 already up to date, 0 other files saved, 0 skipped, 0 failed; "
+                         "6 not supported by Fusion's export (electronics, drawings)")
+
     def test_run_time_files_come_from_the_installer_list(self):
         source = Path(launcher.__file__).resolve().parents[1] / 'FusionBulkExport'
         names = ['errors.log', 'autorun.json', '__pycache__', 'core.pyc', '.DS_Store', 'trace.log',

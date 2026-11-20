@@ -34,8 +34,9 @@ SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journa
 
 
 # Run counts, by what happened to each item this run.
-COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'failed')
-COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed'}
+COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'unsupported', 'failed')
+COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed',
+                   'unsupported': 'unsupported'}
 FILES_SAVED = 'files'  # the count of other files (not designs) saved this run
 FILES_UP_TO_DATE = 'files_up_to_date'  # other files saved before and still unchanged
 
@@ -53,9 +54,10 @@ def count_key(entry, status):
 def new_counts():
     """exported: designs written this run; up_to_date: designs already exported and checked;
     files: other files (PDFs, drawings, uploads) saved this run; files_up_to_date: other files
-    saved before and checked; skipped: not saved, with a reason (a file type
-    Fusion does not hand out, other files when only designs are wanted, a design without a design
-    product); failed: will be tried again on the next run."""
+    saved before and checked; skipped: not saved, with a reason (other files when only designs are
+    wanted, a design without a design product, a download Fusion refused); unsupported: a file
+    type Fusion's API cannot export at all (electronics, drawings: see UNSUPPORTED), neither a
+    failure nor the user's choice; failed: will be tried again on the next run."""
     return dict((key, 0) for key in COUNT_KEYS)
 
 
@@ -256,6 +258,27 @@ DRAWINGS_OFF = "Drawing PDFs are off (tick 'Also export drawings as PDF' to incl
 
 def is_drawing(file):
     return str(getattr(file, 'fileExtension', '') or '').lower().strip('.') == DRAWING
+
+
+# Fusion's own types other than designs: DataFile.download refuses them ("file type not available
+# for download", seen on real Fusion for .f2d, .fsch, .fbrd and .flbr) and the API has no export
+# for them, so they are recorded as unsupported (status "unsupported") without asking Fusion.
+UNSUPPORTED = {'f2t', 'fsch', 'fbrd', 'flbr', 'fprj', 'cam360'}
+NATIVE_REASON = 'Fusion cannot export this file type through its API'
+
+
+def extension_of(file):
+    return str(getattr(file, 'fileExtension', '') or '').lower().strip('.')
+
+
+def unsupported_reason(file):
+    """Why Fusion's API cannot export this file, or None when it can (or may)."""
+    extension = extension_of(file)
+    if extension in UNSUPPORTED:
+        return '%s (.%s)' % (NATIVE_REASON, extension)
+    return None
+
+
 EXTENSION = re.compile(r'(?=.*[A-Za-z])[A-Za-z0-9]{1,8}')
 
 
@@ -878,7 +901,10 @@ class Exporter:
         self.manifest['entries'].append(entry)
         entries[key] = entry
         trouble = None
-        if kind == 'file':
+        if kind == 'file' and unsupported_reason(file) is not None:
+            # Never handed to Fusion: neither a failure nor something the user left out.
+            entry.update(status='unsupported', error=unsupported_reason(file))
+        elif kind == 'file':
             drawing = is_drawing(file)
             if not (self.drawings if drawing else self.other_files):
                 entry['error'] = DRAWINGS_OFF if drawing else 'Not a Fusion design: ' + file.fileExtension
