@@ -9,7 +9,7 @@ Get all of your Fusion designs out, in one go.
 - Resumable: run it again on the same folder and it skips what's already done.
 - Everything stays on your computer. Nothing in your account is changed.
 
-**Tested on real Fusion** (2706.1.17) on macOS and Windows 11 with real accounts, through the toolbar button and the command line: a whole account of 59 designs exported with no failures in under 3 minutes, every archive and STEP file checked; single folders, resuming, cancelling and long paths were checked too. Users have reported whole-account runs of 120 and 959 designs with no failures on earlier 0.3 versions (see [Discussions](../../discussions)); we have not measured a run that large ourselves. If you hit a problem, please [open an issue](../../issues/new/choose); if it worked, [tell us how it went](../../discussions/new?category=show-and-tell).
+**Tested on real Fusion** (2706.1.17) on macOS and Windows 11 with real accounts, through the toolbar button and the command line: a whole account of 59 designs exported with no failures in under 3 minutes, every archive and STEP file checked; single folders, resuming, cancelling and long paths were checked too. Users have reported whole-account runs of 120, 959 and about 1,500 designs with no failures on 0.3 versions (see [Discussions](../../discussions)); we have not measured a run that large ourselves. If you hit a problem, please [open an issue](../../issues/new/choose); if it worked, [tell us how it went](../../discussions/new?category=show-and-tell).
 
 ## Quick start
 
