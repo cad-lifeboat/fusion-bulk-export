@@ -63,6 +63,7 @@ only reads from the account. Work on the person's machine, in a terminal, with t
 9. **Finish:** run `verify-export.py OUT` again, rerun `export` once more to retry any
    failures, then tell the person the counts (found, done, failed, skipped, total size)
    and where the folder is.
+   Last, run `python3 scripts/autorun.py reset` so the person gets the Fusion button back.
 
 ## Troubleshooting
 

@@ -231,6 +231,21 @@ def start(args):
         set_startup(installed, False)
 
 
+def reset(installed):
+    """Leave unattended mode. A running add-in finishes its current job first."""
+    removed = []
+    for name in ('autorun.watch', 'autorun.json', 'autorun.alive'):
+        try:
+            (installed / name).unlink()
+            removed.append(name)
+        except FileNotFoundError:
+            pass
+    set_startup(installed, False) if (installed / 'FusionBulkExport.manifest').is_file() else None
+    print('Unattended mode is off%s. To get the button back now, switch FusionBulkExport off and on '
+          'in Fusion (Shift+S), or restart Fusion.' % (' (removed ' + ', '.join(removed) + ')' if removed else ''))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -242,7 +257,10 @@ def main(argv=None):
             p.add_argument('--folder', action='append', metavar='ID:PATH',
                            help='a folder (and its subfolders) in project ID, e.g. ID:Parts/Brackets (repeatable)')
             p.add_argument('--limit', type=int, help='export at most this many designs')
+    sub.add_parser('reset', help='leave unattended mode: the add-in shows its button again')
     args = parser.parse_args(argv)
+    if args.command == 'reset':
+        return reset(addins_dir(system()) / 'FusionBulkExport')
     args.timeout = float(os.environ.get('AUTORUN_TIMEOUT_SECONDS', 86400))
     if args.command == 'status':
         for line in summary(check_output(args.output)):

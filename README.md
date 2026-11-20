@@ -8,7 +8,7 @@ Get all of your Fusion designs out, in one go.
 - Resumable: run it again on the same folder and it skips what's already done.
 - Everything stays on your computer. Nothing in your account is changed.
 
-**Tested on real Fusion** (2706.1.17, macOS) with a real account, through both the toolbar button and the unattended launcher: 59 of 59 designs exported, every archive and STEP file checked, no failures (3.5 minutes, 52 MB); exporting a single chosen folder was checked too. On Windows 11 the add-in and launcher were tested too: an inventory of a large account and a small trial export, every file checked. If you hit a problem, please [open an issue](../../issues/new/choose) with your Fusion version and the end-of-run counts.
+**Tested on real Fusion** (2706.1.17, macOS) with a real account, through both the toolbar button and the command line: 59 of 59 designs exported, every archive and STEP file checked, no failures (3.5 minutes, 52 MB); exporting a single chosen folder was checked too. On Windows 11 the button and the command line were tested too: an inventory of a large account and a small trial export, every file checked. If you hit a problem, please [open an issue](../../issues/new/choose) with your Fusion version and the end-of-run counts.
 
 ## Quick start
 
@@ -87,34 +87,6 @@ FusionExport/
 - **Check the files:** `python3 scripts/verify-export.py <folder>` (from a download of this repository) opens every archive and STEP file and prints counts only.
 - Still stuck? [Open an issue](../../issues/new/choose) with the counts and error messages, with any design names replaced by `X`.
 
-## Unattended export (macOS and Windows)
-
-For large accounts, or to let an agent drive it, the export runs without any dialogs.
-You need a download of this repository and Python 3.9 or newer. Sign in to Fusion once, then:
-
-```sh
-python3 scripts/autorun.py inventory ~/FusionExport                  # list everything, open nothing
-python3 scripts/autorun.py export ~/FusionExport --project PROJECT_ID # one whole project
-python3 scripts/autorun.py export ~/FusionExport --folder PROJECT_ID:Parts/Brackets  # one folder and its subfolders
-python3 scripts/autorun.py export ~/FusionExport                      # everything; rerun to resume
-python3 scripts/autorun.py status ~/FusionExport                      # counts so far
-python3 scripts/autorun.py stop ~/FusionExport                        # pause between designs
-```
-
-On Windows use `py scripts\autorun.py ...` and a short folder such as `C:\FusionExport`.
-
-The launcher installs the add-in, hands it the job and starts Fusion if needed.
-Fusion does not always start a newly installed add-in by itself. If the launcher says
-so, open **Utilities → Add-Ins**, select **FusionBulkExport** and click **Run**, and the
-waiting job starts. After that, Fusion stays open and the add-in picks up each new job
-at once.
-
-`inventory.json` lists every hub, project and file with its id, so you can choose a
-project for a trial run. `--limit N` caps one run. Projects or folders that can't be
-read are logged and skipped. `scripts/autorun.py diagnostics <folder>` records which
-export functions your Fusion build has, which helps with bug reports. To go back to the
-button, quit Fusion and delete `autorun.watch` from the installed add-in folder.
-
 ## How resuming works
 
 Running again on the same folder skips a finished design only if its files are still
@@ -135,6 +107,27 @@ for linked components, and Fusion's STEP translator occasionally drops a body it
 write; the `.f3d` is the complete copy. Use `--strict` to treat differences as failures,
 and `--names` to show design names. On Python before 3.14, archive parts compressed with
 Zstandard are counted as not CRC-checked.
+
+## Command line (for AI agents and scripts)
+
+You don't need this for a big account: the button streams and shows its progress. The
+command line is for AI agents and scripts that run the export without clicks. It needs a
+download of this repository and Python 3.9 or newer (`python3` on macOS, `py` on Windows).
+
+```sh
+python3 scripts/autorun.py inventory ~/FusionExport                     # counts only; opens nothing
+python3 scripts/autorun.py export ~/FusionExport --project PROJECT_ID    # one project
+python3 scripts/autorun.py export ~/FusionExport --folder PROJECT_ID:Parts/Brackets  # one folder
+python3 scripts/autorun.py export ~/FusionExport                         # everything; rerun to resume
+python3 scripts/autorun.py status ~/FusionExport                         # how far it got
+python3 scripts/autorun.py stop ~/FusionExport                           # pause after this design
+python3 scripts/autorun.py reset                                         # back to the button
+```
+
+- Project ids are in `inventory.json`. `--limit N` exports at most N designs.
+- The first time, Fusion may need one click to start the add-in; the command says so
+  (**Shift+S → FusionBulkExport → Run**). After that each command starts at once.
+- `diagnostics <folder>` records which export functions your Fusion build has, for bug reports.
 
 ## Developers
 

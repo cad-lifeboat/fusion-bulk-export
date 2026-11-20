@@ -147,6 +147,18 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn('rejected the job', stream.getvalue())
 
+    def test_reset_leaves_unattended_mode(self):
+        installed = self.root / 'FusionBulkExport'
+        installed.mkdir()
+        for name in ('autorun.watch', 'autorun.json', 'autorun.alive'):
+            (installed / name).write_text('')
+        (installed / 'FusionBulkExport.manifest').write_text(json.dumps(dict(runOnStartup=True)))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(launcher.reset(installed), 0)
+        self.assertEqual(sorted(p.name for p in installed.iterdir()), ['FusionBulkExport.manifest'])
+        self.assertFalse(json.loads((installed / 'FusionBulkExport.manifest').read_text())['runOnStartup'])
+        self.assertIn('Unattended mode is off', out.getvalue())
+
     def test_folder_arguments(self):
         self.assertEqual(launcher.folder_map(['p1:Parts/Brackets/', 'p1:Jigs', 'p2:/X']),
                          {'p1': ['Parts/Brackets', 'Jigs'], 'p2': ['X']})
