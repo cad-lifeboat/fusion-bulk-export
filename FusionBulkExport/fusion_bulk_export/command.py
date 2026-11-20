@@ -71,15 +71,26 @@ def bar(state):
 OPEN_CHOICES = ('\n\nYes: open the report (index.html).  No: open the folder.  Cancel: close.')
 
 
-def ask_trouble(ui, reason, last_error):
-    """The run cannot go on (disk full, folder gone, designs failing in a row): Retry or Stop."""
+def ask(ui, text, buttons, icon):
+    """messageBox with buttons (a MessageBoxButtonTypes member every Fusion has: OKCancel,
+    YesNo, YesNoCancel) and, where this Fusion offers it, an icon. Only the basic buttons and
+    their results (DialogOK, DialogCancel, DialogYes, DialogNo) are relied on."""
     core = adsk.core
-    text = ('The export has paused: %s\n\nLast error: %s\n\nRetry carries on. Cancel stops the export: '
-            'everything exported so far is kept, and running it again carries on from there.'
+    shown = getattr(getattr(core, 'MessageBoxIconTypes', None), icon, None)
+    kind = getattr(core.MessageBoxButtonTypes, buttons)
+    if shown is None:
+        return ui.messageBox(text, 'Fusion Bulk Export', kind)
+    return ui.messageBox(text, 'Fusion Bulk Export', kind, shown)
+
+
+def ask_trouble(ui, reason, last_error):
+    """The run cannot go on (disk full, folder gone, designs failing in a row): carry on or stop.
+    OK / Cancel, not Retry / Cancel: the result of a Retry button is not a documented member."""
+    text = ('The export has paused: %s\n\nLast error: %s\n\nOK tries again and carries on. Cancel stops the '
+            'export: everything exported so far is kept, and running it again carries on from there.'
             % (reason, last_error or 'none'))
-    answer = ui.messageBox(text, 'Fusion Bulk Export', core.MessageBoxButtonTypes.RetryCancelButtonType,
-                           core.MessageBoxIconTypes.WarningIconType)
-    return 'retry' if answer == core.DialogResults.DialogRetry else 'stop'
+    answer = ask(ui, text, 'OKCancelButtonType', 'WarningIconType')
+    return 'retry' if answer == adsk.core.DialogResults.DialogOK else 'stop'
 
 
 def show_summary(ui, text, output, page, opener):
@@ -88,9 +99,7 @@ def show_summary(ui, text, output, page, opener):
     if page is None:
         errors.message_box(ui, text, warning=False)
         return None
-    answer = ui.messageBox(text + OPEN_CHOICES, 'Fusion Bulk Export',
-                           core.MessageBoxButtonTypes.YesNoCancelButtonType,
-                           core.MessageBoxIconTypes.InformationIconType)
+    answer = ask(ui, text + OPEN_CHOICES, 'YesNoCancelButtonType', 'InformationIconType')
     target = page if answer == core.DialogResults.DialogYes else (
         output if answer == core.DialogResults.DialogNo else None)
     if target is not None:

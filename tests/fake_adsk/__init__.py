@@ -281,13 +281,14 @@ def install():
     adsk.core.HTMLEventHandler = object
     adsk.core.DropDownStyles = NS(TextListDropDownStyle=1)
     # Documented enums of messageBox and the dialogs (values here are arbitrary but distinct).
-    adsk.core.MessageBoxButtonTypes = NS(OKButtonType=0, OKCancelButtonType=1, RetryCancelButtonType=2,
+    # Only members known to exist in every Fusion are defined, so a test cannot pass on a member
+    # the real API may lack (a Retry button and its DialogRetry result are left out on purpose).
+    adsk.core.MessageBoxButtonTypes = NS(OKButtonType=0, OKCancelButtonType=1,
                                          YesNoButtonType=3, YesNoCancelButtonType=4)
     adsk.core.MessageBoxIconTypes = NS(NoIconIconType=0, QuestionIconType=1, InformationIconType=2,
                                        WarningIconType=3, CriticalIconType=4)
     adsk.core.FutureStates = NS(ProcessingFutureState=0, FinishedFutureState=1, FailedFutureState=2)
-    adsk.core.DialogResults = NS(DialogError=-1, DialogOK=0, DialogCancel=1, DialogNo=2, DialogYes=3,
-                                 DialogRetry=4)
+    adsk.core.DialogResults = NS(DialogError=-1, DialogOK=0, DialogCancel=1, DialogNo=2, DialogYes=3)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module
 

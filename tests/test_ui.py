@@ -41,14 +41,14 @@ class UIBase(unittest.TestCase):
                            show=lambda *args: None, hide=lambda: None)
         self.summaries, self.errors, self.details, self.troubles, self.opened = [], [], [], [], []
         self.answer = adsk.core.DialogResults.DialogCancel  # to the end-of-run dialog
-        self.trouble_answer = adsk.core.DialogResults.DialogCancel  # to Retry / Stop
+        self.trouble_answer = adsk.core.DialogResults.DialogCancel  # to carry on (OK) / stop
         buttons = adsk.core.MessageBoxButtonTypes
 
         def message_box(*args):
             if len(args) > 2 and args[2] == buttons.YesNoCancelButtonType:
                 self.summaries.append(args)
                 return self.answer
-            if len(args) > 2 and args[2] == buttons.RetryCancelButtonType:
+            if len(args) > 2 and args[2] == buttons.OKCancelButtonType:
                 self.troubles.append(args)
                 return self.trouble_answer
             self.errors.append(args)
@@ -308,11 +308,25 @@ class UItests(UIBase):
         for file in files[:5]:
             file.failures = 2
         self.app.data = fake.data(files)
-        self.trouble_answer = self.adsk.core.DialogResults.DialogRetry
+        self.trouble_answer = self.adsk.core.DialogResults.DialogOK
         self.open_dialog().execute.handlers[0].notify(None)
         self.assertEqual(len(self.troubles), 1)
         self.assertIn('2 exported now', self.summaries[0][0])
         self.assertIn('Run again to retry the 5 failed.', self.summaries[0][0])
+
+    def test_dialogs_work_without_optional_enum_members(self):
+        # Icons are optional, and no Retry button or DialogRetry result is used.
+        self.assertFalse(hasattr(self.adsk.core.DialogResults, 'DialogRetry'))
+        self.assertFalse(hasattr(self.adsk.core.MessageBoxButtonTypes, 'RetryCancelButtonType'))
+        files = [fake.File('P%d' % n, 'f%d' % n) for n in range(7)]
+        for file in files[:5]:
+            file.failures = 2
+        self.app.data = fake.data(files)
+        self.trouble_answer = self.adsk.core.DialogResults.DialogOK
+        with patch.object(self.adsk.core, 'MessageBoxIconTypes', NS()):
+            self.open_dialog().execute.handlers[0].notify(None)
+        self.assertEqual([len(args) for args in self.troubles + self.summaries], [3, 3])
+        self.assertIn('2 exported now', self.summaries[0][0])
 
     def test_low_space_is_reported(self):
         with patch('fusion_bulk_export.core.free_bytes', return_value=200 << 20):
