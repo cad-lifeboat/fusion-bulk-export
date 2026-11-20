@@ -249,6 +249,54 @@ class LauncherTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 launcher.folder_map([bad])
 
+    def test_an_interrupted_command_withdraws_its_job(self):
+        installed = self.root / 'AddIns' / 'FusionBulkExport'
+        args = launcher.argparse.Namespace(output=str(self.root / 'out'), command='export', project=None,
+                                           limit=None, folder=None, designs_only=False, timeout=10)
+
+        def consumed(installed, *rest, **kwargs):
+            (installed / 'autorun.json').replace(installed / 'autorun.json.last')  # as the add-in does
+            return 0
+        for waiting, expected in ((KeyboardInterrupt, KeyboardInterrupt), (SystemExit('Timed out'), SystemExit)):
+            with patch.object(launcher, 'system', return_value='Darwin'), \
+                    patch.object(launcher, 'addins_dir', return_value=installed.parent), \
+                    patch.object(launcher, 'fusion_running', return_value=False), \
+                    patch.object(launcher, 'launch_fusion'), \
+                    patch.object(launcher, 'wait', side_effect=waiting), \
+                    contextlib.redirect_stderr(io.StringIO()) as stream:
+                with self.assertRaises(expected):
+                    launcher.start(args)
+            self.assertFalse((installed / 'autorun.json').exists())
+            self.assertIn('withdrawn', stream.getvalue())
+        with patch.object(launcher, 'system', return_value='Darwin'), \
+                patch.object(launcher, 'addins_dir', return_value=installed.parent), \
+                patch.object(launcher, 'alive', return_value=True), \
+                patch.object(launcher, 'wait', side_effect=consumed):
+            self.assertEqual(launcher.start(args), 0)
+        self.assertTrue((installed / 'autorun.json.last').exists())
+
+    def test_status_counts_items_still_only_in_the_journal(self):
+        out = self.root / 'out'
+        out.mkdir()
+        done = dict(key='["h","p","a",1]', kind='design', status='done', id='a', files=[dict(path='x', bytes=5)])
+        (out / 'manifest.json').write_text(json.dumps(dict(schema=2, runs=[], entries=[done])))
+        later = dict(done, key='["h","p","b",1]', id='b')
+        (out / 'manifest.journal').write_text(json.dumps(dict(entry=later)) + '\n')
+        text = '\n'.join(launcher.summary(out))
+        self.assertIn('Designs: 2 entries {"done": 2}', text)
+        self.assertIn('10 bytes', text)
+        self.assertEqual(launcher.count_line(dict(exported=0, up_to_date=1, files=0, files_up_to_date=2, skipped=0,
+                                                  failed=0)),
+                         'Counts: 0 exported now, 1 already up to date, 0 other files saved, '
+                         '2 other files already up to date, 0 skipped, 0 failed')
+
+    def test_run_time_files_come_from_the_installer_list(self):
+        source = Path(launcher.__file__).resolve().parents[1] / 'FusionBulkExport'
+        names = ['errors.log', 'autorun.json', '__pycache__', 'core.pyc', '.DS_Store', 'trace.log',
+                 'autorun.py', 'FusionBulkExport.py', 'resources']
+        self.assertEqual(launcher.runtime_files(str(source), names),
+                         {'errors.log', 'autorun.json', '__pycache__', 'core.pyc', '.DS_Store', 'trace.log'})
+
     def test_wait_times_out(self):
         ticks = iter(range(0, 10000, 100))
         with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
