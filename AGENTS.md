@@ -75,9 +75,14 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
    - **Over about 500 designs: add `--restart-fusion`**, after telling the person it will
      close and reopen Fusion by itself (only when no saved design or unsaved document is
      open in it; they must not work in Fusion meanwhile, and Run on Startup must be on).
-     Long runs make Fusion use more memory; the export stops itself before Fusion runs out
-     (exit 75) and this flag restarts Fusion and carries on, at most 20 times, never more
-     than once per 50 designs. Do not add `=force` unless the person agrees: it ends a
+     Long runs can make Fusion use more memory; when Fusion itself holds too much for a
+     while (over 70% of the computer's memory, or 4 GB more than at the start while the
+     computer is short of memory, for at least 5 designs and 30 s, never before the 25th) the
+     export stops itself (exit 75) and this flag restarts Fusion and carries on, at most 20
+     times, never more than once per 50 designs: a memory stop sooner than that ends the
+     command with 75 and a line saying a restart would not help (other programs, or Fusion
+     itself, keep memory high: tell the person). If memory stops look wrong, rerun with
+     `FUSION_BULK_EXPORT_MEMORY_GUARD=off` set. Do not add `=force` unless the person agrees: it ends a
      Fusion that will not quit within 60 s, losing anything unsaved in it.
    - Otherwise: `python3 scripts/autorun.py export OUT`.
    - Only part of the account: `--project ID` for whole projects, `--folder ID:Folder/Sub`
@@ -109,6 +114,12 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
   or pick a folder on a bigger disk, then rerun with the same OUT. `output_missing` or
   `output_unwritable`: the folder went away or cannot be written. `memory`: Fusion is using
   a lot of memory (exit 75); restart Fusion and rerun, or rerun with `--restart-fusion`.
+  A "Note: This computer was low on memory" line is not a stop: other programs held the
+  memory; tell the person closing them may speed the export up.
+- **"Fusion took the job but wrote no result"** or **"The add-in rejected the job: Fusion
+  cannot use the output folder"**: Fusion cannot reach OUT (a network drive mapped only in
+  your terminal's session, or a folder it may not create). Use a local folder, or have the
+  person connect the drive in their own session.
 - **Exit status** of `export`: 0 done; 1 the job failed or was refused; 75 stopped for
   memory (restart Fusion, rerun); 76 `--restart-fusion` reopened Fusion but the add-in did
   not start (ask the person to tick Run on Startup); 77 Fusion closed or crashed before the

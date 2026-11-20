@@ -61,8 +61,10 @@ Big account?
 With hundreds or thousands of designs, export one project or folder first and look
 at the result. Then do the rest into the same output folder: finished designs are
 skipped, so nothing is done twice. Time varies a lot with design size.
-Long runs make Fusion use more memory: before it runs out, the export stops itself;
-close Fusion, open it again and export to the same folder to carry on.
+Long runs can make Fusion use more memory. If Fusion itself holds too much for a
+while, the export stops itself; close Fusion, open it again and export to the same
+folder to carry on. If other programs use up the memory instead, it goes on, and the
+report says that closing other programs may speed it up.
 
 
 Help
