@@ -108,7 +108,7 @@ FusionExport/
 ```
 
 - **`.f3d`** opens in Fusion with **Upload** or **File → Open → Open from my computer**.
-- **`.step`** holds the visible bodies, without history. Almost any CAD program opens it, while the `.f3d` opens only in Fusion, and for an assembly the `.step` is the file that holds the geometry of all its linked parts. It is on by default; keep it unless you only ever need Fusion. Without it (the dialog's STEP box unticked, or `--no-step`) each design is saved as `.f3d` only: the report shows "STEP not requested" on those rows and the summary says "STEP files were not requested for this export." Exporting into the same folder with STEP on again exports those designs to add their STEP files; exporting with it off into a folder that has them changes and deletes nothing.
+- **`.step`** holds the design's solid bodies, without history: the hidden ones too when Fusion allows it (the add-in asks Fusion's STEP export to include hidden bodies and components; it never shows or hides anything in the design), otherwise only the visible ones. Almost any CAD program opens it, while the `.f3d` opens only in Fusion, and for an assembly the `.step` is the file that holds the geometry of all its linked parts. It is on by default; keep it unless you only ever need Fusion. Without it (the dialog's STEP box unticked, or `--no-step`) each design is saved as `.f3d` only: the report shows "STEP not requested" on those rows and the summary says "STEP files were not requested for this export." Exporting into the same folder with STEP on again exports those designs to add their STEP files; exporting with it off into a folder that has them changes and deletes nothing.
 - If Fusion cannot write a design's STEP, its `.f3d` is still saved, with the warning "Saved, but Fusion could not write its STEP file" (counted under warnings); the next export into the folder tries the STEP again.
 - **Names are the real ones**, in any language. Only characters Windows or macOS cannot store are replaced, and a name is cut at 100 characters (64 on Windows). A short `~1a2b` suffix is added only when two items in one folder would get the same name. There is no limit on how deep the folders go.
 - **Windows paths over 260 characters:** deep folders can still make a full path longer than that. Such files are saved, but Explorer and some programs cannot open them; the summary and `index.html` say how many. A short output folder such as `C:\FusionExport` avoids it. The output folder itself may be at most 200 characters on Windows; a longer one is refused (in the dialog and on the command line) with that reason.
@@ -132,7 +132,10 @@ The counts, in the summary, in `index.html` and from `autorun.py status`:
 - **can't be exported by an add-in (drawings, electronics)**: file types an add-in cannot export; not failures, and not something you left out (status `unsupported` in `index.csv`);
 - **failed**: tried twice and did not work; they are tried again next time.
 
-A design whose STEP has no bodies, or fewer solids than the distinct bodies Fusion showed, is exported with a **warning**. Other differences in the count (a STEP may write a part used twice once or twice) are only recorded. The `.f3d` is still the complete copy; the warning is in the summary and in the report.
+A design whose STEP has no bodies, or fewer solids than expected (every distinct solid body of the design when hidden bodies were included, else the distinct visible ones), is exported with a **warning**. Other differences in the count (a STEP may write a part used twice once or twice) are only recorded. The `.f3d` is still the complete copy; the warning is in the summary and in the report.
+
+- **Hidden bodies:** when your Fusion cannot include hidden bodies in a STEP, a design with some is exported with the warning "Its STEP leaves out 3 hidden bodies; they are in the .f3d." (or "All its 3 bodies are hidden, so its STEP is empty; they are in the .f3d."), and the summary, `index.html` and `status` add one note saying how many designs that applies to. Show the bodies in Fusion and export the STEP by hand if you need them in it.
+- **No solid bodies:** a design with only sketches, surfaces or meshes gets an empty STEP (a STEP holds solid bodies). That is not a problem and not a warning: its row in the report has the note "No solid bodies (sketches only): its STEP is empty." (or "surfaces only", "meshes only"), and it is not counted under warnings. Folders exported by earlier versions read the same way.
 
 `manifest.json`, `index.html`, `index.csv` and the logs contain your project and design names. Keep them private, and don't attach them to issues.
 
@@ -173,13 +176,17 @@ progress. Only one export at a time can use a folder (`export.lock`).
 - the `.f3d` is a readable archive with Fusion's design data, every part of it readable;
 - the `.step` has a valid start and end;
 - the STEP is not missing bodies: it is not empty, and holds at least as many solids as the
-  distinct bodies Fusion showed.
+  distinct solid bodies expected (all of them when hidden bodies were included, else the
+  visible ones).
 
 It prints counts only. A STEP missing bodies is printed as a NOTE, not a failure: Fusion's
-STEP translator occasionally drops a body, and the `.f3d` is the complete copy. Other
+STEP translator occasionally drops a body, and the `.f3d` is the complete copy. Hidden bodies a
+STEP left out because Fusion could not include them are a NOTE too (`hidden_left_out`), and a
+design with no solid bodies at all is not flagged (`no_solid_bodies`). Other
 differences in the count are only counted (`solids_noted`). `--names` shows design names.
 `python3 scripts/verify-export.py <folder>` does the same checks (it takes `--strict`, which
-treats a STEP missing bodies as a failure, and `--names`). On
+treats a STEP missing bodies as a failure, though never hidden bodies Fusion could not
+include, and `--names`). On
 Python before 3.14, archive parts compressed with Zstandard are counted as not CRC-checked.
 
 ## Command line (for AI agents and scripts)

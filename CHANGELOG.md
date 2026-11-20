@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- STEP files include hidden bodies and hidden components when Fusion allows it: the add-in sets the STEP export's `isIncludingInvisibleBodies` and `isIncludingInvisibleComponents` when that Fusion has them (only the export options change; nothing in the design is shown or hidden). Each design's manifest entry records `step_includes_hidden` (`true`; `false` when this Fusion has neither; `null` when only one exists or setting failed, with `step_hidden_error`). In a real run, 24 of 491 designs had an empty STEP only because all their bodies were hidden.
+- The STEP check compares against the right number: every distinct solid body of the design when hidden bodies were included ("STEP has 40 solids, fewer than the 96 distinct ones in the design"), else the visible ones as before. The tolerance is unchanged.
+- A design with no solid bodies at all (sketches, surfaces or meshes only) is no longer a warning: its empty STEP is expected. Its row in `index.html` and `index.csv` (new `note` column) has the note "No solid bodies (sketches only): its STEP is empty." (or "surfaces only", "meshes only"), the warnings count in the results window, `index.html` and `status` leaves it out, and `check` does not flag it (`no_solid_bodies` in its counts). The manifest records `step_note`, and `surface_bodies` and `mesh_bodies` for such designs.
+- When Fusion cannot include hidden bodies, the warning says so in plain words: "Its STEP leaves out 3 hidden bodies; they are in the .f3d." or, when that leaves the STEP empty, "All its 3 bodies are hidden, so its STEP is empty; they are in the .f3d." The summary, `index.html` and `status` add one note when that happened ("2 designs have a STEP file without their hidden bodies: ..."); `check` prints it as a NOTE (`hidden_left_out`), never a problem, also with `--strict`.
+- Folders exported by earlier versions read the same way: their recorded STEP warnings are worked out again from the recorded counts, so sketch-only designs stop counting as warnings without exporting again.
+- Counts of solids read as plain English ("STEP has 1 solid, ...").
+
 ## 0.3.2
 
 - The STEP file is an option, on by default: the dialog's "Also save a STEP file for each design" (remembered; unticked, a note says "Without STEP you get only .f3d files, which open only in Fusion."), `--no-step` on the command line, `"step": false` in a job. Without it each design is saved as `.f3d` only; its manifest entry records `"step": "off"`, `index.html` and `index.csv` show "STEP not requested", the summary, report and `status` say "STEP files were not requested for this export.", and `check` treats it as intended. Exporting into the same folder with STEP on again adds every missing STEP (those designs are exported again); with it off, a folder that has STEP files keeps them and nothing is exported again.
