@@ -160,7 +160,7 @@ class Execute(adsk.core.CommandEventHandler):
             dialog.title = 'Fusion Bulk Export output folder'
             if dialog.showDialog() != adsk.core.DialogResults.DialogOK:
                 return
-            output = dialog.folder
+            output = os.path.normpath(dialog.folder)  # Fusion returns C:/x on Windows; show C:\x
             progress = ui.createProgressDialog()
             progress.isCancelButtonShown = True
             progress.show('Fusion Bulk Export', 'Discovering designs…', 0, 1, 0)
