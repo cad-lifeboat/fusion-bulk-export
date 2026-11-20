@@ -27,15 +27,45 @@ def has_hubs(app):
         return False
 
 
+STEPS = 1000  # bar resolution within one project
+
+
+def duration(seconds):
+    seconds = int(seconds or 0)
+    if seconds < 60:
+        return '%d s' % seconds
+    if seconds < 3600:
+        return '%d min' % (seconds // 60)
+    return '%d h %02d min' % (seconds // 3600, seconds % 3600 // 60)
+
+
 def describe(state):
-    """Progress text: the bar counts projects; the text says where it is and what it is doing."""
-    where = ' / '.join([state['project_name'] or ''] + state['path'])
+    """Progress text: where it is, what it is doing, and time, rate and failures so far."""
+    where = ' / '.join([state['project_name'] or ''] + list(state['path']))
     head = 'Project %d of %d' % (state['project'], state['projects'])
     if state['phase'] == 'listing':
         text = '%s, listing: %s\n%d design(s) so far' % (head, where, state['design'])
     else:
         text = '%s, design %d: %s\n%s' % (head, state['design'], state['name'], where)
+    facts = [duration(state.get('elapsed'))]
+    if state.get('seconds_per_design') is not None:
+        facts.append('%.1f s/design' % state['seconds_per_design'])
+    facts.append('%d failed' % (state.get('counts') or {}).get('failed', 0))
+    text += '\n' + ' · '.join(facts)
     return text.replace('%', '%%')  # % starts a placeholder in Fusion's progress text
+
+
+def bar(state):
+    """(maximum, value) of the progress bar. Each project is one slice; within it the bar
+    moves through the current folder when its file count is known, so a single-project
+    export moves too."""
+    projects = max(state['projects'], 1)
+    done = 0.0
+    files = state.get('folder_files')
+    if state['phase'] == 'design' and files:
+        done = min(max(state.get('folder_item', 1) - 1, 0) / float(files), 1.0)
+    value = max(state['project'] - 1, 0) * STEPS + int(done * STEPS)
+    return projects * STEPS, min(value, projects * STEPS)
 
 
 OPEN_CHOICES = ('\n\nYes: open the report (index.html).  No: open the folder.  Cancel: close.')
@@ -69,11 +99,6 @@ def show_summary(ui, text, output, page, opener):
         except Exception as error:
             errors.message_box(ui, 'Could not open %s (%s). Open it from your file browser.' % (target, error))
     return target
-
-
-def bar(state):
-    """(maximum, value) of the progress bar: projects, as in earlier versions."""
-    return max(state['projects'], 1), max(state['project'] - 1, 0)
 
 
 def export(app, selection, output, opener=None):

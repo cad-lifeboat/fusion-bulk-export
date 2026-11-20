@@ -415,9 +415,55 @@ class ErrorMappingTests(unittest.TestCase):
 
 
 class ProgressTextTests(unittest.TestCase):
+    def state(self, **changes):
+        state = dict(phase='listing', project=3, projects=17, project_name='P', path=['A', 'B'], design=40,
+                     name=None, folder_files=None, folder_item=0, elapsed=725, seconds_per_design=None,
+                     counts=dict(exported=0, up_to_date=0, skipped=0, failed=2))
+        state.update(changes)
+        return state
+
     def test_listing_and_design_lines(self):
         from fusion_bulk_export.command import describe
-        state = dict(phase='listing', project=3, projects=17, project_name='P', path=['A', 'B'], design=40, name=None)
-        self.assertEqual(describe(state), 'Project 3 of 17, listing: P / A / B\n40 design(s) so far')
-        state.update(phase='design', design=41, name='Gear 50%')
-        self.assertEqual(describe(state), 'Project 3 of 17, design 41: Gear 50%%\nP / A / B')
+        self.assertEqual(describe(self.state()),
+                         'Project 3 of 17, listing: P / A / B\n40 design(s) so far\n12 min · 2 failed')
+        state = self.state(phase='design', design=41, name='Gear 50%', seconds_per_design=3.42, elapsed=4000)
+        self.assertEqual(describe(state),
+                         'Project 3 of 17, design 41: Gear 50%%\nP / A / B\n1 h 06 min · 3.4 s/design · 2 failed')
+
+    def test_bar_moves_within_a_folder_of_a_single_project(self):
+        from fusion_bulk_export.command import bar
+        single = dict(projects=1, project=1, phase='design', folder_files=4)
+        self.assertEqual([bar(dict(single, folder_item=n))[1] for n in (1, 2, 3, 4)], [0, 250, 500, 750])
+        self.assertEqual(bar(dict(single, folder_item=1))[0], 1000)
+        # Unknown file count: whole projects only.
+        self.assertEqual(bar(dict(projects=3, project=2, phase='design', folder_files=None, folder_item=9)),
+                         (3000, 1000))
+        self.assertEqual(bar(dict(projects=0, project=0, phase='listing')), (1000, 0))
+
+
+class ProgressStateTests(unittest.TestCase):
+    def test_engine_reports_folder_position_rate_and_failures(self):
+        from fusion_bulk_export.core import Exporter
+        from fusion_bulk_export.fusion import FusionAdapter
+        files = [fake.File('F%d' % n, 'f%d' % n) for n in range(3)]
+        files[1].failures = 2
+        sub = fake.folder('Sub', files=[fake.File('S', 's')])
+        data = fake.data(files, [sub])
+        states = []
+        ticks = iter(range(0, 10000, 2))
+        with tempfile.TemporaryDirectory() as out:
+            exporter = Exporter(out, FusionAdapter(NS(documents=fake.Documents())))
+            exporter.clock = lambda: next(ticks)
+            exporter.run(data, progress=states.append)
+            again = []
+            Exporter(out, FusionAdapter(NS(documents=fake.Documents()))).run(data, progress=again.append)
+        designs = [s for s in states if s['phase'] == 'design']
+        self.assertEqual([(s['folder_item'], s['folder_files']) for s in designs], [(1, 3), (2, 3), (3, 3), (1, 1)])
+        self.assertEqual(designs[2]['counts']['failed'], 1)
+        self.assertEqual(designs[0]['seconds_per_design'], None)
+        self.assertGreater(designs[1]['seconds_per_design'], 0)
+        self.assertGreater(designs[-1]['elapsed'], designs[0]['elapsed'])
+        listing = [s for s in states if s['phase'] == 'listing']
+        self.assertEqual([s['folder_files'] for s in listing], [3, 1])
+        # Up-to-date designs are not timed.
+        self.assertIsNone([s for s in again if s['phase'] == 'design'][1]['seconds_per_design'])

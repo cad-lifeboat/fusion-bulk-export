@@ -74,7 +74,7 @@ def walk(data, on_error=None, selection=None, visiting=None):
     def folders(hub, project, folder, path):
         where = [hub.name, project.name] + path
         if visiting:
-            visiting(hub, project, path)
+            visiting(hub, project, path, folder)
         if selection is None or selection.keeps(hub, project, path):
             for file in guarded(where, lambda: collection(folder.dataFiles)):
                 yield path, file
@@ -390,7 +390,11 @@ class Exporter:
 
         progress(state) is called while listing and before each design, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
-        project_name, path (folder names), design (designs found so far) and name.
+        project_name, path (folder names), design (designs found so far) and name; also
+        folder_files (the current folder's file count, or None when not known), folder_item
+        (position of this design in that folder), counts (a copy of the run's counts so far),
+        elapsed (seconds since the run started) and seconds_per_design (average time of the
+        designs opened so far, not counting those already up to date; None before the first).
 
         When the run cannot go on (disk full, output folder gone, or FAILURES_IN_A_ROW designs
         failing in a row, as when offline or signed out), on_trouble(reason, last_error) is
@@ -427,17 +431,30 @@ class Exporter:
                         numbers[(str(hub.id), str(project.id))] = len(numbers) + 1
                 except Exception:
                     pass  # reported by the walk below
+            started = self.clock()
+            timing = dict(seconds=0.0, designs=0)
             state = dict(phase='listing', project=0, projects=len(numbers), project_name=None,
-                         path=[], design=0, name=None)
+                         path=[], design=0, name=None, folder_files=None, folder_item=0)
+
+            def report(phase):
+                state['phase'] = phase
+                snapshot = dict(state, counts=dict(counts), elapsed=self.clock() - started,
+                                seconds_per_design=(timing['seconds'] / timing['designs']
+                                                    if timing['designs'] else None))
+                progress(snapshot)
 
             def place(hub, project, path):
                 state.update(project=numbers.get((str(hub.id), str(project.id)), state['project']),
                              project_name=project.name, path=list(path))
 
-            def visiting(hub, project, path):
+            def visiting(hub, project, path, folder):
                 place(hub, project, path)
-                state.update(phase='listing', name=None)
-                progress(dict(state))
+                try:
+                    files = int(folder.dataFiles.count)  # known without listing the files
+                except Exception:
+                    files = None
+                state.update(name=None, folder_files=files, folder_item=0)
+                report('listing')
 
             entries = {entry['key']: entry for entry in self.manifest['entries']}
             with keep_awake():
@@ -450,11 +467,12 @@ class Exporter:
                         continue
                     found += 1
                     place(hub, project, folders)
-                    state.update(phase='design', design=found, name=file.name)
-                    progress(dict(state))
+                    state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1)
+                    report('design')
                     if cancelled():
                         self.run_info['cancelled'] = True
                         break
+                    began = self.clock()
                     try:
                         status = self.export_one(hub, project, folders, file, entries, counts)
                         problem = None
@@ -465,6 +483,9 @@ class Exporter:
                         if problem is None:
                             raise
                         status = 'failed'
+                    if status != 'verified':
+                        timing['seconds'] += self.clock() - began
+                        timing['designs'] += 1
                     if status == 'done':
                         failing = []
                     elif status == 'failed':
