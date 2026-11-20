@@ -51,7 +51,7 @@ class AutorunTests(unittest.TestCase):
         self.assertGreater(result['bytes'], 0)
         self.assertFalse(self.config.exists())
         self.assertTrue((self.root / 'autorun.json.last').exists())
-        self.assertIn('design 4/4', (self.output / 'autorun.log').read_text())
+        self.assertIn('project 2/2 design 4', (self.output / 'autorun.log').read_text())
 
     def test_inventory_opens_nothing(self):
         result = self.run_with(mode='inventory')

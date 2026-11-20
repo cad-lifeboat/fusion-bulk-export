@@ -95,13 +95,15 @@ def start_watching():
 
 
 _picker = None
-_code = dict(Exporter=Exporter, FusionAdapter=FusionAdapter)
+_code = {}  # the package's routines as loaded when the dialog opened
 
 
 def report(title):
     """Show the current exception and append it to errors.log beside the add-in."""
     detail = traceback.format_exc()
     try:
+        if getattr(adsk, '_synthetic', False):
+            raise OSError('tests do not write errors.log into the source tree')
         with open(os.path.join(_DIR, 'errors.log'), 'a', encoding='utf-8') as stream:
             stream.write('%s %s\n%s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S'), title, detail))
     except OSError:
@@ -148,45 +150,15 @@ class Validate(adsk.core.ValidateInputsEventHandler):
 class Execute(adsk.core.CommandEventHandler):
     def notify(self, args):
         app = adsk.core.Application.get()
-        ui = app.userInterface
-        progress = None
         try:
             selection = _picker.selection() if _picker else None
             if _picker and selection is None:
-                ui.messageBox('Tick at least one project or folder, or choose Everything.',
-                              'Fusion Bulk Export')
+                app.userInterface.messageBox('Tick at least one project or folder, or choose Everything.',
+                                             'Fusion Bulk Export')
                 return
-            dialog = ui.createFolderDialog()
-            dialog.title = 'Fusion Bulk Export output folder'
-            if dialog.showDialog() != adsk.core.DialogResults.DialogOK:
-                return
-            output = os.path.normpath(dialog.folder)  # Fusion returns C:/x on Windows; show C:\x
-            progress = ui.createProgressDialog()
-            progress.isCancelButtonShown = True
-            progress.show('Fusion Bulk Export', 'Discovering designs…', 0, 1, 0)
-
-            def update(index, total, name):
-                progress.maximumValue = max(total, 1)
-                progress.progressValue = index
-                progress.message = name
-                adsk.doEvents()
-
-            def cancelled():
-                adsk.doEvents()
-                return progress.wasCancelled
-
-            exporter = _code['Exporter'](output, _code['FusionAdapter'](app))
-            counts = exporter.run(app.data, cancelled, update, selection=selection)
-            progress.hide()
-            summary = ('Cancelled.\n' if exporter.run_info['cancelled'] else 'Finished.\n')
-            summary += 'Done: {done}; failed: {failed}; skipped/verified: {skipped}\n'.format(**counts)
-            ui.inputBox(summary + '\nOutput folder (select and copy):',
-                        'Fusion Bulk Export', output)
+            _code['export_with_dialogs'](app, selection)
         except Exception:
             report('Fusion Bulk Export error')
-        finally:
-            if progress:
-                progress.hide()
 
 
 class Created(adsk.core.CommandCreatedEventHandler):
@@ -195,10 +167,9 @@ class Created(adsk.core.CommandCreatedEventHandler):
         try:
             # Each dialog uses the add-in code as currently installed, without a restart.
             forget_package()
-            from fusion_bulk_export.core import Exporter as fresh_exporter
-            from fusion_bulk_export.fusion import FusionAdapter as fresh_adapter
+            from fusion_bulk_export.command import export_with_dialogs
             from fusion_bulk_export.picker import Picker
-            _code.update(Exporter=fresh_exporter, FusionAdapter=fresh_adapter)
+            _code.update(export_with_dialogs=export_with_dialogs)
             command = args.command
             command.okButtonText = 'Export…'
             # Wide enough for project and folder names (Fusion's default cuts labels off).

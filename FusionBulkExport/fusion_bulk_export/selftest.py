@@ -182,7 +182,8 @@ def run_selftest(app, config_path):
                     if scope == 'project' else app.data)
             recorder.result['scope'] = scope
             recorder.result['counts'] = exporter.run(
-                data, progress=lambda i, total, name: recorder.log('design %d/%d %s' % (i + 1, total, name)))
+                data, progress=lambda state: state['phase'] == 'design' and recorder.log(
+                    'project %d/%d design %d %s' % (state['project'], state['projects'], state['design'], state['name'])))
         finally:
             recorder.result['timings']['export_seconds'] = time.monotonic() - export_start
     except Exception as error:

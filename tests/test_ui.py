@@ -177,3 +177,12 @@ class UItests(unittest.TestCase):
         self.assertEqual(self.file.calls, 0)
         self.assertIn('Cancelled', self.summaries[0][0])
         self.assertTrue((Path(self.temp.name) / 'manifest.json').exists())
+
+
+class ProgressTextTests(unittest.TestCase):
+    def test_listing_and_design_lines(self):
+        from fusion_bulk_export.command import describe
+        state = dict(phase='listing', project=3, projects=17, project_name='P', path=['A', 'B'], design=40, name=None)
+        self.assertEqual(describe(state), 'Project 3 of 17, listing: P / A / B\n40 design(s) so far')
+        state.update(phase='design', design=41, name='Gear 50%')
+        self.assertEqual(describe(state), 'Project 3 of 17, design 41: Gear 50%%\nP / A / B')

@@ -85,11 +85,27 @@ class ExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Selection.from_config(folders={'p': ['/']})
 
+    def test_streams_exports_and_reports_where_it_is(self):
+        data, files = self.selection_data()
+        events = []
+
+        def update(state):
+            events.append((state['phase'], state['project'], state['projects'], tuple(state['path']),
+                           state['design'], state['name'], files['root'].calls))
+        self.run_export(data, progress=update)
+        # Project 2 is listed only after project 1's first design has been exported.
+        second = next(e for e in events if e[1] == 2 and e[0] == 'listing')
+        self.assertEqual(second[6], 1)
+        self.assertEqual(events[0][:4], ('listing', 1, 2, ()))
+        self.assertIn(('design', 1, 2, ('Top', 'Sub'), 3, 'Part', 1), events)
+        self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
+
     def test_cancel_from_progress_before_open(self):
         file = fake.File()
         state = {'cancel': False}
-        def update(index, total, name):
-            state['cancel'] = True
+        def update(progress):
+            if progress['phase'] == 'design':
+                state['cancel'] = True
         exporter, counts = self.run_export(fake.data([file]),
                                           cancelled=lambda: state['cancel'], progress=update)
         self.assertTrue(exporter.run_info['cancelled'])

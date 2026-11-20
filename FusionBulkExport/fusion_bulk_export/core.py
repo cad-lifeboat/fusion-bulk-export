@@ -16,7 +16,7 @@ def collection(values):
         yield values.item(index)
 
 
-def walk(data, on_error=None, selection=None):
+def walk(data, on_error=None, selection=None, visiting=None):
     """Yield files from every hub, project and folder (including project roots).
 
     With on_error, a project or folder that cannot be read is reported as
@@ -33,6 +33,8 @@ def walk(data, on_error=None, selection=None):
 
     def folders(hub, project, folder, path):
         where = [hub.name, project.name] + path
+        if visiting:
+            visiting(hub, project, path)
         if selection is None or selection.keeps(hub, project, path):
             for file in guarded(where, lambda: collection(folder.dataFiles)):
                 yield path, file
@@ -237,8 +239,13 @@ class Exporter:
         directory.mkdir(parents=True, exist_ok=True)
         return directory / stem
 
-    def run(self, data, cancelled=lambda: False, progress=lambda index, total, name: None, limit=None,
-            selection=None):
+    def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None):
+        """Export as designs are found: each folder is listed, its designs exported, then the next.
+
+        progress(state) is called while listing and before each design, with a dict:
+        phase ('listing' or 'design'), project and projects (position among the chosen projects),
+        project_name, path (folder names), design (designs found so far) and name.
+        """
         counts = dict(done=0, failed=0, skipped=0)
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
@@ -252,81 +259,100 @@ class Exporter:
             if self.error_callback:
                 self.error_callback('discovery ' + json.dumps(where, ensure_ascii=False), error)
         self.save()
+        found = 0
         try:
             self.log('run started')
-            items = []
-            for item in walk(data, unreadable, None if selection.everything else selection):
-                if cancelled():
-                    self.run_info['cancelled'] = True
-                    return counts
-                if selection.keeps(item[0], item[1], item[2]):
-                    items.append(item)
-                    if limit is not None and len(items) >= limit:
-                        break  # a small run on a large account need not list everything
-            if limit is not None:
-                items = items[:limit]
-            self.run_info['found'] = len(items)
+            numbers = {}
+            for hub in collection(data.dataHubs):
+                try:
+                    for project in collection(hub.dataProjects):
+                        numbers[(str(hub.id), str(project.id))] = len(numbers) + 1
+                except Exception:
+                    pass  # reported by the walk below
+            state = dict(phase='listing', project=0, projects=len(numbers), project_name=None,
+                         path=[], design=0, name=None)
+
+            def place(hub, project, path):
+                state.update(project=numbers.get((str(hub.id), str(project.id)), state['project']),
+                             project_name=project.name, path=list(path))
+
+            def visiting(hub, project, path):
+                place(hub, project, path)
+                state.update(phase='listing', name=None)
+                progress(dict(state))
+
             entries = {entry['key']: entry for entry in self.manifest['entries']}
-            for index, (hub, project, folders, file) in enumerate(items):
+            for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
+                                                    visiting):
                 if cancelled():
                     self.run_info['cancelled'] = True
                     break
-                progress(index, len(items), file.name)
-                if cancelled():
-                    self.run_info['cancelled'] = True
-                    break
-                key = json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
-                entry = entries.get(key)
-                if entry and self.valid(entry):
-                    counts['skipped'] += 1
-                    self.log('verified ' + key)
-                    self.save()
+                if not selection.keeps(hub, project, folders):
                     continue
-                entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': folders,
-                         'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
-                         'date': file.dateModified, 'files': [], 'status': 'skipped', 'error': None,
-                         'attempts': 0}
-                # Fusion dateModified is a Unix timestamp, retained without conversion.
-                if key in entries:
-                    self.manifest['entries'].remove(entries[key])
-                self.manifest['entries'].append(entry)
-                entries[key] = entry
-                if file.fileExtension.lower() != 'f3d':
-                    entry['error'] = 'Not a Fusion design: ' + file.fileExtension
-                else:
-                    for attempt in range(2):
-                        entry['attempts'] = attempt + 1
-                        try:
-                            if hasattr(self.adapter, 'references'):
-                                entry['references'] = self.adapter.references(file)
-                            stem = self.destination(hub, project, folders, file, key)
-                            paths = self.adapter.export(file, stem)
-                            entry['files'] = [file_info(Path(path), self.root) for path in paths]
-                            entry.update(getattr(self.adapter, 'details', None) or {})
-                            entry.update(status='done', error=None)
-                            break
-                        except NonDesign as error:
-                            if self.error_callback:
-                                self.error_callback(key, error)
-                            entry.update(status='skipped', error=str(error))
-                            break
-                        except Exception as error:
-                            if self.error_callback:
-                                self.error_callback(key, error)
-                            entry.update(status='failed', error=str(error), files=[])
-                            self.log('attempt failed ' + key + ': ' + str(error))
-                            self.save()
-                counts[entry['status']] += 1
-                self.log(entry['status'] + ' ' + key)
-                self.save()
+                found += 1
+                place(hub, project, folders)
+                state.update(phase='design', design=found, name=file.name)
+                progress(dict(state))
+                if cancelled():
+                    self.run_info['cancelled'] = True
+                    break
+                self.export_one(hub, project, folders, file, entries, counts)
+                if limit is not None and found >= limit:
+                    break  # a small run on a large account need not list everything
         except Exception as error:
             self.run_info['error'] = str(error)
             raise
         finally:
-            self.run_info.update(finished=now(), counts=counts)
+            self.run_info.update(finished=now(), counts=counts, found=found)
             self.save()
             self.log('run finished ' + json.dumps(counts))
         return counts
+
+    def export_one(self, hub, project, folders, file, entries, counts):
+        key = json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
+        entry = entries.get(key)
+        if entry and self.valid(entry):
+            counts['skipped'] += 1
+            self.log('verified ' + key)
+            self.save()
+            return
+        entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': folders,
+                 'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
+                 'date': file.dateModified, 'files': [], 'status': 'skipped', 'error': None,
+                 'attempts': 0}
+        # Fusion dateModified is a Unix timestamp, retained without conversion.
+        if key in entries:
+            self.manifest['entries'].remove(entries[key])
+        self.manifest['entries'].append(entry)
+        entries[key] = entry
+        if file.fileExtension.lower() != 'f3d':
+            entry['error'] = 'Not a Fusion design: ' + file.fileExtension
+        else:
+            for attempt in range(2):
+                entry['attempts'] = attempt + 1
+                try:
+                    if hasattr(self.adapter, 'references'):
+                        entry['references'] = self.adapter.references(file)
+                    stem = self.destination(hub, project, folders, file, key)
+                    paths = self.adapter.export(file, stem)
+                    entry['files'] = [file_info(Path(path), self.root) for path in paths]
+                    entry.update(getattr(self.adapter, 'details', None) or {})
+                    entry.update(status='done', error=None)
+                    break
+                except NonDesign as error:
+                    if self.error_callback:
+                        self.error_callback(key, error)
+                    entry.update(status='skipped', error=str(error))
+                    break
+                except Exception as error:
+                    if self.error_callback:
+                        self.error_callback(key, error)
+                    entry.update(status='failed', error=str(error), files=[])
+                    self.log('attempt failed ' + key + ': ' + str(error))
+                    self.save()
+        counts[entry['status']] += 1
+        self.log(entry['status'] + ' ' + key)
+        self.save()
 
 
 class NonDesign(Exception):

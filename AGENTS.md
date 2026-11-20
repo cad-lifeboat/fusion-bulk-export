@@ -45,7 +45,8 @@ only reads from the account. Work on the person's machine, in a terminal, with t
    If space looks tight, tell the person before going further.
    **If the inventory shows hundreds of designs or more, go one project at a time**: tell the
    person, export one project (or folder) per run into the same OUT folder, and check each
-   before the next. Roughly 3-4 seconds per design; listing a large account takes minutes.
+   before the next. Roughly 3-4 seconds per design in our (small) tests; complex designs take much
+   longer, so time the first project. The inventory of a large account takes minutes.
 6. **Trial on one small project.** Read project ids and file counts from
    `OUT/inventory.json` locally (do not echo names), pick a project with a few designs:
    `python3 scripts/autorun.py export OUT --project PROJECT_ID`.

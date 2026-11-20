@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Exports stream: each folder is listed and its designs exported before moving on, so the first files appear within seconds, even on large accounts (no long "Discovering designs…" wait).
+- The progress dialog shows the project number, folder and design it is on, including while it is listing.
+- README: a copy-paste prompt for AI agents, and a note that timing varies with design complexity.
+
 ## 0.2.2
 
 - Clearer quick start: download, add to Fusion, export, step by step.

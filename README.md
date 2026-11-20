@@ -43,9 +43,22 @@ If you have hundreds or thousands of designs, start small:
 2. Export it and look at the result: open a couple of the `.f3d` files in Fusion and check the counts in the last dialog.
 3. Then do the next project, or the rest, into **the same output folder**. Finished designs are checked and skipped, so nothing is done twice.
 
-What to expect: each design takes a few seconds (about 3.5 seconds each in our tests; large assemblies take longer), so 1,000 designs is roughly an hour. With **Everything**, Fusion first lists every file in every project before the first export starts; on an account with thousands of designs that listing alone took about 13 minutes, with the progress dialog showing "Discovering designs…". Going project by project avoids that wait and lets you stop at a natural point.
+What to expect: the export starts right away and works project by project: it lists a folder, exports what it finds, then moves on, so the first files appear within seconds and the progress dialog always shows the project, folder and design it is on. In our tests a design took about 3.5 seconds, so 1,000 designs would be roughly an hour. **Your time will vary**: large assemblies, many bodies and heavy history take much longer than simple parts, and our sample is small (two accounts), so treat these numbers as a rough guide and time your first project.
 
-**Let your AI do it.** If you use an AI coding agent, ask it to follow [AGENTS.md](AGENTS.md). It runs the whole backup unattended (inventory, a trial project, the full export and a check of every file) and only needs you for signing in and one click in Fusion.
+**Let your AI do it.** If you use an AI agent that can run commands on your computer, paste this into it:
+
+```text
+Back up my Autodesk Fusion designs to this computer with Fusion Bulk Export
+(https://github.com/cad-lifeboat/fusion-bulk-export). Download the repository and follow its AGENTS.md.
+- Start with an inventory and tell me only the counts (hubs, projects, designs).
+- If I have hundreds of designs or more, go one project at a time into the same output folder,
+  and check each one before the next.
+- Never print or repeat my project or design names, never upload, change or delete anything in my
+  Fusion account, and ask me before deleting anything on disk.
+- Tell me when you need me to sign in or click something in Fusion.
+```
+
+It only needs you for signing in and, the first time, one click in Fusion to start the add-in.
 
 ## What you get
 

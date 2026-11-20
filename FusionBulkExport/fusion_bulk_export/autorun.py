@@ -215,8 +215,9 @@ def run_autorun(app, config_path):
         else:
             exporter = Exporter(output, FusionAdapter(app), error_callback=log.error)
 
-            def progress(index, total, name):
-                log.write('design %d/%d' % (index + 1, total))
+            def progress(state):
+                if state['phase'] == 'design':  # counts only: names stay out of the log
+                    log.write('project %d/%d design %d' % (state['project'], state['projects'], state['design']))
                 adsk.doEvents()
 
             log.result['counts'] = exporter.run(
