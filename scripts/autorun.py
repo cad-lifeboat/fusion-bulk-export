@@ -4,12 +4,9 @@
   autorun.py inventory OUTPUT                       list everything, open nothing
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
                     [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only]
-                    [--no-linked-copies]
                                                     export (rerun the same command to resume);
                                                     other files (PDFs, uploads) are saved too
-                                                    unless --designs-only; assemblies also get
-                                                    a copy with their linked parts included
-                                                    unless --no-linked-copies; drawings and
+                                                    unless --designs-only; drawings and
                                                     electronics are listed as not supported
                                                     (Fusion cannot export them safely)
   autorun.py status OUTPUT                          counts so far (no design names)
@@ -305,8 +302,7 @@ def root_problem(output, name=None):
     return output_root_problem(output, 'win32' if (name or system()) == 'Windows' else 'darwin')
 
 
-def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False,
-            linked_copies=True):
+def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):
     """Put the job in place (after updating the add-in when needed); True when the output folder
     was created for it."""
     created = make_output(output)
@@ -333,10 +329,11 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['limit'] = limit
     if designs_only:
         config['designs_only'] = True
-    if not linked_copies:
-        config['linked_copies'] = False
     if not memory_guard_wanted():
         config['memory_guard'] = False
+    experiment = linked_copies_experiment()
+    if experiment:
+        config['experiment_linked_copies'] = experiment
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
     return created
 
@@ -351,6 +348,21 @@ def memory_guard_wanted(environ=None):
     return not (value is not None and value.strip().lower() in ('off', '0', 'false', 'no'))
 
 
+# Testing only, not for users: the add-in's core.LINKED_COPIES_ENV. Passed on in the job like
+# MEMORY_GUARD_ENV, so a test run started here can switch the experimental copies with linked
+# parts on ("1", "innermost" or "compute"); unset or anything else leaves them off.
+LINKED_COPIES_ENV = 'FUSION_BULK_EXPORT_EXPERIMENT_LINKED_COPIES'
+LINKED_COPIES_VALUES = ('1', 'both', 'innermost', 'compute')  # the add-in's core.LINK_RECIPES
+
+
+def linked_copies_experiment(environ=None):
+    """The LINKED_COPIES_ENV value to pass on in the job (lower case), or None (not set or not
+    a value the add-in knows: off)."""
+    value = (os.environ if environ is None else environ).get(LINKED_COPIES_ENV)
+    value = value.strip().lower() if isinstance(value, str) else None
+    return value if value in LINKED_COPIES_VALUES else None
+
+
 ACCOUNT_CHANGED_LINE = ("Stopped by itself (account_changed): a design's version or date in the Fusion account "
                         "changed while it was exported with its linked parts. Do not run again; check the "
                         "design's version history in Fusion and report it (export.log in the output folder).")
@@ -362,16 +374,12 @@ def count_line(counts):
     if 'exported' in counts:
         unchanged = counts.get('files_up_to_date', 0)
         unsupported = counts.get('unsupported', 0)
-        copies = counts.get('linked_copies', 0)
-        return ('Counts: %d exported now, %d already up to date, %s saved%s, %d skipped, %d failed%s%s'
+        return ('Counts: %d exported now, %d already up to date, %s saved%s, %d skipped, %d failed%s'
                 % (counts.get('exported', 0), counts.get('up_to_date', 0), plural(counts.get('files', 0), 'other file'),
                    ', %s already up to date' % plural(unchanged, 'other file') if unchanged else '',
                    counts.get('skipped', 0), counts.get('failed', 0),
                    ("; %s can't be exported by an add-in (drawings, electronics)" % plural(unsupported, 'file')
-                    if unsupported else ''),
-                   ('; %s also saved with %s linked parts included' % (plural(copies, 'assembly'),
-                                                                       form(copies, 'its', 'their'))
-                    if copies else '')))
+                    if unsupported else '')))
     return 'Counts: ' + json.dumps(counts, sort_keys=True)
 
 
@@ -477,17 +485,6 @@ def summary(output):
         if slow:
             lines.append('Slow: %s took Fusion over a minute%s (the report lists %s)'
                          % (plural(slow, 'item'), '' if slow == 1 else ' each', form(slow, 'it', 'them')))
-        copies = sum(1 for e in designs if e.get('status') == 'done' and any(
-            f.get('role') == 'archive_with_linked_parts' for f in e.get('files') or []))
-        if copies:
-            lines.append('Linked parts: %s also saved with %s linked parts included'
-                         % (plural(copies, 'assembly'), form(copies, 'its', 'their')))
-        older = sum(1 for e in designs if e.get('status') == 'done' and e.get('has_references')
-                    and 'linked_occurrences' not in e)
-        if older:
-            lines.append('Note: %s %s exported before copies with linked parts existed; export into a new folder '
-                         'to get %s' % (plural(older, 'assembly'), form(older, 'was', 'were'),
-                                       form(older, 'its copy', 'their copies')))
         stale = sum(1 for e in designs if e.get('references_out_of_date'))
         if stale:
             lines.append('Note: %s with out-of-date links (exported as %s, not a failure)'
@@ -613,8 +610,7 @@ def run_job(args, name, output, installed):
     output folder this command created and the job left empty (a rejected job) is removed again."""
     watching = alive(installed)
     created = install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
-                      folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
-                      not getattr(args, 'no_linked_copies', False))
+                      folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False))
     try:
         status = send(args, name, output, installed, watching)
     except KeyboardInterrupt:
@@ -890,9 +886,6 @@ def main(argv=None):
                                 'was exported; later designs and folders are left for the next run')
             p.add_argument('--designs-only', action='store_true',
                            help='skip other files (PDFs, uploads); by default they are saved too')
-            p.add_argument('--no-linked-copies', action='store_true',
-                           help='do not also save each assembly with its linked parts included (a second, '
-                                'larger .f3d beside the one that keeps the links)')
             p.add_argument('--restart-fusion', nargs='?', const='polite', choices=('polite', 'force'),
                            metavar='force',
                            help='closes and reopens Fusion by itself after a memory stop or crash, then carries on; '

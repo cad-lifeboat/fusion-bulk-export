@@ -1,6 +1,7 @@
 """Unattended export: configuration, inventory, project selection, limit, stop."""
 import importlib
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace as NS
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from tests import fake_adsk as fake
 
 fake.install()
+from fusion_bulk_export import core
 from fusion_bulk_export.autorun import run_autorun
 
 
@@ -191,17 +193,32 @@ class AutorunTests(unittest.TestCase):
         self.assertIn('open the drawing in Fusion and use File &gt; Export (PDF)', page)
         self.assertNotIn('Also export drawings', page)
 
-    def test_linked_copies_switch(self):
+    def test_linked_copies_are_off_by_default_and_a_job_can_switch_the_experiment_on(self):
         assembly = fake.linked_assembly(fake.File('Assembly', 'assembly', references=1), parts=1)
         self.data.dataHubs.item(0).dataProjects.item(0).rootFolder.dataFiles.items.append(assembly)
-        result = self.run_with(linked_copies=False)
-        self.assertEqual((result['counts']['linked_copies'], result['linked_copies']), (0, False))
+        fake.BREAK_LINK_CALLS[0] = 0
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(core.LINKED_COPIES_ENV, None)
+            # A job from a test build's launcher may still say "linked_copies": accepted, ignored.
+            result = self.run_with(linked_copies=True)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['counts']['linked_copies'], 0)
+        self.assertNotIn('experiment_linked_copies', result)
+        self.assertEqual(fake.BREAK_LINK_CALLS[0], 0)
         self.assertFalse(assembly.documents[0].isModified)
-        result = self.run_with(linked_copies='no')
-        self.assertIn('linked_copies must be true or false', result['errors'][0]['error'])
+        result = self.run_with(experiment_linked_copies='sometimes')
+        self.assertIn('experiment_linked_copies must be one of', result['errors'][0]['error'])
         self.output = self.root / 'out2'
-        result = self.run_with()
-        self.assertEqual((result['counts']['linked_copies'], result['linked_copies']), (1, True))
+        result = self.run_with(experiment_linked_copies='compute')
+        self.assertEqual((result['counts']['linked_copies'], result['experiment_linked_copies']), (1, 'compute'))
+        self.assertGreater(fake.BREAK_LINK_CALLS[0], 0)
+
+    def test_the_experiment_can_also_be_switched_on_in_fusions_environment(self):
+        assembly = fake.linked_assembly(fake.File('Assembly', 'assembly', references=1), parts=1)
+        self.data.dataHubs.item(0).dataProjects.item(0).rootFolder.dataFiles.items.append(assembly)
+        with patch.dict(os.environ, {core.LINKED_COPIES_ENV: '1'}):
+            result = self.run_with()
+        self.assertEqual((result['counts']['linked_copies'], result['experiment_linked_copies']), (1, 'both'))
 
     def test_designs_only(self):
         result = self.run_with(designs_only=True)

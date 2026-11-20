@@ -40,46 +40,11 @@ def unsupported_note(count):
 LINKS_OUT_OF_DATE = ('Some of its links are out of date: a linked design has a newer version than this design '
                      'uses. The export holds the versions it uses; open it in Fusion and update its links '
                      'if you want the newer ones.')
-# The copy of an assembly with its linked parts included (see FusionAdapter.linked_copy).
-ROLE_LABEL = {'archive': 'F3D', 'step': 'STEP', 'archive_with_linked_parts': 'F3D with linked parts'}
-LINKED_NOTE = ('Two archives: F3D keeps the links to the linked designs (each exported in its own right); '
-               'F3D with linked parts holds them inside, so it opens on its own.')
+# The file roles of a design (checks.file_role). The experimental copy with linked parts exists only
+# in folders exported with the testing switch core.LINKED_COPIES_ENV on.
+ROLE_LABEL = {'archive': 'F3D', 'step': 'STEP', 'archive_with_linked_parts': 'F3D with linked parts (experimental)'}
 ACCOUNT_CHANGED_NOTE = ("This design's version or date in the Fusion account changed while it was exported "
                         "with its linked parts; the export stopped. Check its version history in Fusion.")
-
-
-def linked_copies_text(count):
-    """'12 assemblies also saved with their linked parts included'."""
-    return '%s also saved with %s linked parts included' % (plural(count, 'assembly'), form(count, 'its', 'their'))
-
-
-def older_assemblies_text(count):
-    """The note for assemblies exported before the copy with linked parts existed."""
-    return ('%s %s exported before this option existed; export into a new folder to get %s with linked parts.'
-            % (plural(count, 'assembly'), form(count, 'was', 'were'), form(count, 'its copy', 'their copies')))
-
-
-def without_copy_text(count):
-    """The note for assemblies exported with the option off, in a run that has it on."""
-    return ('%s %s exported with "Include linked parts" off; export into a new folder to get %s with linked parts.'
-            % (plural(count, 'assembly'), form(count, 'was', 'were'), form(count, 'its copy', 'their copies')))
-
-
-def linked_copy_counts(manifest):
-    """(saved, older, off) over the folder's exported designs: with a copy with linked parts; with
-    links, exported by a version before that copy existed (no linked_occurrences recorded); with
-    linked components, exported with the option off."""
-    saved = older = off = 0
-    for entry in manifest.get('entries', []):
-        if entry.get('kind', 'design') != 'design' or entry.get('status') != 'done':
-            continue
-        if any(file_role(info) == 'archive_with_linked_parts' for info in entry.get('files') or []):
-            saved += 1
-        elif 'linked_occurrences' not in entry and entry.get('has_references'):
-            older += 1
-        elif (entry.get('linked_copy') or {}).get('status') == 'off':
-            off += 1
-    return saved, older, off
 
 
 WARNING_STEP = ('The .f3d archive is the complete copy; open the design in Fusion if you need the STEP '
@@ -124,7 +89,6 @@ def items(manifest, run_info=None):
         status = shown_status(entry)
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
         roles = [file_role(f) for f in entry.get('files', []) if f.get('path')]
-        copy = entry.get('linked_copy') or {}
         warnings = [str(w) for w in entry.get('warnings') or []] if status == 'done' else []
         picture = (entry.get('thumbnail') or {}).get('path') if status == 'done' else None
         links = entry.get('references')
@@ -138,10 +102,7 @@ def items(manifest, run_info=None):
                            links_out_of_date=bool(entry.get('references_out_of_date')),
                            links_unreadable=bool(entry.get('references_unreadable')),
                            fusion_error=entry.get('fusion_error') or '', slow_seconds=entry.get('slow_seconds'),
-                           roles=roles, linked_copy_reason=(copy.get('reason') or '') if status == 'done'
-                           and copy.get('status') == 'skipped' else '',
-                           linked_seconds=copy.get('seconds') if copy.get('slow') else None,
-                           account_changed=bool(entry.get('account_changed'))))
+                           roles=roles, account_changed=bool(entry.get('account_changed'))))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
@@ -149,8 +110,7 @@ def items(manifest, run_info=None):
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
                            next_step=next_step('unreadable', problem.get('error')), warnings=[],
                            thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
-                           fusion_error='', slow_seconds=None, roles=[], linked_copy_reason='', linked_seconds=None,
-                           account_changed=False))
+                           fusion_error='', slow_seconds=None, roles=[], account_changed=False))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
@@ -235,11 +195,6 @@ def table_html(rows, heading, column):
             why += ('<br>' if why else '') + '<span class="muted">Note: ' + esc(LINKS_OUT_OF_DATE) + '</span>'
         if row.get('account_changed'):
             why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(ACCOUNT_CHANGED_NOTE) + '</span>'
-        if 'archive_with_linked_parts' in roles:
-            why += ('<br>' if why else '') + '<span class="muted">' + esc(LINKED_NOTE) + '</span>'
-        if row.get('linked_copy_reason'):
-            why += ('<br>' if why else '') + '<span class="muted">Note: no copy with linked parts: ' + esc(
-                row['linked_copy_reason'].rstrip('.')) + '.</span>'
         if row['next_step']:
             why += ('<br>' if why else '') + '<span class="muted">' + esc(row['next_step']) + '</span>'
         label = LABEL.get(row['status'], row['status'] or '')
@@ -294,14 +249,7 @@ def render_html(manifest, run_info, counts):
     unread = links_unreadable(manifest)
     if unread:
         line += '; %d whose links could not be read (exported all the same)' % unread
-    saved, older, off = linked_copy_counts(manifest)
-    if saved:
-        line += '; ' + linked_copies_text(saved)
     out.append('<div class="muted">%s.</div>' % esc(line))
-    if older:
-        out.append('<p class="muted">Note: %s</p>' % esc(older_assemblies_text(older)))
-    if off and (run_info or {}).get('linked_copies'):
-        out.append('<p class="muted">Note: %s</p>' % esc(without_copy_text(off)))
     memory = memory_line(run_info)
     if memory:
         out.append('<div class="muted">%s</div>' % esc(memory))
@@ -333,10 +281,8 @@ def slow_html(rows):
     out = ['<h2>Slow items</h2><p class="muted">%s</p><ul>' % esc(SLOW_NOTE)]
     for row in slow:
         where = ' / '.join(part for part in (row['project'], row['folder']) if part)
-        linked = (', %s of it removing links for the copy with linked parts' % duration_text(row['linked_seconds'])
-                  if row.get('linked_seconds') else '')
-        out.append('<li>%s <span class="muted">(%s)</span>: %s%s</li>'
-                   % (esc(row['name']), esc(where), esc(duration_text(row['slow_seconds'])), esc(linked)))
+        out.append('<li>%s <span class="muted">(%s)</span>: %s</li>'
+                   % (esc(row['name']), esc(where), esc(duration_text(row['slow_seconds']))))
     out.append('</ul>')
     return out
 
@@ -378,8 +324,7 @@ def render_csv(manifest, run_info):
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
-                     'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds',
-                     'archive_with_linked_parts'])
+                     'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         by_role = {}
@@ -393,7 +338,7 @@ def render_csv(manifest, run_info):
                          '' if design else (row['files'][0] if row['files'] else ''),
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
                          row['fusion_error'], 'yes' if row['links_unreadable'] else '',
-                         row['slow_seconds'] or '', by_role.get('archive_with_linked_parts', '') if design else ''])
+                         row['slow_seconds'] or ''])
     return stream.getvalue()
 
 
@@ -508,12 +453,6 @@ def summary(counts, run_info, manifest, output, page=None):
     unsupported = unsupported_count(manifest)
     if unsupported:
         notes.append(unsupported_note(unsupported))
-    copies = counts.get('linked_copies', 0)
-    if copies:
-        notes.append(linked_copies_text(copies) + '.')
-    older = linked_copy_counts(manifest)[1]
-    if older:
-        notes.append(older_assemblies_text(older))
     stale = links_out_of_date(manifest)
     if stale:
         notes.append('%s %s older versions of linked designs (a note, not a failure).'

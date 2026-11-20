@@ -286,8 +286,8 @@ def check_folder(root, strict=False, show=None):
                         archive.suffix, plural(members, 'member design'), os.stat(long_path(step)).st_size,
                         plural(solids, 'solid'),
                         '' if expected is None else ' (Fusion: %d)' % expected,
-                        ', and a copy with linked parts' if any(file_role(f) == 'archive_with_linked_parts'
-                                                                for f in files) else '')
+                        ', and an experimental copy with linked parts' if any(file_role(f) == 'archive_with_linked_parts'
+                                                                             for f in files) else '')
         if entry.get('warnings'):
             totals['warnings'] += 1
         if show:

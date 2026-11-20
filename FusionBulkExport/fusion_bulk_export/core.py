@@ -104,6 +104,21 @@ LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing ot
 # The kill switch: "off" (or 0, false, no) in Fusion's environment switches the guard off. The
 # command-line launcher passes it on in the job, so it works from the launcher's environment too.
 MEMORY_GUARD_ENV = 'FUSION_BULK_EXPORT_MEMORY_GUARD'
+# For testing on a real Fusion only, off by default and not offered to users: with this set in
+# Fusion's environment, an assembly of linked designs also gets a second archive with its links
+# removed in memory ("<name> vN (with linked parts, experimental).f3d", FusionAdapter.linked_copy).
+# Such copies crashed Fusion when opened in tests on real Fusion, so the recipe that removes the
+# links is still being tested: the value picks it (LINK_RECIPES). The command-line launcher passes
+# it on in the job ("experiment_linked_copies"), as it does MEMORY_GUARD_ENV.
+LINKED_COPIES_ENV = 'FUSION_BULK_EXPORT_EXPERIMENT_LINKED_COPIES'
+# innermost: deepest linked occurrence first, adsk.doEvents after each breakLink.
+# compute: outermost first (doEvents after each pass), then design.computeAll() and SETTLE_EVENTS
+#   doEvents before the copy is exported.
+# both (the value 1): innermost first with doEvents after each breakLink, then computeAll and
+#   SETTLE_EVENTS doEvents.
+RECIPE_INNERMOST, RECIPE_COMPUTE, RECIPE_BOTH = 'innermost', 'compute', 'both'
+LINK_RECIPES = {'1': RECIPE_BOTH, RECIPE_BOTH: RECIPE_BOTH, RECIPE_INNERMOST: RECIPE_INNERMOST,
+                RECIPE_COMPUTE: RECIPE_COMPUTE}
 # For testing on a real Fusion only: with this set (a number of MB) in Fusion's environment, the
 # guard also stops at once (no minimum, no waiting) once Fusion holds more than that.
 MEMORY_TEST_ENV = 'FUSION_BULK_EXPORT_TEST_MEMORY_MB'
@@ -210,6 +225,23 @@ def memory_guard_enabled(environ=None, settings=None):
     return settings.get('memory_guard') is not False
 
 
+def link_recipe(value):
+    """The recipe a LINKED_COPIES_ENV value (or a job's "experiment_linked_copies") asks for, or
+    None (off): 1 is RECIPE_BOTH; innermost and compute name theirs; anything else is off. A bool
+    from a caller is accepted too (True: RECIPE_BOTH)."""
+    if value is True:
+        return RECIPE_BOTH
+    if not isinstance(value, str):
+        return None
+    return LINK_RECIPES.get(value.strip().lower())
+
+
+def linked_copies_experiment(environ=None):
+    """The recipe LINKED_COPIES_ENV in this process's environment asks for, or None (off, the
+    default)."""
+    return link_recipe((os.environ if environ is None else environ).get(LINKED_COPIES_ENV))
+
+
 def memory_test_limit(environ=None):
     """MEMORY_TEST_ENV in bytes, or None (unset or not a positive number)."""
     value = (os.environ if environ is None else environ).get(MEMORY_TEST_ENV)
@@ -221,7 +253,7 @@ def memory_test_limit(environ=None):
 
 
 # Run counts, by what happened to each item this run (linked_copies: designs exported this run that
-# also got their copy with linked parts; they are counted in exported as well).
+# also got their experimental copy with linked parts, LINKED_COPIES_ENV; also counted in exported).
 COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'unsupported', 'failed',
               'linked_copies')
 COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed',
@@ -247,7 +279,8 @@ def new_counts():
     wanted, a design without a design product, a download Fusion refused); unsupported: a file
     type Fusion's API cannot export at all (electronics, drawings: see UNSUPPORTED), neither a
     failure nor the user's choice; failed: will be tried again on the next run; linked_copies:
-    designs exported this run that also got their copy with linked parts (also in exported)."""
+    designs exported this run that also got their experimental copy with linked parts (also in
+    exported; always 0 unless LINKED_COPIES_ENV is on)."""
     return dict((key, 0) for key in COUNT_KEYS)
 
 
@@ -751,9 +784,10 @@ class Exporter:
         self.clock = time.monotonic
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.other_files = True
-        # Also save assemblies with their linked parts included (a second .f3d; see
-        # FusionAdapter.linked_copy). The dialog's checkbox, the job's "linked_copies".
-        self.linked_copies = True
+        # Testing only, off (None) by default: the recipe (LINK_RECIPES) for the experimental
+        # second archive of an assembly with its linked parts included (FusionAdapter.linked_copy).
+        # Set by run() from LINKED_COPIES_ENV or the job's "experiment_linked_copies".
+        self.linked_copies = None
         # Set when the account guard (export_checked) saw a design change in the account.
         self.alarm = None
         # Fusion's memory, sampled between items (memory.sample inside Fusion; tests set a fake).
@@ -822,7 +856,7 @@ class Exporter:
             return False
         copy = entry.get('linked_copy') or {}
         if self.linked_copies and copy.get('retry'):
-            return False  # the copy with linked parts was left out for now (the design was open)
+            return False  # the experimental copy was left out for now (the design was open)
         try:
             for expected in entry['files']:
                 # normpath, not resolve(): no file-system call, so long Windows paths are fine.
@@ -951,11 +985,11 @@ class Exporter:
             stem = directory / (base + version)
             facts = dict(location='/'.join(parts), identities=[identity for _, identity in segments],
                          base=base, shortened=False)
-            if not too_long(str(stem) + LINKED_SUFFIX, self.platform) and self.make_directory(directory):
+            if not too_long(str(stem) + self.longest_suffix(), self.platform) and self.make_directory(directory):
                 return stem, facts
         directory = self.short_directory(hub, project, folders)
         stem = directory / (sanitize(file.name, 12) + '~' + digest(str(file.id))[:24] + version)
-        if too_long(str(stem) + LINKED_SUFFIX, self.platform):
+        if too_long(str(stem) + self.longest_suffix(), self.platform):
             raise ValueError('The export path is too long even when shortened; choose a shorter output folder.')
         os.makedirs(long_path(directory), exist_ok=True)
         return stem, dict(location=None, identities=None, base=None, shortened=True)
@@ -994,7 +1028,7 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True, linked_copies=True):
+            on_trouble=None, other_files=True, linked_copies=None):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
@@ -1020,10 +1054,12 @@ class Exporter:
         other_files: also save the files that are not designs (PDFs, uploads) as Fusion hands
         them out; when false they are skipped as "Not a Fusion design".
 
-        linked_copies: for a design with linked components, also write a second archive with the
-        linked parts included (FusionAdapter.linked_copy). A design whose account version or date
-        changes meanwhile (which must never happen) stops the run at once, without asking
-        on_trouble: stopped_code 'account_changed'.
+        linked_copies: testing only, off by default. None reads LINKED_COPIES_ENV from this
+        process's environment; a recipe name or a job's value (link_recipe) switches it on, False
+        off. When on, a design with linked components also gets an experimental second archive
+        with its links removed in memory (FusionAdapter.linked_copy). A design whose account
+        version or date changes meanwhile (which must never happen) stops the run at once,
+        without asking on_trouble: stopped_code 'account_changed'.
 
         Drawings (.f2d) are never opened: they are recorded as unsupported (DRAWING_REASON).
 
@@ -1037,10 +1073,13 @@ class Exporter:
         finally:
             lock.release()
 
-    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=True):
+    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=None):
         self.other_files = bool(other_files)
-        self.linked_copies = bool(linked_copies)
-        self.run_info.update(other_files=self.other_files, linked_copies=self.linked_copies)
+        self.linked_copies = linked_copies_experiment() if linked_copies is None else link_recipe(linked_copies)
+        self.run_info.update(other_files=self.other_files)
+        if self.linked_copies:
+            self.run_info['experiment_linked_copies'] = self.linked_copies
+            self.log('experiment: copies with linked parts on, recipe ' + self.linked_copies)
         counts = new_counts()
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
@@ -1377,6 +1416,11 @@ class Exporter:
                     self.log('not retried in this run (the attempt took %d s) %s' % (self.clock() - began, key))
                     break
         return None
+
+    def longest_suffix(self):
+        """The longest suffix a design's stem gets in this run, for the path-length checks: the
+        experimental copy's only while it is on, so the default layout is as before it existed."""
+        return LINKED_SUFFIX if self.linked_copies else '.step'
 
     def export_checked(self, file, stem, entry):
         """adapter.export(file, stem), guarded: when the adapter removed links in memory

@@ -77,10 +77,12 @@ def fold(name):
     return unicodedata.normalize('NFC', name).casefold()
 
 
-# The second archive of an assembly with linked components: "<stem> v<version> (with linked
-# parts).f3d", a copy whose links were removed in memory so the linked parts' geometry is inside.
-# The suffix comes after the design's cleaned (and, on Windows, capped) name, so it is never cut.
-LINKED_PARTS = ' (with linked parts)'
+# The second archive of an assembly with linked components, written only while the testing switch
+# core.LINKED_COPIES_ENV is on: "<stem> v<version> (with linked parts, experimental).f3d", a copy
+# whose links were removed in memory so the linked parts' geometry is inside. Not offered to users:
+# such copies crashed Fusion when opened in tests on real Fusion. The suffix comes after the
+# design's cleaned (and, on Windows, capped) name, so it is never cut.
+LINKED_PARTS = ' (with linked parts, experimental)'
 LINKED_SUFFIX = LINKED_PARTS + '.f3d'
 # A design's files: "<stem> v<version>" plus these. All are claimed together, so an uploaded
 # "Bracket v3.step" or "Bracket v3.png" and a design's export can never share a path.

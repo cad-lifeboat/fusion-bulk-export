@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-- Assemblies made of linked designs now come as two files: `<name> v7.f3d`, the assembly as it is (it keeps its links, and alone holds only its own bodies), and `<name> v7 (with linked parts).f3d`, a larger copy with the linked parts inside that opens on its own. The links are removed only in Fusion's memory for that copy, after the plain files are written; the assembly is then closed without saving, and the export checks that its version and date in the account are unchanged (if they ever differ, it stops at once with "account_changed"). A design open in Fusion gets no copy ("open in Fusion; close it to get the copy with linked parts"). On by default: the dialog's "Include linked parts in assemblies" (remembered), `--no-linked-copies` on the command line, `"linked_copies": false` in a job. The summary, `status`, `index.html` (labelled "F3D" and "F3D with linked parts") and `index.csv` (new column `archive_with_linked_parts`) show them; assemblies exported before this option existed are not exported again just to add one (a note says to export into a new folder).
-- `manifest.json`: each file of an entry has a `role` (`archive`, `step`, `archive_with_linked_parts`; the thumbnail `thumbnail`), and each of a design's `references` has the `path` of that linked design's exported `.f3d` in the folder (null when it is not exported there). Older folders are read as before.
-- README: "Why is my assembly's .f3d almost empty?" in Questions.
+- `manifest.json` maps every link to its exported file: each of a design's `references` has the `path` of that linked design's exported `.f3d` in the folder (null when it is not exported there), filled in at the end of every run, so a design exported after the assembly that links to it is found too. Each file of an entry has a `role` (`archive`, `step`; the thumbnail `thumbnail`). Older folders are read as before.
+- README: "Why is my assembly's .f3d almost empty?" in Questions (the assembly's `.f3d` holds its own bodies and its links; each linked design has its own `.f3d` in the export, and the assembly's `.step` has the full geometry).
 - The low-memory note no longer shows on nearly every export on an 8 GB Mac: macOS's everyday "warning" memory pressure no longer counts, only a lasting "critical" one (the memory stop rule is unchanged).
 - The dialog no longer makes Fusion log "maximumHeight: 3 : invalid argument value" twice each time it opens (the tree's "no maximum" is now given only when the tree is made; its height is unchanged).
 - Command line: a job rejected at once (an output folder Fusion cannot use) prints just the one rejection line ("Waiting for ..." appears only after 5 s), and an empty output folder the command had just created for it is removed again. `--restart-fusion`'s help is one short sentence.
@@ -21,6 +20,10 @@
 - Command line: a job whose output folder Fusion cannot reach or create (a network drive connected only in the terminal's session) is answered at once with one line and exit status 1; it used to be taken silently while the command waited up to 24 hours. If Fusion takes a job and no result appears within 60 s while it is idle, the command stops with a plain line.
 - Command line: the installed add-in is judged by its files, not its install stamp, and the line says so plainly ("installed copy differs from this checkout; kept the installed one; run scripts/install.py to replace it"); the same files under an old version label are named as such. The Windows installer now copies every file (it kept an old manifest whose size had not changed).
 - CI: the macOS test jobs run on pinned images (macos-15, and macos-15-intel for Python 3.9) instead of the queue-starved macos-latest.
+
+Not included yet:
+
+- Saving an assembly with its linked parts included in one `.f3d` is being tested; the copies it made could not be opened in Fusion, so it is not part of this release.
 
 ## 0.3.1
 

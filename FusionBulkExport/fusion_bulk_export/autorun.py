@@ -10,8 +10,12 @@ Configuration (all paths absolute):
                                      by id is exactly that folder, even beside a same-named one
    "designs_only": false,            optional; true: skip other files (PDFs, uploads),
                                      which are otherwise saved as Fusion hands them out
-   "linked_copies": true,            optional; false: do not also save assemblies with
-                                     their linked parts included (a second .f3d per assembly)
+   "experiment_linked_copies": "1",  testing only, not for users: the launcher passes on
+                                     FUSION_BULK_EXPORT_EXPERIMENT_LINKED_COPIES ("1",
+                                     "innermost" or "compute"; see core.LINKED_COPIES_ENV).
+                                     Absent: Fusion's own environment decides (off by default)
+   "linked_copies": ...,             accepted and ignored (from test builds before the
+                                     copies with linked parts became an experiment)
    "drawings": ...,                  accepted and ignored: drawings are never exported
                                      (exporting one crashed Fusion); they are listed as
                                      not supported
@@ -48,8 +52,8 @@ import traceback
 import adsk
 import adsk.core
 
-from .core import (Exporter, Listing, Selection, atomic_write, collection, now, reference_facts, select_projects,
-                   walk)
+from .core import (LINK_RECIPES, Exporter, Listing, Selection, atomic_write, collection, link_recipe, now,
+                   reference_facts, select_projects, walk)
 from .fusion import FusionAdapter
 from .report import memory_line, write as write_report
 from .words import plural
@@ -119,13 +123,13 @@ def check_settings(config):
     designs_only = config.get('designs_only', False)
     if not isinstance(designs_only, bool):
         raise ValueError('designs_only must be true or false')
-    linked_copies = config.get('linked_copies', True)
-    if not isinstance(linked_copies, bool):
-        raise ValueError('linked_copies must be true or false')
+    linked_copies = config.get('experiment_linked_copies')
+    if linked_copies is not None and link_recipe(linked_copies) is None:
+        raise ValueError('experiment_linked_copies must be one of: ' + ', '.join(sorted(LINK_RECIPES)))
     memory_guard = config.get('memory_guard', True)
     if not isinstance(memory_guard, bool):
         raise ValueError('memory_guard must be true or false')
-    # "drawings" (from launchers before drawing export was removed) is ignored.
+    # "drawings" (from launchers before drawing export was removed) and "linked_copies" are ignored.
     return mode, selection, limit, timeout, not designs_only, linked_copies, memory_guard
 
 
@@ -378,7 +382,7 @@ def run_autorun(app, config_path):
         if unusable is not None:
             raise ValueError(unusable)
         log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
-                          other_files=other_files, linked_copies=linked_copies)
+                          other_files=other_files)
         log.write('autorun start ' + mode)
         if mode == 'diagnostics':
             report = diagnostics(app)
@@ -429,6 +433,8 @@ def run_autorun(app, config_path):
                                         if e['status'] == 'done' for f in e['files']),
                               memory=info.get('memory'), gc=info.get('gc'), memory_rule=info.get('memory_rule'),
                               memory_guard=info.get('memory_guard', 'on'), low_memory=bool(info.get('low_memory')))
+            if info.get('experiment_linked_copies'):
+                log.result['experiment_linked_copies'] = info['experiment_linked_copies']
             # For the launcher's --restart-fusion: it closes Fusion only when nothing is open in it
             # that someone could be working on.
             log.result.update(open_document_facts(app))

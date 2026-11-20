@@ -26,6 +26,7 @@ class File:
         self.latestVersionNumber = version
         self.fileExtension, self.dateModified = extension, 1700000000
         self.linked_error = None  # raised by the archive export made after links were removed
+        self.compute = None  # 'missing' or an error message for design.computeAll (design_product)
         linked = [File('Linked part', 'linked-' + identity + ('' if n == 0 else '-%d' % (n + 1)))
                   for n in range(int(references))]
         self.childReferences = Collection(*linked)
@@ -229,6 +230,13 @@ def account_write(*args, **kwargs):
     raise AccountWrite('The add-in must never save, upload or change anything in the Fusion account.')
 
 
+# Every breakLink call on any synthetic occurrence (a default run must make none), and, for tests
+# of the call order, a log of breakLink, computeAll and (when a test patches adsk.doEvents to
+# record into it) doEvents calls. Tests clear both.
+BREAK_LINK_CALLS = [0]
+CALLS = []
+
+
 class Occurrence(Weak):
     """An occurrence; referenced (isReferencedComponent) for a linked component. breakLink()
     removes its link in the document's memory, as on real Fusion: the document becomes modified,
@@ -246,6 +254,8 @@ class Occurrence(Weak):
 
     def breakLink(self):
         self.breaks += 1
+        BREAK_LINK_CALLS[0] += 1
+        CALLS.append(('breakLink', self.component.id))
         document = self.document
         assert document is not None and not document.isVisible, 'links removed in a document the user can see'
         CLOCK[0] += self.seconds
@@ -323,6 +333,21 @@ def occurrence(part, visible=True, bulb=True, parent=None):
     return NS(component=part, isVisible=visible, isLightBulbOn=bulb, assemblyContext=parent)
 
 
+def design_product(file, document, root, components):
+    """A document's Design. computeAll records itself in CALLS; file.compute: 'missing' (this
+    Fusion has no computeAll) or an error message (computeAll raises it)."""
+    design = NS(exportManager=Manager(file, document), rootComponent=root, allComponents=Collection(*components))
+    compute = file.compute
+    if compute != 'missing':
+        def compute_all():
+            CALLS.append(('computeAll',))
+            if compute:
+                raise RuntimeError(compute)
+            return True
+        design.computeAll = compute_all
+    return design
+
+
 class Document:
     """An open document. Made directly in a test it is one the user opened (shown in Fusion);
     Documents.open makes hidden ones, as the add-in asks for."""
@@ -362,9 +387,8 @@ class Document:
             components = [root, part]
         self.root = root
         me = weakref.ref(self)
-        self._products = NS(itemByProductType=lambda product: NS(
-            exportManager=Manager(file, me()), rootComponent=root,
-            allComponents=Collection(*components)) if file.design else None)
+        self._products = NS(itemByProductType=lambda product: design_product(file, me(), root, components)
+                            if file.design else None)
         if str(file.fileExtension).lower() == 'f2d':
             # A drawing the user opened: anything the add-in reads from it is a crash on export.
             self._products = Collection(NS(exportManager=NS(

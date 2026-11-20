@@ -1,5 +1,7 @@
-"""Assemblies of linked designs: the design as it is, then a copy with its linked parts included
-(links removed in memory only), and every rule that keeps the Fusion account untouched."""
+"""Assemblies of linked designs. By default only the design as it is (no link is ever removed).
+With the testing-only switch (core.LINKED_COPIES_ENV) also an experimental copy with its linked
+parts included (links removed in memory only, by one of the recipes), and every rule that keeps
+the Fusion account untouched."""
 import csv
 import io
 import json
@@ -18,7 +20,7 @@ fake.install()
 from fusion_bulk_export import fusion  # noqa: E402
 from fusion_bulk_export.fusion import FusionAdapter  # noqa: E402
 
-LINKED = ' (with linked parts).f3d'
+LINKED = ' (with linked parts, experimental).f3d'
 
 
 class Base(unittest.TestCase):
@@ -29,11 +31,27 @@ class Base(unittest.TestCase):
         self.app = NS(documents=fake.Documents())
         self.adapter = FusionAdapter(self.app)
         self.adapter.clock = fake.clock
-        for kept in (fusion.LEFT_OPEN, fusion.BROKEN):
+        for kept in (fusion.LEFT_OPEN, fusion.BROKEN, fake.CALLS):
             kept.clear()
             self.addCleanup(kept.clear)
+        fake.BREAK_LINK_CALLS[0] = 0
+        environment = patch.dict(os.environ, {})
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop(core.LINKED_COPIES_ENV, None)
 
     def run_export(self, data, **kwargs):
+        """An export with the experiment on (the default recipe) unless linked_copies is given."""
+        kwargs.setdefault('linked_copies', '1')
+        exporter = Exporter(self.root, self.adapter)
+        exporter.clock = fake.clock
+        self.counts = exporter.run(data, **kwargs)
+        self.manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
+        self.exporter = exporter
+        return exporter
+
+    def default_run(self, data, **kwargs):
+        """An export as users get it: the switch not set, nothing passed."""
         exporter = Exporter(self.root, self.adapter)
         exporter.clock = fake.clock
         self.counts = exporter.run(data, **kwargs)
@@ -65,8 +83,9 @@ class LinkedCopyTests(Base):
         self.assertEqual(fake.archive_links(files['archive']), 3)
         self.assertEqual(fake.archive_links(files['archive_with_linked_parts']), 0)
         self.assertEqual(entry['linked_occurrences'], 3)
-        self.assertEqual({k: entry['linked_copy'][k] for k in ('status', 'reason', 'passes', 'broken')},
-                         dict(status='saved', reason=None, passes=1, broken=3))
+        self.assertEqual({k: entry['linked_copy'][k] for k in ('status', 'reason', 'passes', 'broken', 'recipe',
+                                                               'computed')},
+                         dict(status='saved', reason=None, passes=1, broken=3, recipe='both', computed=True))
         self.assertEqual(entry['thumbnail']['role'], 'thumbnail')
         # Modified in memory, then closed without saving; nothing is left open.
         document = assembly.documents[0]
@@ -118,21 +137,132 @@ class LinkedCopyTests(Base):
         self.assertEqual(self.entry('part')['linked_occurrences'], 0)
         self.assertFalse(part.documents[0].isModified)
 
-    def test_option_off_removes_no_link(self):
-        assembly = self.assembly(parts=2)
-        self.run_export(fake.data([assembly]), linked_copies=False)
+    def test_off_by_default_no_link_is_removed(self):
+        assembly = self.assembly(parts=2, nested=1)
+        self.default_run(fake.data([assembly, fake.File('Part', 'part')]))
         entry = self.entry()
-        self.assertEqual(len(entry['files']), 2)
-        self.assertEqual(entry['linked_copy'], dict(status='off'))
+        self.assertEqual(fake.BREAK_LINK_CALLS[0], 0)
+        self.assertEqual(fake.CALLS, [])
+        self.assertEqual([info['role'] for info in entry['files']], ['archive', 'step'])
+        self.assertEqual(entry['linked_occurrences'], 2)
+        self.assertNotIn('linked_copy', entry)
+        self.assertNotIn('links_broken', entry)
         self.assertFalse(assembly.documents[0].isModified)
-        self.assertFalse(self.exporter.run_info['linked_copies'])
-        # Not re-exported just to add the copy when the option is on again; the report says how.
+        self.assertEqual(assembly.documents[0].closes, [False])
+        self.assertEqual(self.counts['linked_copies'], 0)
+        self.assertNotIn('experiment_linked_copies', self.exporter.run_info)
+        self.assertFalse(any(name.endswith('.f3d') and 'linked parts' in name
+                             for _, _, names in os.walk(str(self.root)) for name in names))
+        # Nothing about copies with linked parts anywhere the user reads.
+        page = report.render_html(self.manifest, self.exporter.run_info, self.counts)
+        data = report.summary(self.counts, self.exporter.run_info, self.manifest, self.root)
+        table = report.render_csv(self.manifest, self.exporter.run_info)
+        for text in (page, json.dumps(data), table):
+            self.assertNotIn('linked parts', text)
+            self.assertNotIn('experiment', text)
+
+    def test_off_also_for_values_that_are_not_a_recipe(self):
+        for value in ('0', 'off', 'yes', '', 'true'):
+            with patch.dict(os.environ, {core.LINKED_COPIES_ENV: value}):
+                self.default_run(fake.data([self.assembly(parts=1)]))
+            self.assertEqual(fake.BREAK_LINK_CALLS[0], 0, value)
+        self.default_run(fake.data([self.assembly(parts=1)]), linked_copies=False)
+        self.assertEqual(fake.BREAK_LINK_CALLS[0], 0)
+
+    def test_the_switch_in_the_environment_turns_it_on(self):
+        with patch.dict(os.environ, {core.LINKED_COPIES_ENV: 'Innermost'}):
+            self.default_run(fake.data([self.assembly(parts=1)]))
+        self.assertEqual(self.entry()['linked_copy']['recipe'], 'innermost')
+        self.assertEqual(self.exporter.run_info['experiment_linked_copies'], 'innermost')
+        self.assertIn('experiment: copies with linked parts on, recipe innermost',
+                      (self.root / 'export.log').read_text(encoding='utf-8'))
+
+    def test_recipes(self):
+        self.assertEqual([core.link_recipe(v) for v in ('1', ' innermost', 'COMPUTE', 'both', '0', None, 'x', True)],
+                         ['both', 'innermost', 'compute', 'both', None, None, None, 'both'])
+        self.assertIsNone(core.linked_copies_experiment({}))
+        self.assertEqual(core.linked_copies_experiment({core.LINKED_COPIES_ENV: '1'}), 'both')
+
+    def test_an_assembly_exported_with_it_off_is_not_exported_again_when_it_is_on(self):
+        assembly = self.assembly(parts=2)
+        self.default_run(fake.data([assembly]))
         assembly.calls = 0
         self.run_export(fake.data([assembly]))
         self.assertEqual((assembly.calls, self.counts['up_to_date']), (0, 1))
-        page = report.render_html(self.manifest, self.exporter.run_info, self.counts)
-        self.assertIn('1 assembly was exported with &quot;Include linked parts&quot; off; export into a new folder '
-                      'to get its copy with linked parts.', page)
+        self.assertEqual(fake.BREAK_LINK_CALLS[0], 0)
+
+
+class RecipeTests(Base):
+    """The call order of each recipe, as probed on real Fusion: innermost first with doEvents after
+    each breakLink; outermost first, then computeAll and 5 doEvents; the default (1) both."""
+    def deep(self, compute=None):
+        # top: a linked component at the top; outer: one below a local sub-component; inner: one
+        # inside outer (depth 2). All are listed at once.
+        assembly = fake.File('Assembly', 'assembly', references=2)
+        assembly.compute = compute
+
+        def make():
+            local = fake.Occurrence(fake.component('local-sub', [fake.body()]))
+            top = fake.Occurrence(fake.component('top', [fake.body()]), referenced=True)
+            outer = fake.Occurrence(fake.component('outer', [fake.body()]), referenced=True, parent=local)
+            inner = fake.Occurrence(fake.component('inner', [fake.body()]), referenced=True, parent=outer)
+            return fake.component('root', [fake.body()], [local, top, outer, inner])
+        assembly.make_root = make
+        return assembly
+
+    def calls(self, recipe, assembly=None):
+        """breakLink, doEvents and computeAll calls from the first breakLink until the copy is exported."""
+        import adsk
+        original = fake.Manager.execute
+
+        def execute(manager, path):
+            if manager.document is not None and manager.document.links_removed:
+                fake.CALLS.append(('export copy',))
+            return original(manager, path)
+        with patch.object(adsk, 'doEvents', lambda: fake.CALLS.append(('doEvents',))), \
+                patch.object(fake.Manager, 'execute', execute):
+            self.run_export(fake.data([assembly or self.deep()]), linked_copies=recipe)
+        names = [call[0] if call[0] != 'breakLink' else call[1] for call in fake.CALLS]
+        first = next(i for i, call in enumerate(fake.CALLS) if call[0] == 'breakLink')
+        return names[first:names.index('export copy')]
+
+    def test_innermost_first_with_doevents_after_each_break(self):
+        self.assertEqual(self.calls('innermost'), ['inner', 'doEvents', 'outer', 'doEvents', 'top', 'doEvents'])
+        self.assertEqual(self.entry()['linked_copy']['status'], 'saved')
+        self.assertNotIn('computed', self.entry()['linked_copy'])
+
+    def test_outermost_first_then_compute_all_and_five_doevents(self):
+        self.assertEqual(self.calls('compute'), ['top', 'outer', 'doEvents', 'inner', 'doEvents', 'computeAll']
+                         + ['doEvents'] * 5)
+        self.assertEqual(self.entry()['linked_copy']['computed'], True)
+
+    def test_the_default_recipe_is_both(self):
+        self.assertEqual(self.calls('1'), ['inner', 'doEvents', 'outer', 'doEvents', 'top', 'doEvents', 'computeAll']
+                         + ['doEvents'] * 5)
+        copy = self.entry()['linked_copy']
+        self.assertEqual((copy['recipe'], copy['broken'], copy['passes']), ('both', 3, 1))
+        self.assertEqual(fake.archive_links(self.paths()['archive_with_linked_parts']), 0)
+
+    def test_a_fusion_without_compute_all_still_settles(self):
+        self.assertEqual(self.calls('compute', self.deep(compute='missing'))[-5:], ['doEvents'] * 5)
+        copy = self.entry()['linked_copy']
+        self.assertEqual((copy['status'], copy['computed']), ('saved', 'this Fusion has no design.computeAll'))
+
+    def test_compute_all_failing_is_recorded_and_the_copy_still_written(self):
+        names = self.calls('both', self.deep(compute='3 : compute failed'))
+        self.assertEqual(names[-6:], ['computeAll'] + ['doEvents'] * 5)
+        copy = self.entry()['linked_copy']
+        self.assertEqual((copy['status'], copy['computed']), ('saved', 'design.computeAll failed: 3 : compute failed'))
+
+    def test_innermost_order(self):
+        part = fake.component('p')
+        local = fake.Occurrence(part)
+        a = fake.Occurrence(part, referenced=True)
+        b = fake.Occurrence(part, referenced=True, parent=local)
+        c = fake.Occurrence(part, referenced=True, parent=b)
+        gone = fake.Occurrence(part, referenced=True, parent=c)
+        gone.isValid = False
+        self.assertEqual(fusion.innermost([a, b, c, gone]), [c, b, a])
 
 
 class OpenInFusionTests(Base):
@@ -148,8 +278,6 @@ class OpenInFusionTests(Base):
         self.assertFalse(mine.isModified)
         self.assertFalse(mine.closed)
         self.assertTrue(all(o.breaks == 0 for o in mine.root.allOccurrences.items))
-        page = report.render_html(self.manifest, self.exporter.run_info, self.counts)
-        self.assertIn('no copy with linked parts: open in Fusion; close it to get the copy with linked parts.', page)
         # Once the user has closed it, the next run exports it again, now with its copy.
         self.app.documents.items.remove(mine)
         self.run_export(fake.data([assembly]))
@@ -191,13 +319,6 @@ class FailureTests(Base):
         self.run_export(fake.data([assembly]))
         self.assert_original_stands(assembly, 'still there after 10 passes')
         self.assertEqual(self.entry()['linked_copy']['passes'], 10)
-
-    def test_doevents_between_passes(self):
-        import adsk
-        calls = []
-        with patch.object(adsk, 'doEvents', lambda: calls.append(1)):
-            self.run_export(fake.data([self.assembly(parts=1, nested=1)]))
-        self.assertGreaterEqual(len(calls), 2)
 
     def test_the_copys_export_failing(self):
         assembly = self.assembly(parts=2)
@@ -245,8 +366,6 @@ class FailureTests(Base):
         self.assertTrue(entry['linked_copy']['slow'])
         self.assertEqual(entry['linked_copy']['seconds'], 140)
         self.assertGreaterEqual(entry['slow_seconds'], 140)
-        page = report.render_html(self.manifest, self.exporter.run_info, self.counts)
-        self.assertIn('2 min 20 s of it removing links for the copy with linked parts', page)
 
     def test_a_document_fusion_will_not_close_is_recorded_and_never_exported_from_again(self):
         assembly = self.assembly(parts=1)
@@ -329,24 +448,23 @@ class ManifestTests(Base):
         self.assertEqual((assembly.calls, self.counts['exported'], self.counts['linked_copies']), (1, 1, 1))
         self.assertTrue(self.paths()['archive_with_linked_parts'].is_file())
 
-    def test_an_assembly_exported_before_the_option_is_not_exported_again(self):
+    def test_an_entry_written_before_roles_existed_is_still_up_to_date(self):
         assembly = self.assembly(parts=1)
-        self.run_export(fake.data([assembly]), linked_copies=False)
+        self.default_run(fake.data([assembly]))
         # As an older version wrote it: no roles, no linked facts.
         manifest = self.manifest
         entry = manifest['entries'][0]
-        for key in ('linked_occurrences', 'linked_copy'):
-            entry.pop(key)
+        entry.pop('linked_occurrences')
         for info in entry['files']:
             info.pop('role')
         entry['files'].reverse()  # any order
         (self.root / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
         assembly.calls = 0
-        self.run_export(fake.data([assembly]))
+        self.default_run(fake.data([assembly]))
         self.assertEqual((assembly.calls, self.counts['up_to_date']), (0, 1))
-        note = '1 assembly was exported before this option existed; export into a new folder to get its copy with linked parts.'
-        self.assertIn(note, report.summary(self.counts, self.exporter.run_info, self.manifest, self.root)['notes'])
-        self.assertIn(note, report.render_html(self.manifest, self.exporter.run_info, self.counts))
+        self.assertFalse(any('linked parts' in note
+                             for note in report.summary(self.counts, self.exporter.run_info, self.manifest,
+                                                        self.root)['notes']))
 
     def test_complete_entries_by_role_or_extension(self):
         design = dict(kind='design', files=[dict(path='a v1.step'), dict(path='a v1.f3d')])
@@ -360,10 +478,10 @@ class ManifestTests(Base):
         self.assertTrue(core.complete(dict(kind='file', files=[dict(path='x.pdf')])))
 
     def test_link_map_points_every_link_at_its_exported_file(self):
-        # The assembly is listed (and exported) before the designs it links to.
+        # In a default run. The assembly is listed (and exported) before the designs it links to.
         assembly = self.assembly(parts=1)
         children = [assembly.childReferences.item(i) for i in range(2)]
-        self.run_export(fake.data([assembly, children[0]]))
+        self.default_run(fake.data([assembly, children[0]]))
         references = {r['id']: r for r in self.entry()['references']}
         self.assertEqual(references[children[0].id]['path'], self.entry(children[0].id)['files'][0]['path'])
         self.assertTrue((self.root / references[children[0].id]['path']).is_file())
@@ -373,7 +491,7 @@ class ManifestTests(Base):
         assembly = fake.linked_assembly(fake.File('L' * 90, 'assembly', references=1), parts=1)
         exporter = Exporter(self.root, self.adapter)
         exporter.platform = 'win32'
-        exporter.run(fake.data([assembly]))
+        exporter.run(fake.data([assembly]), linked_copies='1')
         self.manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         name = self.paths()['archive_with_linked_parts'].name
         self.assertEqual(name, 'L' * 64 + ' v3' + LINKED)
@@ -381,28 +499,19 @@ class ManifestTests(Base):
     def test_report_csv_and_check(self):
         self.run_export(fake.data([self.assembly(parts=1), fake.File('Part', 'part')]))
         page = report.render_html(self.manifest, self.exporter.run_info, self.counts)
-        self.assertIn('>F3D with linked parts</a>', page)
+        self.assertIn('>F3D with linked parts (experimental)</a>', page)
         self.assertIn('>F3D</a>', page)
-        self.assertIn('1 assembly also saved with its linked parts included', page)
         rows = {r['design']: r for r in csv.DictReader(io.StringIO(report.render_csv(self.manifest, None)))}
-        self.assertTrue(rows['Assembly']['archive_with_linked_parts'].endswith('Assembly v3' + LINKED))
+        self.assertNotIn('archive_with_linked_parts', rows['Assembly'])
         self.assertTrue(rows['Assembly']['archive'].endswith('Assembly v3.f3d'))
-        self.assertEqual(rows['Part']['archive_with_linked_parts'], '')
-        data = report.summary(self.counts, self.exporter.run_info, self.manifest, self.root)
-        self.assertIn('1 assembly also saved with its linked parts included.', data['notes'])
+        self.assertTrue(rows['Assembly']['step'].endswith('Assembly v3.step'))
         lines = []
         totals = checks.check_folder(self.root, show=lambda n, e, line, p, notes: lines.append((line, p)))
         self.assertEqual((totals['failed_checks'], totals['linked_copies']), (0, 1))
-        self.assertIn('and a copy with linked parts', ' '.join(line for line, _ in lines))
+        self.assertIn('and an experimental copy with linked parts', ' '.join(line for line, _ in lines))
         self.paths()['archive_with_linked_parts'].write_bytes(b'damaged')
         totals = checks.check_folder(self.root)
         self.assertEqual(totals['failed_checks'], 1)
-
-    def test_plural_texts(self):
-        self.assertEqual(report.linked_copies_text(12), '12 assemblies also saved with their linked parts included')
-        self.assertEqual(report.linked_copies_text(1), '1 assembly also saved with its linked parts included')
-        self.assertEqual(report.older_assemblies_text(3), '3 assemblies were exported before this option existed; '
-                         'export into a new folder to get their copies with linked parts.')
 
 
 class SafetySourceTests(unittest.TestCase):

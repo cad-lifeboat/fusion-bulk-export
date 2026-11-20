@@ -739,8 +739,7 @@ class UItests(UIBase):
         self.page(command, 'selection', {'project-2': None})
         command.execute.handlers[0].notify(None)
         self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8')),
-                         dict(output=self.temp.name, mode='Choose projects or folders', other_files=True,
-                              linked_copies=True))
+                         dict(output=self.temp.name, mode='Choose projects or folders', other_files=True))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
         self.assertTrue(inputs.find('fbx_tree').isVisible)
@@ -765,43 +764,32 @@ class UItests(UIBase):
         self.assertEqual(self.results()[1]['rows'], [['Exported now', 0], ['Already up to date', 1], ['Skipped', 1]])
         self.assertFalse(self.open_dialog().commandInputs.find('fbx_files').value)
 
-    def test_linked_parts_checkbox_is_on_by_default_with_its_note_and_remembered(self):
-        from fusion_bulk_export import picker
+    def test_no_linked_parts_checkbox_and_no_link_removed_from_the_dialog(self):
+        # The copies with linked parts are a testing-only experiment (LINKED_COPIES_ENV): the dialog
+        # offers no checkbox, a remembered choice from a test build is dropped, and an export from
+        # the dialog removes no link.
         assembly = fake.linked_assembly(fake.File('Assembly', 'assembly', references=1), parts=1)
         self.app.data = fake.data([assembly])
+        self.settings.write_text(json.dumps(dict(output=self.temp.name, linked_copies=True)))
+        fake.BREAK_LINK_CALLS[0] = 0
         command = self.open_dialog()
-        inputs = command.commandInputs
-        box, note = inputs.find('fbx_linked'), inputs.find('fbx_linked_note')
-        self.assertEqual(box.name, 'Include linked parts in assemblies')
-        self.assertLessEqual(len(box.name), 40)
-        self.assertTrue(box.value)
-        self.assertIn('nothing in your Fusion account changes', box.tooltip)
-        self.assertEqual((note.text, note.isVisible, note.isFullWidth), (picker.LINKED_PARTS_NOTE, True, True))
-        box.value = False
-        self.change(command, box)
-        self.assertFalse(note.isVisible)
-        command.execute.handlers[0].notify(None)
-        self.assertIs(json.loads(self.settings.read_text(encoding='utf-8'))['linked_copies'], False)
+        self.assertIsNone(command.commandInputs.find('fbx_linked'))
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('FUSION_BULK_EXPORT_EXPERIMENT_LINKED_COPIES', None)
+            command.execute.handlers[0].notify(None)
+        self.assertNotIn('linked_copies', json.loads(self.settings.read_text(encoding='utf-8')))
+        self.assertEqual(fake.BREAK_LINK_CALLS[0], 0)
         self.assertFalse(assembly.documents[0].isModified)
-        command = self.open_dialog()
-        box = command.commandInputs.find('fbx_linked')
-        self.assertFalse(box.value)
-        self.assertFalse(command.commandInputs.find('fbx_linked_note').isVisible)
-        box.value = True
-        self.change(command, box)
-        self.assertTrue(command.commandInputs.find('fbx_linked_note').isVisible)
-        assembly.versionNumber = assembly.latestVersionNumber = 4
-        command.execute.handlers[0].notify(None)
-        self.assertIn('1 assembly also saved with its linked parts included.', self.results()[1]['notes'])
+        self.assertFalse(any('linked parts' in note for note in self.results()[1]['notes']))
 
-    def test_an_entry_file_that_does_not_pass_the_linked_choice_uses_the_remembered_one(self):
+    def test_an_entry_file_that_still_passes_linked_copies_is_accepted_and_ignored(self):
         from fusion_bulk_export import command as package
         assembly = fake.linked_assembly(fake.File('Assembly', 'assembly', references=1), parts=1)
         self.app.data = fake.data([assembly])
         self.open_dialog()
         picker = self.module._picker
-        self.settings.write_text(json.dumps(dict(linked_copies=False)))
-        package.export(self.app, picker.selection(), picker.output, show=lambda data: None, other_files=True)
+        package.export(self.app, picker.selection(), picker.output, show=lambda data: None, other_files=True,
+                       linked_copies=True)
         self.assertFalse(assembly.documents[0].isModified)
 
     def test_no_drawings_checkbox_and_drawings_are_not_supported(self):
@@ -968,8 +956,8 @@ class FriendlyErrorTests(UIBase):
         self.assertGreaterEqual(command.sizes['minimum'][0], 360)
         # The tree comes last: nothing but tree rows can be pushed below the fold.
         order = [control.id for control in inputs.added]
-        self.assertEqual(order, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_linked',
-                                 'fbx_linked_note', 'fbx_mode', 'fbx_tip', 'fbx_summary', 'fbx_tree'])
+        self.assertEqual(order, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_mode',
+                                 'fbx_tip', 'fbx_summary', 'fbx_tree'])
 
     def test_long_output_folder_is_shown_with_its_middle_cut(self):
         from fusion_bulk_export.picker import shown_path
@@ -1177,8 +1165,8 @@ class TreeLayoutContractTests(UIBase):
         command = self.open_dialog()
         self.choose(command)
         shown = [control.id for control in command.commandInputs.added if control.isVisible]
-        self.assertEqual(shown, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_linked',
-                                 'fbx_linked_note', 'fbx_mode', 'fbx_summary', 'fbx_tree'])
+        self.assertEqual(shown, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_mode',
+                                 'fbx_summary', 'fbx_tree'])
         width, height = picker.DIALOG_SIZE
         self.assertLessEqual(height, 1080 - 200)  # menu bar, dock or taskbar, title bar, margins
         # Rows above the tree at about 30 units each, the OK/Cancel row about 60: the tree's

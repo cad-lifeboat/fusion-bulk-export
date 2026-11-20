@@ -415,12 +415,11 @@ class LauncherTests(unittest.TestCase):
         lines = stream.getvalue().splitlines()  # no "Waiting for" before a prompt answer
         self.assertEqual(lines, ['Fusion is busy: An export started from the toolbar button is running'])
 
-    def test_status_names_linked_copies_and_an_account_change_fails_the_command(self):
+    def test_status_says_nothing_of_linked_copies_and_an_account_change_fails_the_command(self):
         out = self.root / 'out'
         out.mkdir()
         entries = [dict(kind='design', status='done', has_references=True, linked_occurrences=1, files=[
-            dict(path='a v1.f3d', role='archive', bytes=1), dict(path='a v1.step', role='step', bytes=1),
-            dict(path='a v1 (with linked parts).f3d', role='archive_with_linked_parts', bytes=1)]),
+            dict(path='a v1.f3d', role='archive', bytes=1), dict(path='a v1.step', role='step', bytes=1)]),
             dict(kind='design', status='done', has_references=True, files=[dict(path='b v1.f3d', bytes=1),
                                                                           dict(path='b v1.step', bytes=1)])]
         (out / 'manifest.json').write_text(json.dumps(dict(schema=2, runs=[], entries=entries)), encoding='utf-8')
@@ -428,37 +427,39 @@ class LauncherTests(unittest.TestCase):
                       stopped_reason='changed', errors=[])
         (out / 'autorun-result.json').write_text(json.dumps(result), encoding='utf-8')
         lines = launcher.summary(out)
-        self.assertIn('1 assembly also saved with its linked parts included', lines[1])
-        self.assertIn('Linked parts: 1 assembly also saved with its linked parts included', lines)
+        self.assertFalse(any('linked parts included' in line or 'copies with linked parts' in line for line in lines))
         self.assertIn(launcher.ACCOUNT_CHANGED_LINE, lines)
-        self.assertTrue(any(line.startswith('Note: 1 assembly was exported before copies with linked parts existed')
-                            for line in lines))
         installed = self.root / 'installed'
         installed.mkdir()
         with contextlib.redirect_stdout(io.StringIO()):
             status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
         self.assertEqual(status, 1)
 
-    def test_no_linked_copies_flag_reaches_the_job(self):
+    def test_no_linked_copies_flag_any_more(self):
+        out = self.root / 'out'
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            launcher.main(['export', str(out), '--no-linked-copies'])
+
+    def test_the_linked_copies_experiment_is_forwarded_in_the_job_only_when_set(self):
         installed, out = self.root / 'installed', self.root / 'out'
         installed.mkdir()
+        job = lambda: json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))
+        name = launcher.LINKED_COPIES_ENV
+        self.assertEqual(name, 'FUSION_BULK_EXPORT_EXPERIMENT_LINKED_COPIES')
         with patch.object(launcher.shutil, 'copytree'):
-            launcher.install(installed, out, 'export', linked_copies=False)
-            self.assertIs(json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))['linked_copies'], False)
-            launcher.install(installed, out, 'export')
-            self.assertNotIn('linked_copies', json.loads((installed / 'autorun.json').read_text(encoding='utf-8')))
-        seen = []
-        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.no_linked_copies) or 0):
-            launcher.main(['export', str(out), '--no-linked-copies'])
-            launcher.main(['export', str(out)])
-        self.assertEqual(seen, [True, False])
-        jobs = []
-        with patch.object(launcher, 'install', side_effect=lambda *a: jobs.append(a)), \
-                patch.object(launcher, 'alive', return_value=True), patch.object(launcher, 'wait', return_value=0):
-            args = NS(command='export', project=None, limit=None, folder=None, designs_only=False,
-                      no_linked_copies=True, timeout=10)
-            launcher.run_job(args, 'Darwin', out, installed)
-        self.assertIs(jobs[0][-1], False)
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop(name, None)
+                launcher.install(installed, out, 'export')
+                self.assertNotIn('experiment_linked_copies', job())
+            for value, sent in (('1', '1'), (' Innermost ', 'innermost'), ('compute', 'compute'), ('0', None),
+                                ('yes', None), ('', None)):
+                with patch.dict(os.environ, {name: value}):
+                    launcher.install(installed, out, 'export')
+                    self.assertEqual(job().get('experiment_linked_copies'), sent, value)
+        # Every value the launcher passes on is one the add-in accepts, with the same meaning.
+        from fusion_bulk_export import core
+        self.assertEqual(core.LINKED_COPIES_ENV, name)
+        self.assertEqual(sorted(launcher.LINKED_COPIES_VALUES), sorted(core.LINK_RECIPES))
 
     def test_designs_only_flag_reaches_the_job(self):
         installed, out = self.root / 'installed', self.root / 'out'

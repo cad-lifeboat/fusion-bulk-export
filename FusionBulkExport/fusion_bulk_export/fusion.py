@@ -6,8 +6,8 @@ import time
 
 import adsk.core
 import adsk.fusion
-from .core import (DRAWING_REASON, UNSUPPORTED, native_reason, NonDesign, NotSaved, OpenInFusion, collection,
-                   disk_full, is_drawing)
+from .core import (DRAWING_REASON, RECIPE_BOTH, RECIPE_COMPUTE, RECIPE_INNERMOST, UNSUPPORTED, native_reason,
+                   NonDesign, NotSaved, OpenInFusion, collection, disk_full, is_drawing)
 from .names import LINKED_SUFFIX, fusion_path, long_path
 from .staging import Staging
 
@@ -25,8 +25,13 @@ LEFT_OPEN = set()
 # design as it is in the account.
 BROKEN = set()
 
-# The copy of an assembly with its linked parts included (linked_copy).
+# The experimental copy of an assembly with its linked parts included (linked_copy), written only
+# while the testing switch core.LINKED_COPIES_ENV is on. Not offered to users: copies written by
+# the first recipe crashed Fusion when opened (File > Open and the import API alike), and the
+# recipes here (core.LINK_RECIPES) each opened once, on one assembly. Fusion also refuses
+# breakLink for some occurrences ("essential dependent instances"); that copy is then skipped.
 LINK_PASSES = 10          # at most this many passes over the occurrences (breaking one can expose more)
+SETTLE_EVENTS = 5         # adsk.doEvents calls after design.computeAll(), before the copy is exported
 LINK_SLOW_SECONDS = 120   # removing the links of one design taking longer is recorded as slow
 OPEN_IN_FUSION = 'open in Fusion; close it to get the copy with linked parts'
 LINKS_UNKNOWN = "Fusion could not list this design's linked components"
@@ -42,9 +47,10 @@ class FusionAdapter:
         # later even though they are open "before" a later export.
         self.left_open = LEFT_OPEN
         self.broken = BROKEN
-        # Also write "<stem> (with linked parts).f3d" for a design with linked components (the
-        # Exporter sets this from the dialog's checkbox or the job).
-        self.linked_copies = False
+        # Testing only: the recipe (core.LINK_RECIPES) for the experimental
+        # "<stem> (with linked parts, experimental).f3d" of a design with linked components, or
+        # None (off, the default). The Exporter sets it from core.LINKED_COPIES_ENV or the job.
+        self.linked_copies = None
         self.clock = time.monotonic
 
     def references(self, data_file):
@@ -249,8 +255,9 @@ class FusionAdapter:
             self.close_opened(before)
 
     def write(self, document, data_file, stem, opened=False):
-        """Export an open document: <stem>.f3d and <stem>.step as the design is, then, for a design
-        with linked components, the copy with its linked parts (linked_copy). When it raises, its
+        """Export an open document: <stem>.f3d and <stem>.step as the design is, then (only while the
+        testing switch is on) for a design with linked components the experimental copy with its
+        linked parts (linked_copy). When it raises, its
         variables (design, export manager) are dropped by the exporter (core.forget_frames) once
         the error is recorded."""
         design = adsk.fusion.Design.cast(read_products(document).itemByProductType('DesignProductType'))
@@ -282,10 +289,13 @@ class FusionAdapter:
         return [archive, step] + self.linked_copy(document, opened, design, stem)
 
     def linked_copy(self, document, opened, design, stem):
-        """For a design with linked components (occurrences with isReferencedComponent): remove
-        every link in memory (Occurrence.breakLink, outermost first, at most LINK_PASSES passes)
-        and write the now self-contained design as "<stem> (with linked parts).f3d". Returns
-        [its path], or [] with the reason in details['linked_copy'].
+        """Records how many linked components (occurrences with isReferencedComponent) the design
+        has. Then, only while the testing switch is on (self.linked_copies, a recipe): remove
+        every link in memory (break_links with that recipe, at most LINK_PASSES passes; for the
+        compute recipes then settle) and write the now self-contained design as
+        "<stem> (with linked parts, experimental).f3d". Returns [its path], or [] (with the reason
+        in details['linked_copy'] when the switch is on). Off, nothing else is done: no link is
+        removed and the document is left as it opened.
 
         Safety: only on a hidden document this add-in opened for this export (opened, never one
         the user has open, which would be left modified); nothing is saved (the document is
@@ -303,20 +313,22 @@ class FusionAdapter:
         if not found:
             return []
         found = None
-        if not self.linked_copies:
-            self.details['linked_copy'] = dict(status='off')
+        recipe = self.linked_copies
+        if not recipe:
             return []
         if not opened or visible(document):
             # The user's open document: removing its links would leave it modified in front of them.
             self.details['linked_copy'] = dict(status='skipped', reason=OPEN_IN_FUSION, retry=True)
             return []
-        copy = self.details['linked_copy'] = dict(status='skipped', reason=None)
+        copy = self.details['linked_copy'] = dict(status='skipped', reason=None, recipe=recipe)
         self.details['links_broken'] = True  # from the first breakLink on: the exporter checks the account
         identity = document_id(document)
         if identity is not None:
             self.broken.add(identity)
         began = self.clock()
-        problem, passes, broken = break_links(design)
+        problem, passes, broken = break_links(design, recipe)
+        if not problem and recipe in (RECIPE_COMPUTE, RECIPE_BOTH):
+            copy['computed'] = settle(design)
         seconds = self.clock() - began
         copy.update(passes=passes, broken=broken, seconds=round(seconds, 1))
         if seconds > LINK_SLOW_SECONDS:
@@ -378,22 +390,46 @@ def outermost(occurrences):
     return chosen
 
 
-def break_links(design, passes=None):
+def depth(occurrence):
+    """How many occurrences an occurrence sits in (its assemblyContext chain)."""
+    count, parent = 0, getattr(occurrence, 'assemblyContext', None)
+    while parent is not None:
+        count += 1
+        parent = getattr(parent, 'assemblyContext', None)
+    return count
+
+
+def innermost(occurrences):
+    """The valid linked occurrences, deepest first (in listed order within one depth)."""
+    return sorted((occurrence for occurrence in occurrences if valid(occurrence)), key=depth, reverse=True)
+
+
+def break_links(design, recipe=RECIPE_BOTH, passes=None):
     """Remove every link of an open design in memory: (problem or None, passes made, links
-    removed). Pass after pass (Fusion gets adsk.doEvents between them) until no linked
-    occurrence is left, at most LINK_PASSES; a breakLink that raises or returns False ends it
-    with the reason. Never raises. Nothing is saved: only the document in memory changes."""
+    removed). Pass after pass until no linked occurrence is left, at most LINK_PASSES; a breakLink
+    that raises or returns False ends it with the reason. Never raises. Nothing is saved: only
+    the document in memory changes.
+
+    recipe (core.LINK_RECIPES): RECIPE_INNERMOST and RECIPE_BOTH break the deepest linked
+    occurrence first, with adsk.doEvents after each breakLink (an occurrence no longer valid by
+    then waits for the next pass, read afresh); RECIPE_COMPUTE breaks the outermost ones
+    (outermost) with adsk.doEvents after each pass. settle() is the caller's."""
     passes = LINK_PASSES if passes is None else passes
+    inner_first = recipe in (RECIPE_INNERMOST, RECIPE_BOTH)
     removed = 0
     for number in range(1, passes + 1):
         try:
-            left = outermost(referenced_occurrences(design))
+            found = referenced_occurrences(design)
+            left = innermost(found) if inner_first else outermost(found)
+            found = None
         except Exception as error:
             return 'Fusion could not list the linked components: %s' % (str(error) or type(error).__name__), \
                 number - 1, removed
         if not left:
             return None, number - 1, removed
         for occurrence in left:
+            if inner_first and not valid(occurrence):
+                continue
             try:
                 result = occurrence.breakLink()
             except Exception as error:
@@ -401,8 +437,11 @@ def break_links(design, passes=None):
             if result is False:
                 return 'Fusion did not remove a link (breakLink returned false)', number, removed
             removed += 1
+            if inner_first:
+                adsk.doEvents()
         left = None
-        adsk.doEvents()
+        if not inner_first:
+            adsk.doEvents()
     try:
         remaining = len(referenced_occurrences(design))
     except Exception as error:
@@ -411,6 +450,23 @@ def break_links(design, passes=None):
     if remaining:
         return '%d links were still there after %d passes' % (remaining, passes), passes, removed
     return None, passes, removed
+
+
+def settle(design):
+    """After the links are removed (compute recipes): design.computeAll(), when this Fusion has
+    it and it works, then SETTLE_EVENTS adsk.doEvents. Returns True when computeAll ran, else the
+    reason it did not. Never raises."""
+    computed = True
+    if not hasattr(design, 'computeAll'):
+        computed = 'this Fusion has no design.computeAll'
+    else:
+        try:
+            design.computeAll()
+        except Exception as error:
+            computed = 'design.computeAll failed: %s' % (str(error) or type(error).__name__)
+    for _ in range(SETTLE_EVENTS):
+        adsk.doEvents()
+    return computed
 
 
 def shown_solids(component):
