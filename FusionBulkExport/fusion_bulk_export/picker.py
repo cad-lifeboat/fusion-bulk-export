@@ -36,7 +36,7 @@ DIALOG_MINIMUM = (380, 460)
 # nothing but the page's own content decided its height). The page (ui/tree.html) holds the same
 # minimum in its CSS, so its content height never falls below it either.
 TREE_MIN_HEIGHT = 260
-TREE_MAX_HEIGHT = 0  # 0: no maximum, the tree grows with the dialog
+TREE_MAX_HEIGHT = 0  # 0: no maximum, the tree grows with the dialog (given at creation only)
 PATH_LIMIT = 64  # longer output folders are shown with their middle cut out (full path as tooltip)
 TREE_HTML = Path(__file__).resolve().parent.parent / 'ui' / 'tree.html'
 
@@ -74,9 +74,12 @@ def full_width(control, trace):
 
 
 def size_tree(tree, trace):
-    """Give the tree its explicit height limits (BrowserCommandInput.minimumHeight and
-    maximumHeight); an older Fusion without them keeps the ones given at creation."""
-    for name, value in (('minimumHeight', TREE_MIN_HEIGHT), ('maximumHeight', TREE_MAX_HEIGHT)):
+    """Give the tree its explicit height limits (BrowserCommandInput.minimumHeight, and
+    maximumHeight when there is one); an older Fusion without them keeps the ones given at
+    creation. "No maximum" (0) is given only at creation: real Fusion takes 0 there but refuses
+    it for the maximumHeight property ("3 : invalid argument value", logged twice per dialog)."""
+    limits = [('minimumHeight', TREE_MIN_HEIGHT)] + ([('maximumHeight', TREE_MAX_HEIGHT)] if TREE_MAX_HEIGHT else [])
+    for name, value in limits:
         try:
             setattr(tree, name, value)
         except Exception as error:

@@ -279,6 +279,7 @@ class HelpTests(unittest.TestCase):
         self.assertTrue(sentence.endswith('.'), sentence)
         self.assertIn('closes and reopens Fusion by itself', sentence)
         self.assertIn('losing anything unsaved', sentence)
+        self.assertLess(len(sentence.split()), 25, sentence)  # one SHORT sentence
         # Every exit status is listed in "export --help" itself.
         for status in ('0 ', '1 ', '75 ', '76 ', '77 ', '130 '):
             self.assertIn(status, text[text.index('Exit status:'):])

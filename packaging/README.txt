@@ -68,8 +68,9 @@ at the result. Then do the rest into the same output folder: finished designs ar
 skipped, so nothing is done twice. Time varies a lot with design size.
 Long runs can make Fusion use more memory. If Fusion itself holds too much for a
 while, the export stops itself; close Fusion, open it again and export to the same
-folder to carry on. If other programs use up the memory instead, it goes on, and the
-report says that closing other programs may speed it up.
+folder to carry on. If other programs use up the memory instead, it goes on, and when the
+computer stays critically short of memory the report says that closing other
+programs may speed it up.
 
 
 Help

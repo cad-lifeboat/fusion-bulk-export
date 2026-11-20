@@ -279,8 +279,46 @@ class LauncherTests(unittest.TestCase):
         with contextlib.redirect_stdout(stream):
             status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
         self.assertEqual(status, 1)
-        lines = stream.getvalue().splitlines()[1:]
+        lines = stream.getvalue().splitlines()  # no "Waiting for" before a prompt answer
         self.assertEqual(lines, ['The add-in rejected the job: ' + error])
+
+    def test_waiting_line_only_after_five_seconds(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        installed.mkdir()
+        out.mkdir()
+        ticks = iter(range(0, 100, 1))
+        steps = []
+
+        def sleep(_):
+            steps.append(1)
+            if len(steps) == 8:
+                (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts={}, errors=[])))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream), patch.object(launcher, 'alive', return_value=False):
+            status = launcher.wait(installed, out, 86400, sleep=sleep, clock=lambda: next(ticks),
+                                   hint_after=float('inf'))
+        self.assertEqual(status, 0)
+        self.assertEqual(sum(1 for line in stream.getvalue().splitlines() if line.startswith('Waiting for')), 1)
+
+    def test_a_rejected_job_leaves_no_new_empty_output_folder(self):
+        installed = self.root / 'installed'
+        installed.mkdir()
+        args = NS(command='export', project=None, limit=None, folder=None, designs_only=False, timeout=10)
+        for existed, filled, status, kept in ((False, False, 1, False), (True, False, 1, True),
+                                              (False, True, 1, True), (False, False, 0, True)):
+            with self.subTest(existed=existed, filled=filled, status=status):
+                out = self.root / ('out-%s-%s-%s' % (existed, filled, status))
+                if existed:
+                    out.mkdir()
+
+                def answer(*_args, **_kwargs):
+                    if filled:
+                        (out / 'export.log').write_text('x')
+                    return status
+                with patch.object(launcher, 'update_addin'), patch.object(launcher, 'alive', return_value=True), \
+                        patch.object(launcher, 'wait', side_effect=answer):
+                    self.assertEqual(launcher.run_job(args, 'Darwin', out, installed), status)
+                self.assertEqual(out.is_dir(), kept)
 
     def heartbeat(self, installed, busy):
         (installed / 'autorun.alive').write_text(json.dumps(dict(time=time.time(), busy=busy)))
@@ -362,7 +400,7 @@ class LauncherTests(unittest.TestCase):
         with contextlib.redirect_stdout(stream):
             status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
         self.assertEqual(status, 1)
-        lines = stream.getvalue().splitlines()[1:]
+        lines = stream.getvalue().splitlines()  # no "Waiting for" before a prompt answer
         self.assertEqual(lines, ['Fusion is busy: An export started from the toolbar button is running'])
 
     def test_status_names_linked_copies_and_an_account_change_fails_the_command(self):

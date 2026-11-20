@@ -1102,6 +1102,29 @@ class TreeLayoutContractTests(UIBase):
         self.assertTrue(tree.isVisible)
         self.assertEqual(tree.minimumHeight, picker.TREE_MIN_HEIGHT)
 
+    def test_no_maximum_is_given_only_at_creation(self):
+        # Real Fusion (Windows retest): setting maximumHeight = 0 raised "3 : invalid argument
+        # value" twice per dialog; addBrowserCommandInput(..., 0) itself is accepted.
+        from fusion_bulk_export import picker
+        set_to = []
+
+        class Tree:
+            def __setattr__(self, name, value):
+                set_to.append((name, value))
+                if name == 'maximumHeight' and value == 0:
+                    raise RuntimeError('3 : invalid argument value')
+                object.__setattr__(self, name, value)
+        traced = []
+        picker.size_tree(Tree(), traced.append)
+        self.assertEqual((set_to, traced), ([('minimumHeight', picker.TREE_MIN_HEIGHT)], []))
+        with patch.object(picker, 'TREE_MAX_HEIGHT', 900):
+            set_to[:] = []
+            picker.size_tree(Tree(), traced.append)
+            self.assertEqual(set_to, [('minimumHeight', picker.TREE_MIN_HEIGHT), ('maximumHeight', 900)])
+        inputs = self.open_dialog().commandInputs
+        tree = inputs.find('fbx_tree')
+        self.assertEqual((tree.minimumHeight, tree.maximumHeight), (picker.TREE_MIN_HEIGHT, 0))  # 0 from creation
+
     def test_an_older_fusion_without_the_height_properties_still_opens(self):
         inputs = fake.Inputs()
         made = inputs.addBrowserCommandInput

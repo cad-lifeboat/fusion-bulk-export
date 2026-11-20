@@ -62,8 +62,9 @@ FULL_COLLECT_EVERY = 50
 # and never while Fusion holds less than MEMORY_FUSION_MIN, never before MEMORY_MIN_ITEMS items of
 # the run, and only once the rule has held on MEMORY_SUSTAIN_CHECKS checks in a row (one check
 # after each item Fusion worked on) spanning at least MEMORY_SUSTAIN_SECONDS.
-# When the computer is under pressure for as long but Fusion is not the cause, the run goes on and
-# the report says so (LOW_MEMORY_NOTE): closing other programs helps, restarting Fusion would not.
+# When the computer is critically short of memory for as long (critical_pressure) but Fusion is not
+# the cause, the run goes on and the report says so (LOW_MEMORY_NOTE): closing other programs
+# helps, restarting Fusion would not.
 # A rule whose figures cannot be read is not applied; with no figures at all the guard is off. It
 # can be switched off (MEMORY_GUARD_ENV, or "memory_guard": false in settings.json or the job).
 #
@@ -89,6 +90,11 @@ MEMORY_SUSTAIN_SECONDS = 30         # ...spanning at least this long (a design's
 # fail to get memory and can die) is under MEMORY_COMMIT_FLOOR or MEMORY_COMMIT_SHARE of the limit,
 # while available physical memory is under MEMORY_PHYSICAL_FLOOR or MEMORY_PHYSICAL_SHARE of it.
 MEMORY_PRESSURE_LEVEL = 2
+# The low-memory note ("closing other programs may speed it up") needs more: macOS's critical
+# level (4), not warning (2), which an 8 GB Mac with Fusion open reports about 96% of the time;
+# on Windows the same commit and physical rule. Like the stop rules, only when it lasts
+# (MEMORY_SUSTAIN_CHECKS checks over MEMORY_SUSTAIN_SECONDS).
+MEMORY_CRITICAL_LEVEL = 4
 MEMORY_COMMIT_FLOOR = 1 << 30       # 1 GB
 MEMORY_COMMIT_SHARE = 0.05
 MEMORY_PHYSICAL_FLOOR = 1 << 30     # 1 GB
@@ -118,6 +124,15 @@ def system_pressure(sample):
                                                                           MEMORY_PHYSICAL_SHARE * total)
         return short_of_commit and available < physical_floor
     return None
+
+
+def critical_pressure(sample):
+    """Whether the computer is critically short of memory now (for the low-memory note): macOS's
+    pressure level at critical; on Windows, as system_pressure. None when the sample does not say."""
+    level = (sample or {}).get('pressure_level')
+    if level is not None:
+        return level >= MEMORY_CRITICAL_LEVEL
+    return system_pressure(sample)
 
 
 def memory_condition(start, last):
@@ -162,7 +177,7 @@ class MemoryGuard:
         self.enabled, self.clock, self.test_limit = enabled, clock, test_limit
         self.items = 0
         self.rule = Streak()        # a stop rule holding check after check
-        self.pressure = Streak()    # system pressure check after check
+        self.pressure = Streak()    # critical system pressure check after check (the note)
         self.low_memory = False
 
     def check(self, start, sample):
@@ -175,7 +190,7 @@ class MemoryGuard:
             return 'test'
         rule = memory_condition(start, sample)
         self.rule.add(None if rule is None else 'stop', now)  # either rule, one after the other, counts
-        self.pressure.add(True if system_pressure(sample) else None, now)
+        self.pressure.add(True if critical_pressure(sample) else None, now)
         if rule is None and self.pressure.lasting(now):
             self.low_memory = True  # pressure that restarting Fusion would not cure
         if not self.enabled or self.items < MEMORY_MIN_ITEMS:

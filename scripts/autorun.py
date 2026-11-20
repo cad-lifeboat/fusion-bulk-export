@@ -276,12 +276,24 @@ DRAWINGS_REMOVED = ('--drawings does nothing now: drawing export was removed bec
 
 
 def make_output(output):
-    """Create the output folder, or stop with one plain line saying why it cannot be."""
+    """Create the output folder, or stop with one plain line saying why it cannot be. True when
+    this call created it (so a rejected job can take it away again: drop_new_output)."""
+    existed = output.is_dir()
     try:
         output.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise SystemExit('The output folder cannot be created: %s (%s). Choose another folder.'
                          % (output, error.strerror or type(error).__name__))
+    return not existed
+
+
+def drop_new_output(output):
+    """Remove the output folder this command just created, if it is still empty (a job the
+    add-in rejected leaves nothing behind). A folder with anything in it is never touched."""
+    try:
+        output.rmdir()  # only an empty folder can go
+    except OSError:
+        pass
 
 
 def root_problem(output, name=None):
@@ -295,7 +307,9 @@ def root_problem(output, name=None):
 
 def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False,
             linked_copies=True):
-    make_output(output)
+    """Put the job in place (after updating the add-in when needed); True when the output folder
+    was created for it."""
+    created = make_output(output)
     if not exporting(installed):
         # A running export may be writing to this very folder (its STOP, its result): left alone
         # then. wait() only takes a result written after this command started.
@@ -324,6 +338,7 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
     if not memory_guard_wanted():
         config['memory_guard'] = False
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
+    return created
 
 
 MEMORY_GUARD_ENV = 'FUSION_BULK_EXPORT_MEMORY_GUARD'  # the add-in's core.MEMORY_GUARD_ENV
@@ -490,6 +505,9 @@ def summary(output):
     return lines or ['Nothing in ' + str(output) + ' yet.']
 
 
+WAITING_LINE_SECONDS = 5  # an answer within this long (a rejected job) comes without "Waiting for"
+
+
 def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.sleep, clock=time.monotonic,
          running=None):
     """Wait for this job's autorun-result.json and print its summary; the exit status. Once the
@@ -497,7 +515,7 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
     means Fusion closed or crashed mid-run: EXIT_FUSION_GONE. (A stale heartbeat alone is not:
     Fusion can be busy for minutes in one design.)"""
     result = output / 'autorun-result.json'
-    print('Waiting for ' + str(result) + ' (progress: autorun.log)', flush=True)
+    waiting = False  # the "Waiting for" line, printed only once an answer is not there at once
     start = clock()
     started_at = time.time() - 5
     hinted = False
@@ -530,6 +548,9 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
             for error in errors:
                 print('The add-in rejected the job: ' + ' '.join(error.split()), flush=True)
             return 1
+        if not waiting and elapsed >= WAITING_LINE_SECONDS:
+            print('Waiting for ' + str(result) + ' (progress: autorun.log)', flush=True)
+            waiting = True
         crash = installed / 'startup-error.txt'
         if crash.is_file():
             print('The add-in failed to start:\n' + crash.read_text(encoding='utf-8'), flush=True)
@@ -588,23 +609,14 @@ def start(args):
 
 
 def run_job(args, name, output, installed):
-    """Send the job to the add-in (opening Fusion if it is closed) and wait for its result."""
+    """Send the job to the add-in (opening Fusion if it is closed) and wait for its result. An
+    output folder this command created and the job left empty (a rejected job) is removed again."""
     watching = alive(installed)
-    install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
-            folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
-            not getattr(args, 'no_linked_copies', False))
+    created = install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
+                      folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
+                      not getattr(args, 'no_linked_copies', False))
     try:
-        if watching:
-            return wait(installed, output, args.timeout)
-        if fusion_running(name):
-            # Open but not watching: the job is in place; starting the add-in by hand picks it up.
-            print(MANUAL_HINT, flush=True)
-            return wait(installed, output, args.timeout, hint_after=float('inf'))
-        # Whether Fusion starts the add-in is Fusion's own Run on Startup setting (kept in Fusion's
-        # settings, not in the add-in's manifest), so nothing here can switch it on. If the add-in
-        # does not come up, wait() prints MANUAL_HINT once.
-        launch_fusion(name)
-        return wait(installed, output, args.timeout)
+        status = send(args, name, output, installed, watching)
     except KeyboardInterrupt:
         # Ctrl-C: one plain line, never a traceback. A job Fusion never took is withdrawn (that
         # says so); one it took goes on.
@@ -614,6 +626,24 @@ def run_job(args, name, output, installed):
         return INTERRUPTED
     finally:
         withdraw_job(installed)
+    if status == 1 and created:
+        drop_new_output(output)
+    return status
+
+
+def send(args, name, output, installed, watching):
+    """Wait for the job's result, opening Fusion first if it is closed; the exit status."""
+    if watching:
+        return wait(installed, output, args.timeout)
+    if fusion_running(name):
+        # Open but not watching: the job is in place; starting the add-in by hand picks it up.
+        print(MANUAL_HINT, flush=True)
+        return wait(installed, output, args.timeout, hint_after=float('inf'))
+    # Whether Fusion starts the add-in is Fusion's own Run on Startup setting (kept in Fusion's
+    # settings, not in the add-in's manifest), so nothing here can switch it on. If the add-in
+    # does not come up, wait() prints MANUAL_HINT once.
+    launch_fusion(name)
+    return wait(installed, output, args.timeout)
 
 
 MAX_RESTARTS = 20           # --restart-fusion restarts Fusion at most this many times in one command...
@@ -865,10 +895,8 @@ def main(argv=None):
                                 'larger .f3d beside the one that keeps the links)')
             p.add_argument('--restart-fusion', nargs='?', const='polite', choices=('polite', 'force'),
                            metavar='force',
-                           help='when the export stops for memory or Fusion closes during it, this closes and reopens '
-                                'Fusion by itself (only with no saved design or unsaved document open in it, and '
-                                'with Run on Startup on) and carries on, while =force also ends a Fusion that will '
-                                'not quit within 60 s, losing anything unsaved in it.')
+                           help='closes and reopens Fusion by itself after a memory stop or crash, then carries on; '
+                                '=force may end Fusion, losing anything unsaved.')
             p.add_argument('--max-restarts', type=int, default=MAX_RESTARTS, metavar='N',
                            help='with --restart-fusion: restart Fusion at most N times (default %d), and never '
                                 'more than once per %d designs exported' % (MAX_RESTARTS, DESIGNS_PER_RESTART))

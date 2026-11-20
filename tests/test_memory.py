@@ -278,10 +278,12 @@ class GuardRuleTests(unittest.TestCase):
             samples.append(dict(rss=rss, total=MAC_8GB, available=available, pressure_level=1))
         self.assertEqual(guard_run(samples)[0], None)
         # Even if macOS said "warning" or "critical" throughout: Fusion is small, a restart cannot help.
-        for level in (2, 4):
+        # Only a lasting "critical" gets the low-memory note; "warning", which an 8 GB Mac with
+        # Fusion open reports almost all the time, does not.
+        for level, note in ((2, False), (4, True)):
             stopped, guard = guard_run([dict(sample, pressure_level=level) for sample in samples])
             self.assertIsNone(stopped)
-            self.assertTrue(guard.low_memory)  # the report says so instead
+            self.assertIs(guard.low_memory, note)
         for sample in samples:
             self.assertIsNone(core.memory_condition(samples[0], sample))
 
@@ -463,6 +465,32 @@ class GuardRunTests(Base):
         self.assertIn('This computer was low on memory during the export; closing other programs may speed it up.',
                       data['notes'])
         self.assertIn(core.LOW_MEMORY_NOTE, report.render_html(exporter.manifest, info, counts))
+
+    def test_macos_warning_level_alone_gives_no_note(self):
+        exporter = self.exporter(Sampler(rss=int(0.9 * GB), step=0, total=MAC_8GB, available=int(1.5 * GB),
+                                         pressure_level=2))
+        counts = exporter.run(fake.data(self.files(40)))
+        self.assertEqual(counts['exported'], 40)
+        self.assertNotIn('low_memory', exporter.run_info)
+        self.assertNotIn(core.LOW_MEMORY_NOTE, report.summary(counts, exporter.run_info, exporter.manifest,
+                                                              self.root)['notes'])
+
+    def test_macos_critical_level_that_lasts_gives_the_note(self):
+        exporter = self.exporter(Sampler(rss=int(0.9 * GB), step=0, total=MAC_8GB, available=int(0.3 * GB),
+                                         pressure_level=4))
+        exporter.run(fake.data(self.files(40)))
+        self.assertTrue(exporter.run_info['low_memory'])
+
+    def test_critical_pressure_levels(self):
+        self.assertFalse(core.critical_pressure(dict(pressure_level=1)))
+        self.assertFalse(core.critical_pressure(dict(pressure_level=2)))
+        self.assertTrue(core.critical_pressure(dict(pressure_level=4)))
+        self.assertIsNone(core.critical_pressure({}))
+        windows = dict(total=WIN_32GB, available=int(1.35 * GB), commit_total=40 * GB, commit_available=GB // 2)
+        self.assertTrue(core.critical_pressure(windows))
+        self.assertFalse(core.critical_pressure(dict(windows, commit_available=20 * GB)))
+        # The stop rule's pressure is unchanged: warning still counts there.
+        self.assertTrue(core.system_pressure(dict(pressure_level=2)))
 
     def test_growth_with_pressure_stops_a_run(self):
         # 1 GB at the start, +0.25 GB per item; macOS says "warning" all along. Grown over 4 GB
