@@ -614,9 +614,10 @@ class Exporter:
         limit: stop once this many designs were exported in this run (designs already up to
         date, failures and other files do not count).
 
-        progress(state) is called while listing and before each design, with a dict:
+        progress(state) is called while listing and before each item, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
-        project_name, path (folder names), design (designs found so far) and name; also
+        project_name, path (folder names), design (items found so far: designs and other files),
+        name and kind ('design', or 'file' for another file); also
         folder_files (the current folder's file count, or None when not known), folder_item
         (position of this design in that folder), counts (a copy of the run's counts so far),
         elapsed (seconds since the run started) and seconds_per_design (average time of the
@@ -667,7 +668,7 @@ class Exporter:
             started = self.clock()
             timing = dict(seconds=0.0, designs=0)
             state = dict(phase='listing', project=0, projects=len(numbers), project_name=None,
-                         path=[], design=0, name=None, folder_files=None, folder_item=0)
+                         path=[], design=0, name=None, kind=None, folder_files=None, folder_item=0)
 
             def report(phase):
                 state['phase'] = phase
@@ -700,7 +701,8 @@ class Exporter:
                         continue
                     found += 1
                     place(hub, project, folders)
-                    state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1)
+                    state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1,
+                                 kind='design' if str(file.fileExtension).lower() == 'f3d' else 'file')
                     report('design')
                     if cancelled():
                         self.run_info['cancelled'] = True

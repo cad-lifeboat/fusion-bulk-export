@@ -524,10 +524,22 @@ class ProgressTextTests(unittest.TestCase):
     def test_listing_and_design_lines(self):
         from fusion_bulk_export.command import describe
         self.assertEqual(describe(self.state()),
-                         'Project 3 of 17, listing: P / A / B\n40 design(s) so far\n12 min · 2 failed')
+                         'Project 3 of 17, listing: P / A / B\n40 item(s) so far\n12 min · 2 failed')
         state = self.state(phase='design', design=41, name='Gear 50%', seconds_per_design=3.42, elapsed=4000)
         self.assertEqual(describe(state),
                          'Project 3 of 17, design 41: Gear 50%%\nP / A / B\n1 h 06 min · 3.4 s/design · 2 failed')
+        state.update(kind='file', name='Spec.pdf')
+        self.assertTrue(describe(state).startswith('Project 3 of 17, file 41: Spec.pdf\n'))
+
+    def test_the_engine_says_which_items_are_other_files(self):
+        from fusion_bulk_export.core import Exporter
+        from fusion_bulk_export.fusion import FusionAdapter
+        states = []
+        with tempfile.TemporaryDirectory() as out:
+            Exporter(out, FusionAdapter(NS(documents=fake.Documents()))).run(
+                fake.data([fake.File('Part', 'part'), fake.File('Spec.pdf', 'spec', extension='pdf')]),
+                progress=states.append)
+        self.assertEqual([s['kind'] for s in states if s['phase'] == 'design'], ['design', 'file'])
 
     def test_bar_moves_within_a_folder_of_a_single_project(self):
         from fusion_bulk_export.command import bar

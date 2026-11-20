@@ -44,9 +44,10 @@ def describe(state):
     where = ' / '.join([state['project_name'] or ''] + list(state['path']))
     head = 'Project %d of %d' % (state['project'], state['projects'])
     if state['phase'] == 'listing':
-        text = '%s, listing: %s\n%d design(s) so far' % (head, where, state['design'])
+        text = '%s, listing: %s\n%d item(s) so far' % (head, where, state['design'])
     else:
-        text = '%s, design %d: %s\n%s' % (head, state['design'], state['name'], where)
+        what = 'file' if state.get('kind') == 'file' else 'design'
+        text = '%s, %s %d: %s\n%s' % (head, what, state['design'], state['name'], where)
     facts = [duration(state.get('elapsed'))]
     if state.get('seconds_per_design') is not None:
         facts.append('%.1f s/design' % state['seconds_per_design'])
