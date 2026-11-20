@@ -444,12 +444,17 @@ class Exporter:
         self.platform = sys.platform
         self.manifest_path = self.root / 'manifest.json'
         self.manifest = {'schema': SCHEMA, 'runs': [], 'entries': []}
+        self.upgraded = False  # this run opened a folder written by version 0.2 (schema 1)
         if os.path.exists(long_path(self.manifest_path)):
             with open(long_path(self.manifest_path), encoding='utf-8') as stream:
                 self.manifest = json.loads(stream.read())
             if self.manifest.get('schema') not in (1, SCHEMA):
                 raise ValueError('Unsupported manifest schema')
-            # Schema 1 entries keep their (shortened, hashed) files; new exports use real names.
+            # Schema 1 entries keep their (shortened, hashed) files; new exports use real names,
+            # so such a folder holds both layouts (the report says so: older_layout).
+            if self.manifest.get('schema') == 1:
+                self.manifest['older_layout'] = True
+                self.upgraded = True
             self.manifest['schema'] = SCHEMA
         # Items finished after the last full save (the previous run stopped without one).
         self.journal = Journal(self.root / 'manifest.journal')
@@ -470,6 +475,8 @@ class Exporter:
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.other_files = True
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
+        if self.upgraded:
+            self.run_info['upgraded_schema'] = 1
         self.manifest['runs'].append(self.run_info)
 
     def save(self):

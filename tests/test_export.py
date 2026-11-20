@@ -822,6 +822,17 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(self.manifest['schema'], 2)
         self.assertEqual(self.manifest['entries'][0], entry)  # untouched, files where they were
         self.assertIn('Hub/Project/New v3.f3d', self.paths())
+        # Two layouts in one folder: the report and the summary say so.
+        from fusion_bulk_export import report
+        exporter = Exporter(self.root, self.adapter)
+        self.assertTrue(exporter.manifest['older_layout'])
+        self.assertFalse(exporter.upgraded)  # already schema 2 now: the summary note was given once
+        page = report.render_html(exporter.manifest, exporter.run_info, {})
+        self.assertIn('Older exports keep their old folder names; new items go in readable folders.', page)
+        upgraded = dict(exporter.run_info, upgraded_schema=1)
+        self.assertIn(report.OLDER_LAYOUT, report.summary({}, upgraded, exporter.manifest, self.root)['notes'])
+        self.assertNotIn(report.OLDER_LAYOUT, report.summary({}, exporter.run_info, exporter.manifest,
+                                                             self.root)['notes'])
         with self.assertRaises(ValueError):
             (self.root / 'manifest.json').write_text(json.dumps(dict(schema=3, runs=[], entries=[])))
             Exporter(self.root, self.adapter)

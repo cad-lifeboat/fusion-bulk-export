@@ -220,6 +220,8 @@ def render_html(manifest, run_info, counts):
     long_paths = long_path_count(manifest)
     if long_paths:
         out.append('<p class="stop">%s</p>' % esc(LONG_PATHS % long_paths))
+    if manifest.get('older_layout'):
+        out.append('<p class="muted">Note: %s</p>' % esc(OLDER_LAYOUT))
     out += slow_html(rows)
     out += table_html(designs, 'Designs', 'Design')
     if others:
@@ -296,6 +298,10 @@ def write(exporter, counts=None):
     _write(page, render_html(exporter.manifest, run_info, counts or run_info.get('counts')), 'utf-8')
     _write(table, render_csv(exporter.manifest, run_info), 'utf-8-sig')  # utf-8-sig: Excel reads it
     return page, table
+
+
+OLDER_LAYOUT = ('Older exports keep their old folder names; new items go in readable folders. Both are in '
+                'this folder and listed here.')
 
 
 LONG_PATHS = ('%d item(s) have a path over 260 characters: they are saved, but Explorer and some programs '
@@ -380,6 +386,8 @@ def summary(counts, run_info, manifest, output, page=None):
     stale = links_out_of_date(manifest)
     if stale:
         notes.append('%d design(s) use older versions of linked designs (a note, not a failure).' % stale)
+    if run_info.get('upgraded_schema'):
+        notes.append(OLDER_LAYOUT)
     slow = run_info.get('slow') or 0  # this run's; the report lists every one in the folder
     if slow:
         notes.append('%d item(s) took Fusion over a minute each; the report lists them under "Slow items".' % slow)
