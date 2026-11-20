@@ -67,7 +67,16 @@ class FusionAdapter:
         return left
 
     def export(self, data_file, stem):
+        """Write <stem>.f3d and <stem>.step; returns their paths, plus <stem>.png when the
+        design's thumbnail was ready by the time the files were written."""
         self.details = {}
+        # Asked for first: Fusion fetches it while the design opens and exports; never waited for.
+        future = thumbnail_future(data_file)
+        paths = self.export_design(data_file, stem)
+        picture = save_thumbnail(future, str(stem) + '.png')
+        return paths + [picture] if picture else paths
+
+    def export_design(self, data_file, stem):
         before = self.open_ids()
         # Opening an already open document may return that same document. Export from it
         # without closing it, unless it holds unsaved edits or another version.
@@ -153,6 +162,47 @@ def visible_counts(root):
             components[getattr(component, 'id', id(component))] = solids
     return dict(visible_solid_bodies=per_occurrence,
                 visible_solid_bodies_distinct=shown_solids(root) + sum(components.values()))
+
+
+def thumbnail_future(data_file):
+    """DataFile.thumbnail (a DataObjectFuture: Fusion fetches the picture in the background),
+    or None. Never raises."""
+    try:
+        return data_file.thumbnail
+    except Exception:
+        return None
+
+
+def save_thumbnail(future, path):
+    """Write the thumbnail to path if it has arrived; the path, or None. Never waits and never
+    raises: a thumbnail is a convenience, so anything unexpected means no thumbnail."""
+    try:
+        if future is None:
+            return None
+        finished = getattr(getattr(adsk.core, 'FutureStates', None), 'FinishedFutureState', None)
+        if finished is not None and getattr(future, 'state', finished) != finished:
+            return None  # still being fetched (or failed): skip, do not wait
+        picture = future.dataObject
+        if picture is None:
+            return None
+        saved = False
+        if hasattr(picture, 'saveToFile'):
+            saved = picture.saveToFile(fusion_path(path))
+        elif hasattr(picture, 'getAsBase64String'):
+            import base64
+            with open(long_path(path), 'wb') as stream:
+                stream.write(base64.b64decode(picture.getAsBase64String()))
+            saved = True
+        if saved and os.path.isfile(long_path(path)) and os.path.getsize(long_path(path)) > 0:
+            return path
+    except Exception:
+        pass
+    try:
+        if os.path.isfile(long_path(path)):
+            os.unlink(long_path(path))  # nothing half-written is left behind
+    except OSError:
+        pass
+    return None
 
 
 def document_id(document):

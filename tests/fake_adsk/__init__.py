@@ -28,6 +28,8 @@ class File:
         self.childReferences = Collection(*linked)
         self.references, self.design = references, design
         self.step_solids = 1  # solids in the STEP the synthetic exporter writes
+        # DataFile.thumbnail: a DataObjectFuture, finished here (see thumbnail()).
+        self.thumbnail = thumbnail()
         self.root = None      # a root component (see component()) to use instead of the default
         self.failures = 0
         self.calls = 0
@@ -68,6 +70,18 @@ class Manager:
         else:
             Path(path).write_bytes(step_text(self.file.step_solids))
         return True
+
+
+PNG = b'\x89PNG\r\n\x1a\n synthetic thumbnail'
+
+
+def thumbnail(state='finished', data=PNG):
+    """A DataObjectFuture: state 'finished', 'processing' or 'failed'; its dataObject saves data."""
+    def save(path):
+        Path(path).write_bytes(data)
+        return True
+    states = dict(processing=0, finished=1, failed=2)
+    return NS(state=states[state], dataObject=NS(saveToFile=save) if state == 'finished' else None)
 
 
 def write_archive(path):
@@ -173,6 +187,7 @@ def install():
                                          YesNoButtonType=3, YesNoCancelButtonType=4)
     adsk.core.MessageBoxIconTypes = NS(NoIconIconType=0, QuestionIconType=1, InformationIconType=2,
                                        WarningIconType=3, CriticalIconType=4)
+    adsk.core.FutureStates = NS(ProcessingFutureState=0, FinishedFutureState=1, FailedFutureState=2)
     adsk.core.DialogResults = NS(DialogError=-1, DialogOK=0, DialogCancel=1, DialogNo=2, DialogYes=3,
                                  DialogRetry=4)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:

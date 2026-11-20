@@ -257,6 +257,26 @@ def disk_full(error):
     return bool(DISK_FULL_TEXT.search(str(error)))
 
 
+EARLIEST_DATE = 946684800  # 2000-01-01: older "modified" dates are not real ones
+
+
+def design_time(value, now=None):
+    """Fusion's dateModified (a Unix timestamp in seconds) as a file time, or None when it is
+    missing or implausible. A value in milliseconds is accepted too."""
+    if isinstance(value, bool):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    if seconds != seconds:  # NaN
+        return None
+    if seconds > 1e11:
+        seconds /= 1000.0
+    latest = (time.time() if now is None else now) + 86400
+    return seconds if EARLIEST_DATE <= seconds <= latest else None
+
+
 class Trouble(Exception):
     """A problem that stops the whole run (not just one design)."""
     def __init__(self, code, reason, error=None):
@@ -381,6 +401,20 @@ class Exporter:
             return True
         except (OSError, ValueError):
             return False
+
+    def set_times(self, paths, file):
+        """Give exported files the design's modified date, as a file browser shows it. Done
+        before the files are recorded, so the recorded time (the fast check on resume) is this
+        one. A bad date or a file system that refuses leaves the time of writing."""
+        when = design_time(getattr(file, 'dateModified', None))
+        if when is None:
+            return
+        for path in paths:
+            try:
+                os.utime(long_path(path), (when, when))
+            except (OSError, ValueError, OverflowError) as error:
+                self.log('could not set a file time: ' + str(error))
+                return
 
     def destination(self, hub, project, folders, file, short=False):
         """Where a design goes: (stem path without extension, facts for its manifest entry).
@@ -586,12 +620,19 @@ class Exporter:
                         entry['references'] = self.adapter.references(file)
                     stem, facts = self.destination(hub, project, folders, file, short)
                     entry.update(facts)
-                    paths = self.adapter.export(file, stem)
+                    written = self.adapter.export(file, stem)
+                    paths = [path for path in written if not str(path).lower().endswith('.png')]
+                    pictures = [path for path in written if str(path).lower().endswith('.png')]
                     details = dict(getattr(self.adapter, 'details', None) or {})
                     # Quick checks now: a broken file is retried; an empty STEP is a warning.
                     facts = checks.inline(paths, details.get('visible_solid_bodies'),
                                           details.get('visible_solid_bodies_distinct'))
+                    # Files get the design's date first, then are recorded with that time.
+                    self.set_times(paths + pictures, file)
                     entry['files'] = [file_info(Path(path), self.root) for path in paths]
+                    entry.pop('thumbnail', None)
+                    if pictures:
+                        entry['thumbnail'] = file_info(Path(pictures[0]), self.root)
                     entry.update(details)
                     entry.update(facts)
                     entry.update(status='done', error=None)

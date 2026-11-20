@@ -46,17 +46,19 @@ def items(manifest, run_info=None):
         status = entry.get('status')
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
         warnings = [str(w) for w in entry.get('warnings') or []] if status == 'done' else []
+        picture = (entry.get('thumbnail') or {}).get('path') if status == 'done' else None
         result.append(dict(status=status, hub=entry.get('hub') or '', project=entry.get('project') or '',
                            folder='/'.join(entry.get('path') or []), name=entry.get('name') or '',
                            version=entry.get('version'), files=files, reason=entry.get('error') or '',
                            next_step=WARNING_STEP if warnings else next_step(status, entry.get('error')),
-                           warnings=warnings))
+                           warnings=warnings, thumbnail=picture or ''))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', hub=where[0] if where else '',
                            project=where[1] if len(where) > 1 else '', folder='/'.join(where[2:]),
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
-                           next_step=next_step('unreadable', problem.get('error')), warnings=[]))
+                           next_step=next_step('unreadable', problem.get('error')), warnings=[],
+                           thumbnail=''))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
@@ -81,7 +83,8 @@ h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 24px 0 8p
 table { border-collapse: collapse; width: 100%; } th, td { text-align: left; vertical-align: top;
   padding: 6px 8px; border-bottom: 1px solid var(--line); } th { color: var(--muted); font-weight: 600; }
 .failed, .unreadable { color: var(--bad); font-weight: 600; } .skipped { color: var(--warn); }
-.done { color: var(--good); } .warn { color: var(--warn); } .stop { border-left: 4px solid var(--bad); padding: 4px 12px; }
+.done { color: var(--good); } img.thumb { width: 64px; height: 64px; object-fit: contain;
+  float: left; margin-right: 8px; } .warn { color: var(--warn); } .stop { border-left: 4px solid var(--bad); padding: 4px 12px; }
 '''
 
 
@@ -113,7 +116,9 @@ def render_html(manifest, run_info, counts):
     for row in rows:
         files = ' '.join('<a href="%s">%s</a>' % (esc(link(path)), esc(path.rsplit('.', 1)[-1].upper()))
                          for path in row['files'])
-        name = row['name'] + (' v%s' % row['version'] if row['version'] is not None else '')
+        name = esc(row['name'] + (' v%s' % row['version'] if row['version'] is not None else ''))
+        if row['thumbnail']:
+            name = '<img class="thumb" src="%s" alt="" loading="lazy">%s' % (esc(link(row['thumbnail'])), name)
         why = esc(row['reason'])
         for warning in row['warnings']:
             why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(warning) + '</span>'
@@ -123,7 +128,7 @@ def render_html(manifest, run_info, counts):
                    '<td>%s</td><td>%s</td></tr>'
                    % (esc(row['status'] or ''), esc(LABEL.get(row['status'], row['status'] or '')
                                                     + (', with a warning' if row['warnings'] else '')),
-                      esc(row['project']), esc(row['hub']), esc(row['folder']), esc(name), files, why))
+                      esc(row['project']), esc(row['hub']), esc(row['folder']), name, files, why))
     if not rows:
         out.append('<tr><td colspan="6" class="muted">Nothing exported yet.</td></tr>')
     out.append('</tbody></table></body></html>')
@@ -134,13 +139,13 @@ def render_csv(manifest, run_info):
     stream = io.StringIO()
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
-                     'reason', 'next_step', 'warnings'])
+                     'reason', 'next_step', 'warnings', 'thumbnail'])
     for row in items(manifest, run_info):
         archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '')
         step = next((p for p in row['files'] if p.lower().endswith(('.step', '.stp'))), '')
         writer.writerow([row['status'], row['hub'], row['project'], row['folder'], row['name'],
                          '' if row['version'] is None else row['version'], archive, step, row['reason'],
-                         row['next_step'], '; '.join(row['warnings'])])
+                         row['next_step'], '; '.join(row['warnings']), row['thumbnail']])
     return stream.getvalue()
 
 

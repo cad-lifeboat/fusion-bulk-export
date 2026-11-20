@@ -89,6 +89,14 @@ class ReportTests(unittest.TestCase):
         self.assertIn('1 exported with a warning', summary)
         self.assertIn('- Hollow: STEP has no bodies (Fusion showed 1)', summary)
 
+    def test_thumbnail_shown_and_listed(self):
+        self.manifest['entries'][0]['thumbnail'] = dict(path='Hub/Proj/Größen/Good _b_ v2.png')
+        page, table = self.write()
+        self.assertIn('<img class="thumb" src="Hub/Proj/Gr%C3%B6%C3%9Fen/Good%20_b_%20v2.png"',
+                      page.read_text(encoding='utf-8'))
+        rows = list(csv.DictReader(io.StringIO(table.read_text(encoding='utf-8-sig'))))
+        self.assertEqual(rows[-1]['thumbnail'], 'Hub/Proj/Größen/Good _b_ v2.png')
+
     def test_empty_folder_report(self):
         self.manifest = dict(entries=[])
         self.run_info['discovery_errors'] = []

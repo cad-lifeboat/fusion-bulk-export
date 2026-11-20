@@ -360,6 +360,72 @@ class ExportTests(unittest.TestCase):
         self.run_export(data)
         self.assertEqual(file.calls, 2)
 
+    def test_files_get_the_design_date_and_resume_stays_fast(self):
+        from fusion_bulk_export import checks
+        file = fake.File()
+        data = fake.data([file])
+        self.run_export(data)
+        entry = self.manifest['entries'][0]
+        for info in entry['files'] + [entry['thumbnail']]:
+            path = self.root / info['path']
+            self.assertEqual(path.stat().st_mtime, 1700000000)
+            self.assertEqual(info['mtime_ns'], path.stat().st_mtime_ns)
+        with patch.object(checks, 'file_sha256', side_effect=AssertionError('hashed')):
+            _, counts = self.run_export(data)
+        self.assertEqual(counts['up_to_date'], 1)
+
+    def test_bad_design_dates_leave_the_time_of_writing(self):
+        from fusion_bulk_export.core import design_time
+        now = 1800000000
+        for bad in (None, 'yesterday', 0, -5, float('nan'), float('inf'), now + 10 ** 6, True, [1]):
+            self.assertIsNone(design_time(bad, now), bad)
+        self.assertEqual(design_time(1700000000, now), 1700000000)
+        self.assertEqual(design_time('1700000000', now), 1700000000)
+        self.assertEqual(design_time(1700000000123, now), 1700000000.123)  # milliseconds
+        file = fake.File()
+        file.dateModified = 'not a date'
+        self.run_export(fake.data([file]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual(entry['status'], 'done')
+        self.assertGreater((self.root / entry['files'][0]['path']).stat().st_mtime, 1750000000)
+        _, counts = self.run_export(fake.data([file]))
+        self.assertEqual(counts['up_to_date'], 1)
+
+    def test_thumbnail_saved_beside_the_files(self):
+        self.run_export(fake.data([fake.File('Gear', 'gear')]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual(entry['thumbnail']['path'], 'Hub/Project/Gear v3.png')
+        self.assertEqual((self.root / 'Hub/Project/Gear v3.png').read_bytes(), fake.PNG)
+        self.assertEqual(len(entry['files']), 2)  # the thumbnail is not one of the design's files
+
+    def test_thumbnail_not_ready_or_failing_is_skipped_silently(self):
+        def broken_save(path):
+            Path(path).write_bytes(b'half')
+            raise RuntimeError('Synthetic thumbnail failure')
+
+        class Raising(fake.File):
+            @property
+            def thumbnail(self):
+                raise RuntimeError('Synthetic: no thumbnail')
+
+            @thumbnail.setter
+            def thumbnail(self, value):
+                pass
+        cases = [('processing', fake.thumbnail('processing')), ('failed', fake.thumbnail('failed')),
+                 ('none', None), ('empty', fake.thumbnail(data=b'')),
+                 ('raising save', NS(state=1, dataObject=NS(saveToFile=broken_save))),
+                 ('false save', NS(state=1, dataObject=NS(saveToFile=lambda path: False)))]
+        files = []
+        for name, future in cases:
+            file = fake.File(name, name)
+            file.thumbnail = future
+            files.append(file)
+        files.append(Raising('raising', 'raising'))
+        _, counts = self.run_export(fake.data(files))
+        self.assertEqual(counts['exported'], len(files))
+        self.assertTrue(all('thumbnail' not in e for e in self.manifest['entries']))
+        self.assertEqual(list((self.root / 'Hub' / 'Project').glob('*.png')), [])
+
     def test_retry_then_success(self):
         file = fake.File()
         file.failures = 1
