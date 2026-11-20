@@ -10,6 +10,9 @@ Configuration (all paths absolute):
                                      by id is exactly that folder, even beside a same-named one
    "designs_only": false,            optional; true: skip other files (PDFs, uploads),
                                      which are otherwise saved as Fusion hands them out
+   "step": true,                     optional; false: each design's .f3d only, no STEP
+                                     (entries record step: "off"; a later job with STEP adds
+                                     them by exporting those designs again)
    "experiment_linked_copies": "1",  testing only, not for users: the launcher passes on
                                      FUSION_BULK_EXPORT_EXPERIMENT_LINKED_COPIES ("1",
                                      "innermost" or "compute"; see core.LINKED_COPIES_ENV).
@@ -123,6 +126,9 @@ def check_settings(config):
     designs_only = config.get('designs_only', False)
     if not isinstance(designs_only, bool):
         raise ValueError('designs_only must be true or false')
+    step = config.get('step', True)
+    if not isinstance(step, bool):
+        raise ValueError('step must be true or false')
     linked_copies = config.get('experiment_linked_copies')
     if linked_copies is not None and link_recipe(linked_copies) is None:
         raise ValueError('experiment_linked_copies must be one of: ' + ', '.join(sorted(LINK_RECIPES)))
@@ -130,7 +136,7 @@ def check_settings(config):
     if not isinstance(memory_guard, bool):
         raise ValueError('memory_guard must be true or false')
     # "drawings" (from launchers before drawing export was removed) and "linked_copies" are ignored.
-    return mode, selection, limit, timeout, not designs_only, linked_copies, memory_guard
+    return mode, selection, limit, timeout, not designs_only, linked_copies, step, memory_guard
 
 
 FIND_LOG_EVERY = 50  # folders listed between progress lines while a folder id is looked for
@@ -369,7 +375,8 @@ def run_autorun(app, config_path):
     try:
         unusable = None
         try:
-            output, mode, selection, limit, timeout, other_files, linked_copies, memory_guard = read_config(config_path)
+            output, mode, selection, limit, timeout, other_files, linked_copies, step, memory_guard = \
+                read_config(config_path)
         except Exception as error:
             output = getattr(error, 'output', None) or beside
             raise
@@ -382,7 +389,7 @@ def run_autorun(app, config_path):
         if unusable is not None:
             raise ValueError(unusable)
         log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
-                          other_files=other_files)
+                          other_files=other_files, step=step)
         log.write('autorun start ' + mode)
         if mode == 'diagnostics':
             report = diagnostics(app)
@@ -417,7 +424,7 @@ def run_autorun(app, config_path):
             try:
                 log.result['counts'] = exporter.run(
                     data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
-                    selection=selection, other_files=other_files, linked_copies=linked_copies)
+                    selection=selection, other_files=other_files, linked_copies=linked_copies, step=step)
             finally:
                 try:
                     write_report(exporter)

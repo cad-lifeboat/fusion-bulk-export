@@ -16,6 +16,10 @@ CHOOSE = 'Choose projects or folders'
 # Checkbox labels stay short (about 40 characters): Fusion puts a checkbox's label in the dialog's
 # left column, sizes that column to its longest label and cuts the label off at its limit, which
 # leaves the right-hand column (and anything in it) a sliver.
+STEP = 'Also save a STEP file for each design'
+STEP_WHY = ('A STEP file opens in almost any CAD program; the .f3d opens only in Fusion. For an assembly the '
+            'STEP is the file that holds the geometry of all its linked parts.')
+STEP_OFF_NOTE = 'Without STEP you get only .f3d files, which open only in Fusion.'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 OTHER_FILES_WHY = 'PDFs, images and other uploaded files are copied as they are, beside the designs.'
 SAVE_TO = 'Save to'
@@ -23,8 +27,9 @@ BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
-# 600 high: on a screen 1080 points high every control is in view at first (the tree is last).
-DIALOG_SIZE = (520, 600)
+# 640 high: on a screen 1080 points high every control is in view at first (the tree is last),
+# also the note shown while the STEP box is unticked.
+DIALOG_SIZE = (520, 640)
 DIALOG_MINIMUM = (380, 460)
 # The tree's height in Fusion's units, set explicitly on the HTML input when it is made and again
 # each time it is shown (on macOS, test builds showed the tree collapsed to a ~40-unit strip when
@@ -139,6 +144,12 @@ class Picker:
         self.facts = None
         self.browsing = False
         self.refresh_folder()
+        # On unless the user switched it off last time; the note under it shows while it is unticked.
+        self.step_box = inputs.addBoolValueInput('fbx_step', STEP, True, '', remembered.get('step') is not False)
+        describe(self.step_box, STEP_WHY, trace)
+        self.step_note = inputs.addTextBoxCommandInput('fbx_step_note', '', STEP_OFF_NOTE, 1, True)
+        full_width(self.step_note, trace)
+        self.step_note.isVisible = not self.step_box.value
         # On unless the user switched it off last time.
         self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
                                               remembered.get('other_files') is not False)
@@ -182,6 +193,11 @@ class Picker:
     def other_files(self):
         """Whether files that are not designs are saved too (the checkbox)."""
         return bool(self.files.value)
+
+    @property
+    def step(self):
+        """Whether each design's STEP is saved too (the checkbox)."""
+        return bool(self.step_box.value)
 
     @property
     def drawings(self):
@@ -235,6 +251,8 @@ class Picker:
                     self.choose_folder()
                 finally:
                     self.browsing = False
+        elif changed_input.id == self.step_box.id:
+            self.step_note.isVisible = not self.step
         elif changed_input.id == self.mode.id and self.tree is not None:
             self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)
@@ -245,7 +263,7 @@ class Picker:
 
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
-                            else EVERYTHING, other_files=self.other_files),
+                            else EVERYTHING, other_files=self.other_files, step=self.step),
                        drop=('drawings', 'linked_copies'))
 
     def incoming(self, action, data):

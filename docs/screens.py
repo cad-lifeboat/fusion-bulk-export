@@ -5,7 +5,7 @@
 
 They follow the real dialogs: the inputs picker.py adds, in its order (version line, Save to
 with Browse…, the folder and its note, the Export choice, the tree across the whole dialog, what
-is chosen, the checkbox), the tree page (ui/tree.html and
+is chosen, the two checkboxes), the tree page (ui/tree.html and
 ui/tree.js: hint, filter box, hubs, projects and folders with tri-state boxes, file counts and
 "N exported" marks), the progress text of command.describe() and the results dialog at the end
 (results.py with ui/summary.html: the data of report.summary(), Open report and Open folder on the
@@ -32,6 +32,7 @@ BAD = '#b42318'
 VERSION = 'Fusion Bulk Export 0.3.0'
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
+STEP = 'Also save a STEP file for each design'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 EXPORT_LABEL = 'Export'
 CHOOSE = 'Choose projects or folders'
@@ -201,7 +202,7 @@ def dialog_svg():
     row += 22
     parts.append(text(x + 16, row + 12, folder_note(), 12, MUTED))
     row += 26
-    for label, ticked in ((OTHER_FILES, 1),):
+    for label, ticked in ((STEP, 1), (OTHER_FILES, 1)):
         parts.append(text(x + 16, row + 12, label, 12, MUTED))
         parts.append(checkbox(cx, row + 2, ticked))
         row += 26

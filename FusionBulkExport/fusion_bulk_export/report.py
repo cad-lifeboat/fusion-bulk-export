@@ -14,7 +14,8 @@ import sys
 from urllib.parse import quote
 
 from .checks import file_role
-from .core import DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE
+from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, STEP_FAILED, STEP_OFF,
+                   STEP_NOT_REQUESTED, STEP_OFF_NOTE)
 from .names import long_path
 from .words import form, plural
 
@@ -47,6 +48,7 @@ ACCOUNT_CHANGED_NOTE = ("This design's version or date in the Fusion account cha
                         "with its linked parts; the export stopped. Check its version history in Fusion.")
 
 
+STEP_RETRIED = 'Its STEP file is tried again on the next export into this folder.'
 WARNING_STEP = ('The .f3d archive is the complete copy; open the design in Fusion if you need the STEP '
                 'to hold every body.')
 
@@ -96,7 +98,9 @@ def items(manifest, run_info=None):
                            hub=entry.get('hub') or '', project=entry.get('project') or '',
                            folder='/'.join(entry.get('path') or []), name=entry.get('name') or '',
                            version=entry.get('version'), files=files, reason=entry.get('error') or '',
-                           next_step=WARNING_STEP if warnings else next_step(status, entry.get('error')),
+                           next_step=(STEP_RETRIED if status == 'done' and entry.get('step') == STEP_FAILED
+                                      else WARNING_STEP if warnings else next_step(status, entry.get('error'))),
+                           step_off=status == 'done' and entry.get('step') == STEP_OFF,
                            warnings=warnings, thumbnail=picture or '',
                            has_links=entry.get('has_references'), links=len(links) if links else 0,
                            links_out_of_date=bool(entry.get('references_out_of_date')),
@@ -177,6 +181,8 @@ def table_html(rows, heading, column):
                                                                             path.rsplit('.', 1)[-1].upper()
                                                                             if '.' in path.rsplit('/', 1)[-1] else 'File')))
                          for path, role in zip(row['files'], roles))
+        if row.get('step_off'):
+            files += (' ' if files else '') + '<span class="muted">%s</span>' % esc(STEP_NOT_REQUESTED)
         version = ' v%s' % row['version'] if row['version'] is not None and row['kind'] == 'design' else ''
         name = esc(row['name'] + version)
         if row['kind'] == 'file' and row['version'] is not None:
@@ -250,6 +256,8 @@ def render_html(manifest, run_info, counts):
     if unread:
         line += '; %d whose links could not be read (exported all the same)' % unread
     out.append('<div class="muted">%s.</div>' % esc(line))
+    if (run_info or {}).get('step') is False:
+        out.append('<p class="muted">Note: %s</p>' % esc(STEP_OFF_NOTE))
     memory = memory_line(run_info)
     if memory:
         out.append('<div class="muted">%s</div>' % esc(memory))
@@ -331,7 +339,7 @@ def render_csv(manifest, run_info):
         for path, role in zip(row['files'], row['roles']):
             by_role.setdefault(role, path)
         archive = by_role.get('archive', '') if design else ''
-        step = by_role.get('step', '') if design else ''
+        step = (STEP_NOT_REQUESTED if row.get('step_off') else by_role.get('step', '')) if design else ''
         writer.writerow([row['status'], row['hub'], row['project'], row['folder'], row['name'],
                          '' if row['version'] is None else row['version'], archive, step, row['reason'],
                          row['next_step'], '; '.join(row['warnings']), row['thumbnail'], row['kind'],
@@ -453,6 +461,8 @@ def summary(counts, run_info, manifest, output, page=None):
     unsupported = unsupported_count(manifest)
     if unsupported:
         notes.append(unsupported_note(unsupported))
+    if run_info.get('step') is False:
+        notes.append(STEP_OFF_NOTE)
     stale = links_out_of_date(manifest)
     if stale:
         notes.append('%s %s older versions of linked designs (a note, not a failure).'

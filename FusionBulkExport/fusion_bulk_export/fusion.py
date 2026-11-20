@@ -51,6 +51,8 @@ class FusionAdapter:
         # "<stem> (with linked parts, experimental).f3d" of a design with linked components, or
         # None (off, the default). The Exporter sets it from core.LINKED_COPIES_ENV or the job.
         self.linked_copies = None
+        # Write <stem>.step too (the dialog's STEP box, the job's "step"; set by the Exporter).
+        self.step = True
         self.clock = time.monotonic
 
     def references(self, data_file):
@@ -217,8 +219,9 @@ class FusionAdapter:
             shutil.rmtree(long_path(folder), ignore_errors=True)
 
     def export(self, data_file, stem):
-        """Write <stem>.f3d and <stem>.step; returns their paths, plus <stem>.png when the
-        design's thumbnail was ready by the time the files were written."""
+        """Write <stem>.f3d and (when self.step) <stem>.step; returns their paths, plus <stem>.png
+        when the design's thumbnail was ready by the time the files were written. A STEP Fusion
+        would not write leaves the .f3d standing, with the reason in details['step_error']."""
         self.details = {}
         # Asked for first: Fusion fetches it while the design opens and exports; never waited for.
         future = thumbnail_future(data_file)
@@ -255,7 +258,7 @@ class FusionAdapter:
             self.close_opened(before)
 
     def write(self, document, data_file, stem, opened=False):
-        """Export an open document: <stem>.f3d and <stem>.step as the design is, then (only while the
+        """Export an open document: <stem>.f3d and (when self.step) <stem>.step as the design is, then (only while the
         testing switch is on) for a design with linked components the experimental copy with its
         linked parts (linked_copy). When it raises, its
         variables (design, export manager) are dropped by the exporter (core.forget_frames) once
@@ -278,15 +281,34 @@ class FusionAdapter:
             raise RuntimeError('Fusion archive export returned false')
         if not os.path.isfile(long_path(staged_archive)):
             raise RuntimeError('Fusion reported a successful archive export but wrote no file')
-        if not manager.execute(manager.createSTEPExportOptions(fusion_path(staged_step))):
-            raise RuntimeError('STEP export returned false')
-        if not os.path.isfile(long_path(staged_step)):
-            raise RuntimeError('Fusion reported a successful STEP export but wrote no file')
+        # The STEP is not wanted, or Fusion would not write it: the archive stands on its own (the
+        # exporter records why; a STEP that failed is tried again on the next run). A full disk
+        # still stops the run.
+        problem = None
+        if self.step:
+            try:
+                if not manager.execute(manager.createSTEPExportOptions(fusion_path(staged_step))):
+                    problem = 'STEP export returned false'
+                elif not os.path.isfile(long_path(staged_step)):
+                    problem = 'Fusion reported a successful STEP export but wrote no file'
+            except Exception as error:
+                if disk_full(error):
+                    raise
+                problem = str(error) or type(error).__name__
         staging.place(staged_archive, archive)
-        staging.place(staged_step, step)
+        written = [archive]
+        if self.step and problem is None:
+            staging.place(staged_step, step)
+            written.append(step)
+        elif problem is not None:
+            self.details['step_error'] = problem
+            try:
+                os.unlink(long_path(staged_step))
+            except OSError:
+                pass
         # Only now, after the design's own files are written: from here on the document in memory
         # is no longer the design as it is in the account.
-        return [archive, step] + self.linked_copy(document, opened, design, stem)
+        return written + self.linked_copy(document, opened, design, stem)
 
     def linked_copy(self, document, opened, design, stem):
         """Records how many linked components (occurrences with isReferencedComponent) the design

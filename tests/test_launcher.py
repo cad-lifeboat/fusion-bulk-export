@@ -461,6 +461,33 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(core.LINKED_COPIES_ENV, name)
         self.assertEqual(sorted(launcher.LINKED_COPIES_VALUES), sorted(core.LINK_RECIPES))
 
+    def test_no_step_flag_reaches_the_job_and_status_says_so(self):
+        installed, out = self.root / 'installed', self.root / 'out'
+        installed.mkdir()
+        job = lambda: json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))
+        with patch.object(launcher.shutil, 'copytree'):
+            launcher.install(installed, out, 'export', step=False)
+            self.assertIs(job()['step'], False)
+            launcher.install(installed, out, 'export')
+            self.assertNotIn('step', job())
+        seen = []
+        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.no_step) or 0):
+            launcher.main(['export', str(out), '--no-step'])
+            launcher.main(['export', str(out)])
+        self.assertEqual(seen, [True, False])
+        jobs = []
+        with patch.object(launcher, 'install', side_effect=lambda *a: jobs.append(a)), \
+                patch.object(launcher, 'alive', return_value=True), patch.object(launcher, 'wait', return_value=0):
+            args = NS(command='export', project=None, limit=None, folder=None, designs_only=False, no_step=True,
+                      timeout=10)
+            launcher.run_job(args, 'Darwin', out, installed)
+        self.assertIs(jobs[0][-1], False)
+        (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts=dict(exported=1), step=False,
+                                                                 errors=[])), encoding='utf-8')
+        self.assertIn('STEP files were not requested for this export.', launcher.summary(out))
+        from fusion_bulk_export import core
+        self.assertEqual(launcher.STEP_OFF_NOTE, core.STEP_OFF_NOTE)
+
     def test_designs_only_flag_reaches_the_job(self):
         installed, out = self.root / 'installed', self.root / 'out'
         installed.mkdir()

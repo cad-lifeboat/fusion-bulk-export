@@ -189,7 +189,7 @@ def read_manifest(root):
 
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
               'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
-              'failed_checks', 'members_not_crc_checked', 'linked_copies')
+              'failed_checks', 'members_not_crc_checked', 'linked_copies', 'step_off', 'step_failed')
 
 
 def check_folder(root, strict=False, show=None):
@@ -250,7 +250,24 @@ def check_folder(root, strict=False, show=None):
                     linked_problems, _, unchecked = archive_facts(linked)
                     problems += ['copy with linked parts: ' + problem for problem in linked_problems]
                     totals['members_not_crc_checked'] += unchecked
-            if archive is None or step is None:
+            # No STEP by intent: not requested for that run ("off"), or Fusion would not write it
+            # ("failed": a warning, tried again on the next export). Not a problem here.
+            no_step = entry.get('step') in ('off', 'failed')
+            if no_step and archive is None:
+                problems.append('archive not recorded')
+            elif no_step:
+                suffix = archive.suffix.lower().lstrip('.')
+                totals[suffix] = totals.get(suffix, 0) + 1
+                members = 0
+                if os.path.isfile(long_path(archive)):
+                    archive_problems, members, unchecked = archive_facts(archive)
+                    problems += archive_problems
+                    totals['members_not_crc_checked'] += unchecked
+                totals['step_off' if entry.get('step') == 'off' else 'step_failed'] += 1
+                line = '%s, %s, %s' % (archive.suffix, plural(members, 'member design'),
+                                       'STEP not requested' if entry.get('step') == 'off'
+                                       else 'STEP not written (Fusion could not write it)')
+            elif archive is None or step is None:
                 problems.append('archive or STEP not recorded')
             else:
                 suffix = archive.suffix.lower().lstrip('.')

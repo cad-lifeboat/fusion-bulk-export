@@ -3,10 +3,12 @@
 
   autorun.py inventory OUTPUT                       list everything, open nothing
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
-                    [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only]
+                    [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only] [--no-step]
                                                     export (rerun the same command to resume);
-                                                    other files (PDFs, uploads) are saved too
-                                                    unless --designs-only; drawings and
+                                                    each design as .f3d and .step (.f3d only
+                                                    with --no-step); other files (PDFs,
+                                                    uploads) are saved too unless
+                                                    --designs-only; drawings and
                                                     electronics are listed as not supported
                                                     (Fusion cannot export them safely)
   autorun.py status OUTPUT                          counts so far (no design names)
@@ -302,7 +304,7 @@ def root_problem(output, name=None):
     return output_root_problem(output, 'win32' if (name or system()) == 'Windows' else 'darwin')
 
 
-def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):
+def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False, step=True):
     """Put the job in place (after updating the add-in when needed); True when the output folder
     was created for it."""
     created = make_output(output)
@@ -329,6 +331,8 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['limit'] = limit
     if designs_only:
         config['designs_only'] = True
+    if not step:
+        config['step'] = False
     if not memory_guard_wanted():
         config['memory_guard'] = False
     experiment = linked_copies_experiment()
@@ -366,6 +370,7 @@ def linked_copies_experiment(environ=None):
 ACCOUNT_CHANGED_LINE = ("Stopped by itself (account_changed): a design's version or date in the Fusion account "
                         "changed while it was exported with its linked parts. Do not run again; check the "
                         "design's version history in Fusion and report it (export.log in the output folder).")
+STEP_OFF_NOTE = 'STEP files were not requested for this export.'  # the add-in's core.STEP_OFF_NOTE
 LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing other programs may speed it up.'
 
 
@@ -431,6 +436,8 @@ def summary(output):
             lines.append(ACCOUNT_CHANGED_LINE)
         elif report.get('stopped_reason'):
             lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
+        if report.get('step') is False:
+            lines.append(STEP_OFF_NOTE)
         if report.get('low_memory') and report.get('stopped_code') != 'memory':
             lines.append('Note: ' + LOW_MEMORY_NOTE)
         if report.get('low_space'):
@@ -610,7 +617,8 @@ def run_job(args, name, output, installed):
     output folder this command created and the job left empty (a rejected job) is removed again."""
     watching = alive(installed)
     created = install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
-                      folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False))
+                      folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
+                      not getattr(args, 'no_step', False))
     try:
         status = send(args, name, output, installed, watching)
     except KeyboardInterrupt:
@@ -886,6 +894,9 @@ def main(argv=None):
                                 'was exported; later designs and folders are left for the next run')
             p.add_argument('--designs-only', action='store_true',
                            help='skip other files (PDFs, uploads); by default they are saved too')
+            p.add_argument('--no-step', action='store_true',
+                           help='save each design as .f3d only, without its STEP file (by default both; '
+                                'STEP opens in almost any CAD program, .f3d only in Fusion)')
             p.add_argument('--restart-fusion', nargs='?', const='polite', choices=('polite', 'force'),
                            metavar='force',
                            help='closes and reopens Fusion by itself after a memory stop or crash, then carries on; '

@@ -55,7 +55,8 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 - A name too long for its row ends in "…": hover over the row to read it whole.
 - If a folder cannot be listed, the tree says so with a **Retry** button.
 - The button is always there, also after an export from the command line. Only one export runs at a time.
-- The dialog reads top to bottom: **Save to**, the other-files box, the **Export** choice, then the tree, so every control is in view when it opens; the tree scrolls inside itself.
+- **Also save a STEP file for each design** is ticked by default (remembered). Keep it: a STEP opens in almost any CAD program, while the `.f3d` opens only in Fusion. Unticked, each design is saved as `.f3d` only, and the dialog says so ("Without STEP you get only .f3d files, which open only in Fusion."). Exporting into the same folder later with it ticked adds the missing STEP files.
+- The dialog reads top to bottom: **Save to**, the STEP box, the other-files box, the **Export** choice, then the tree, so every control is in view when it opens; the tree scrolls inside itself.
 - On Windows the output folder's own path can be at most 200 characters (the files below it may be longer). A longer one is refused, with the reason under **Save to**; choose a shorter folder such as `C:\FusionExport`.
 - While it exports, the progress text says which design (or "file N" for another file) it is on, before Fusion starts on it: if Fusion stalls, you can see on which item.
 - If the run gets into trouble (5 designs failing in a row, a full disk, the output folder gone), it pauses, shows the reason and the last error, and asks "Try again now?": **OK** carries on, **Cancel** stops. Everything exported so far is kept either way.
@@ -107,7 +108,8 @@ FusionExport/
 ```
 
 - **`.f3d`** opens in Fusion with **Upload** or **File → Open → Open from my computer**.
-- **`.step`** holds the visible bodies, without history. Most CAD programs open it.
+- **`.step`** holds the visible bodies, without history. Almost any CAD program opens it, while the `.f3d` opens only in Fusion, and for an assembly the `.step` is the file that holds the geometry of all its linked parts. It is on by default; keep it unless you only ever need Fusion. Without it (the dialog's STEP box unticked, or `--no-step`) each design is saved as `.f3d` only: the report shows "STEP not requested" on those rows and the summary says "STEP files were not requested for this export." Exporting into the same folder with STEP on again exports those designs to add their STEP files; exporting with it off into a folder that has them changes and deletes nothing.
+- If Fusion cannot write a design's STEP, its `.f3d` is still saved, with the warning "Saved, but Fusion could not write its STEP file" (counted under warnings); the next export into the folder tries the STEP again.
 - **Names are the real ones**, in any language. Only characters Windows or macOS cannot store are replaced, and a name is cut at 100 characters (64 on Windows). A short `~1a2b` suffix is added only when two items in one folder would get the same name. There is no limit on how deep the folders go.
 - **Windows paths over 260 characters:** deep folders can still make a full path longer than that. Such files are saved, but Explorer and some programs cannot open them; the summary and `index.html` say how many. A short output folder such as `C:\FusionExport` avoids it. The output folder itself may be at most 200 characters on Windows; a longer one is refused (in the dialog and on the command line) with that reason.
 - Exported files carry the design's modified date, so sorting by date means something.
@@ -198,7 +200,7 @@ python3 scripts/autorun.py stop ~/FusionExport                           # pause
 ```
 
 - Project ids, and each file's folder ids, are in `inventory.json`. A folder id also works for a folder whose name contains `/`.
-- `--designs-only` leaves the other files out. `--limit N` stops after exporting N designs in this run, for a small trial: designs already up to date and other files do not count, and the other files in every folder visited up to then (the rest of the folder where the Nth design was exported included) are still saved. `--drawings` does nothing any more (drawing export was removed because it can crash Fusion); it only says so.
+- `--designs-only` leaves the other files out. `--no-step` saves each design as `.f3d` only, without its STEP (by default both). `--limit N` stops after exporting N designs in this run, for a small trial: designs already up to date and other files do not count, and the other files in every folder visited up to then (the rest of the folder where the Nth design was exported included) are still saved. `--drawings` does nothing any more (drawing export was removed because it can crash Fusion); it only says so.
 - `status` prints counts only: the last result, the manifest including items still only in `manifest.journal`, warnings, link problems and out-of-date links.
 - The output folder can be anywhere. On Windows its own path can be at most 200 characters (the files below it may be longer); a longer one is refused in one line.
 - If Fusion is closed, the command opens it. The add-in must be switched on in Fusion once (Step 2 above); until it is, the command says what to click and keeps waiting.

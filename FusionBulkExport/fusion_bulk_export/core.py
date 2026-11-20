@@ -591,16 +591,31 @@ def drop_older_files(manifest):
         and any((e.get('id'), info.get('path')) in newest for info in e.get('files') or []))]
 
 
+# A design entry's "step": absent when its STEP was written; STEP_OFF when the run did not ask for
+# one; STEP_FAILED when Fusion would not write it (the .f3d stands; step_error says why).
+STEP_OFF, STEP_FAILED = 'off', 'failed'
+STEP_NOT_REQUESTED = 'STEP not requested'
+STEP_FAILED_WARNING = 'Saved, but Fusion could not write its STEP file'
+STEP_OFF_NOTE = 'STEP files were not requested for this export.'
+
+
+def has_step(entry):
+    """Whether a design entry is meant to record a STEP file (see STEP_OFF, STEP_FAILED)."""
+    return entry.get('step') not in (STEP_OFF, STEP_FAILED)
+
+
 def complete(entry):
     """Whether a finished entry records the files its kind needs: another file one file; a
-    design its archive and its STEP, plus at most a copy with linked parts. By role, and for entries
-    written before roles existed by extension (checks.file_role), in any order."""
+    design its archive and its STEP (none when it was not requested or Fusion would not write
+    it), plus at most a copy with linked parts. By role, and for entries written before roles
+    existed by extension (checks.file_role), in any order."""
     files = entry.get('files') or []
     if entry.get('kind') == 'file':
         return len(files) == 1
     roles = [checks.file_role(info) for info in files]
-    return (roles.count(ROLE_ARCHIVE) == 1 and roles.count(ROLE_STEP) == 1
-            and roles.count(ROLE_LINKED) <= 1 and len(roles) == 2 + roles.count(ROLE_LINKED))
+    steps = 1 if has_step(entry) else 0
+    return (roles.count(ROLE_ARCHIVE) == 1 and roles.count(ROLE_STEP) == steps
+            and roles.count(ROLE_LINKED) <= 1 and len(roles) == 1 + steps + roles.count(ROLE_LINKED))
 
 
 def link_paths(manifest):
@@ -784,6 +799,8 @@ class Exporter:
         self.clock = time.monotonic
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.other_files = True
+        # Also write each design's STEP (the dialog's box, the job's "step"); set by run().
+        self.step = True
         # Testing only, off (None) by default: the recipe (LINK_RECIPES) for the experimental
         # second archive of an assembly with its linked parts included (FusionAdapter.linked_copy).
         # Set by run() from LINKED_COPIES_ENV or the job's "experiment_linked_copies".
@@ -854,6 +871,8 @@ class Exporter:
         self.refreshed = False
         if entry.get('status') != 'done' or not complete(entry):
             return False
+        if self.step and entry.get('kind') != 'file' and not has_step(entry):
+            return False  # its STEP is wanted now (not requested then, or Fusion would not write it)
         copy = entry.get('linked_copy') or {}
         if self.linked_copies and copy.get('retry'):
             return False  # the experimental copy was left out for now (the design was open)
@@ -1028,7 +1047,7 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True, linked_copies=None):
+            on_trouble=None, other_files=True, linked_copies=None, step=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
@@ -1054,6 +1073,11 @@ class Exporter:
         other_files: also save the files that are not designs (PDFs, uploads) as Fusion hands
         them out; when false they are skipped as "Not a Fusion design".
 
+        step: also write each design's STEP (on by default). Off, a design gets its .f3d only and
+        its entry records step: "off"; a later run with it on re-exports those designs to add the
+        STEP. A design exported with its STEP stays up to date in a run with it off (nothing is
+        deleted).
+
         linked_copies: testing only, off by default. None reads LINKED_COPIES_ENV from this
         process's environment; a recipe name or a job's value (link_recipe) switches it on, False
         off. When on, a design with linked components also gets an experimental second archive
@@ -1069,14 +1093,17 @@ class Exporter:
         lock = FolderLock(self.root)
         lock.acquire()
         try:
-            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies)
+            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies,
+                             step)
         finally:
             lock.release()
 
-    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=None):
+    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=None,
+             step=True):
         self.other_files = bool(other_files)
+        self.step = bool(step)
         self.linked_copies = linked_copies_experiment() if linked_copies is None else link_recipe(linked_copies)
-        self.run_info.update(other_files=self.other_files)
+        self.run_info.update(other_files=self.other_files, step=self.step)
         if self.linked_copies:
             self.run_info['experiment_linked_copies'] = self.linked_copies
             self.log('experiment: copies with linked parts on, recipe ' + self.linked_copies)
@@ -1351,7 +1378,8 @@ class Exporter:
             self.log('could not read the links of ' + entry['key'] + ': ' + problems[0])
 
     def export_design(self, hub, project, folders, file, entry, key, owned=()):
-        """Write a design's .f3d and STEP (two attempts); the Trouble that stops the run, or None.
+        """Write a design's .f3d and (when self.step) its STEP (two attempts); the Trouble that stops the
+        run, or None. A STEP Fusion would not write leaves the .f3d done, with a warning.
 
         A design with links (see links()) that fails to open or export gets the plain reason
         link_reason() in error, and Fusion's own message in fusion_error: the usual cause is a
@@ -1361,20 +1389,46 @@ class Exporter:
         for attempt in range(2):
             entry['attempts'] = attempt + 1
             began = self.clock()
-            for fact in ('linked_occurrences', 'linked_copy', 'links_broken'):
-                entry.pop(fact, None)  # an earlier attempt's
+            for fact in ('linked_occurrences', 'linked_copy', 'links_broken', 'step', 'step_error'):
+                entry.pop(fact, None)  # an earlier attempt's (or run's)
             try:
                 stem, facts = self.destination(hub, project, folders, file, owned=owned)
                 entry.update(facts)
                 written = self.export_checked(file, stem, entry)
                 roles = [(path, design_role(path)) for path in written]
-                paths = [path for path, role in roles if role in (ROLE_ARCHIVE, ROLE_STEP)]
+                archives = [path for path, role in roles if role == ROLE_ARCHIVE]
+                steps = [path for path, role in roles if role == ROLE_STEP and self.step]
                 linked = [path for path, role in roles if role == ROLE_LINKED]
                 pictures = [path for path, role in roles if role == ROLE_THUMBNAIL]
                 details = dict(getattr(self.adapter, 'details', None) or {})
-                # Quick checks now: a broken file is retried; an empty STEP is a warning.
-                facts = checks.inline(paths, details.get('visible_solid_bodies'),
-                                      details.get('visible_solid_bodies_distinct'))
+                step_error = details.pop('step_error', None)
+                # Quick checks now: a broken archive is retried; an empty STEP is a warning; a
+                # STEP Fusion would not write (or wrote incomplete) leaves the .f3d standing.
+                facts = checks.inline(archives)
+                if steps:
+                    try:
+                        more = checks.inline(steps, details.get('visible_solid_bodies'),
+                                             details.get('visible_solid_bodies_distinct'))
+                    except checks.BadExport as error:
+                        step_error = str(error)
+                        for path in steps:
+                            try:
+                                os.unlink(long_path(path))
+                            except OSError:
+                                pass
+                        steps = []
+                    else:
+                        facts['step_solids'] = more['step_solids']
+                        facts['warnings'] += more['warnings']
+                elif self.step and step_error is None:
+                    step_error = 'Fusion wrote no STEP file'
+                paths = archives + steps
+                if not self.step:
+                    facts['step'] = STEP_OFF
+                elif step_error is not None:
+                    facts.update(step=STEP_FAILED, step_error=step_error)
+                    facts['warnings'].append(STEP_FAILED_WARNING)
+                    self.log('STEP not written ' + key + ': ' + step_error)
                 linked = self.check_linked(linked, details)
                 # Files get the design's date first, then are recorded with that time.
                 self.set_times(paths + linked + pictures, file)
@@ -1428,10 +1482,11 @@ class Exporter:
         before and after) must be the same; if not, the entry gets account_changed: true, the log
         an error, and self.alarm the Trouble that stops the run. Nothing is ever saved, so this
         should never happen; if it does, the run must not go on."""
-        try:
-            self.adapter.linked_copies = self.linked_copies
-        except AttributeError:
-            pass
+        for name in ('linked_copies', 'step'):
+            try:
+                setattr(self.adapter, name, getattr(self, name))
+            except AttributeError:
+                pass
         before = cloud_state(file)
         try:
             return self.adapter.export(file, stem)

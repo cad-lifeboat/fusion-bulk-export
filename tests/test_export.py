@@ -12,7 +12,7 @@ from unittest.mock import patch
 from types import SimpleNamespace as NS
 
 from tests import fake_adsk as fake
-from fusion_bulk_export import core, names, power
+from fusion_bulk_export import core, names, power, report
 from fusion_bulk_export.core import Exporter, Selection, atomic_write, free_bytes, sanitize, walk
 from fusion_bulk_export.names import clean, fusion_path, long_path
 
@@ -198,7 +198,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(entries['distinct']['warnings'], [])
         self.assertEqual(entries['short']['warnings'], ['STEP has 2 solids, fewer than the 3 distinct ones Fusion showed'])
 
-    def test_truncated_step_or_broken_archive_fails_and_is_retried(self):
+    def test_broken_archive_fails_and_is_retried_a_truncated_step_keeps_the_archive(self):
         for broken in ('step', 'archive'):
             with self.subTest(broken=broken):
                 self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
@@ -217,10 +217,20 @@ class ExportTests(unittest.TestCase):
                 with patch.object(fake.Manager, 'execute', execute):
                     self.run_export(fake.data([file]))
                 entry = self.manifest['entries'][0]
-                self.assertEqual((entry['status'], entry['attempts']), ('failed', 2))
-                self.assertIn('incomplete' if broken == 'step' else 'damaged', entry['error'])
+                if broken == 'archive':
+                    self.assertEqual((entry['status'], entry['attempts']), ('failed', 2))
+                    self.assertIn('damaged', entry['error'])
+                else:
+                    # The .f3d is kept; the incomplete STEP is removed and tried again next run.
+                    self.assertEqual((entry['status'], entry['step']), ('done', 'failed'))
+                    self.assertIn('incomplete', entry['step_error'])
+                    self.assertEqual([f['role'] for f in entry['files']], ['archive'])
+                    self.assertFalse(list(self.root.rglob('*.step')))
                 self.run_export(fake.data([file]))  # a good export next time
-                self.assertEqual(self.manifest['entries'][0]['status'], 'done')
+                entry = self.manifest['entries'][0]
+                self.assertEqual(entry['status'], 'done')
+                self.assertEqual(sorted(f['role'] for f in entry['files']), ['archive', 'step'])
+                self.assertNotIn('step', entry)
 
     def test_visible_solids_count_each_shown_occurrence(self):
         part = fake.component('part', [fake.body(), fake.body(shown=False)])
@@ -286,18 +296,45 @@ class ExportTests(unittest.TestCase):
             Exporter(self.root, self.adapter)
         self.assertEqual(manifest.read_text(encoding='utf-8'), '{incomplete')
 
-    def test_step_failure_does_not_mark_archive_done(self):
-        file = fake.File()
-        original = fake.Manager.execute
-        def execute(manager, path):
-            return False if path.endswith('.step') else original(manager, path)
-        with patch.object(fake.Manager, 'execute', execute):
-            self.run_export(fake.data([file]))
-        entry = self.manifest['entries'][0]
-        self.assertEqual(entry['status'], 'failed')
-        self.assertEqual(entry['files'], [])
-        self.assertIn('STEP', entry['error'])
-        self.assertTrue(all(doc.closed for doc in file.documents))
+    def test_a_step_fusion_will_not_write_keeps_the_archive_with_a_warning(self):
+        # Earlier versions failed the whole design and threw its .f3d away.
+        for how in ('false', 'raises', 'no file'):
+            with self.subTest(how=how):
+                self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
+                self.addCleanup(self.temp.cleanup)
+                self.root = Path(self.temp.name).resolve()
+                file = fake.File()
+                original = fake.Manager.execute
+
+                def execute(manager, path):
+                    if not path.endswith('.step'):
+                        return original(manager, path)
+                    if how == 'raises':
+                        raise RuntimeError('3 : STEP translator failed')
+                    return how == 'no file'
+                with patch.object(fake.Manager, 'execute', execute):
+                    _, counts = self.run_export(fake.data([file]))
+                entry = self.manifest['entries'][0]
+                self.assertEqual((entry['status'], entry['step'], entry['attempts']), ('done', 'failed', 1))
+                self.assertEqual([f['role'] for f in entry['files']], ['archive'])
+                self.assertTrue((self.root / entry['files'][0]['path']).is_file())
+                self.assertIn(core.STEP_FAILED_WARNING, entry['warnings'])
+                self.assertEqual({'false': 'STEP export returned false', 'raises': '3 : STEP translator failed',
+                                  'no file': 'Fusion reported a successful STEP export but wrote no file'}[how],
+                                 entry['step_error'])
+                self.assertEqual((counts['exported'], counts['failed']), (1, 0))
+                self.assertTrue(all(doc.closed for doc in file.documents))
+                self.assertFalse(list(self.root.rglob('*.step')))
+                page = report.render_html(self.manifest, None, counts)
+                self.assertIn('Warning: Saved, but Fusion could not write its STEP file', page)
+                self.assertEqual(report.warned(self.manifest), 1)
+                # Not up to date: the next run tries again and adds the STEP.
+                self.run_export(fake.data([file]))
+                entry = self.manifest['entries'][0]
+                self.assertEqual(file.calls, 2)
+                self.assertEqual(sorted(f['role'] for f in entry['files']), ['archive', 'step'])
+                self.assertEqual(entry['warnings'], [])
+                self.assertNotIn('step_error', entry)
 
     def test_resume_and_corrupt_or_missing_files(self):
         file = fake.File()

@@ -739,7 +739,7 @@ class UItests(UIBase):
         self.page(command, 'selection', {'project-2': None})
         command.execute.handlers[0].notify(None)
         self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8')),
-                         dict(output=self.temp.name, mode='Choose projects or folders', other_files=True))
+                         dict(output=self.temp.name, mode='Choose projects or folders', other_files=True, step=True))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
         self.assertTrue(inputs.find('fbx_tree').isVisible)
@@ -763,6 +763,46 @@ class UItests(UIBase):
         self.assertEqual(len(spec.downloads), 1)  # not saved with the box off
         self.assertEqual(self.results()[1]['rows'], [['Exported now', 0], ['Already up to date', 1], ['Skipped', 1]])
         self.assertFalse(self.open_dialog().commandInputs.find('fbx_files').value)
+
+    def test_step_checkbox_is_on_by_default_with_a_note_when_off_and_remembered(self):
+        from fusion_bulk_export import picker
+        part = fake.File('Part', 'part')
+        self.app.data = fake.data([part])
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        box, note = inputs.find('fbx_step'), inputs.find('fbx_step_note')
+        self.assertEqual(box.name, 'Also save a STEP file for each design')
+        self.assertLessEqual(len(box.name), 40)
+        self.assertTrue(box.value)
+        self.assertIn('opens only in Fusion', box.tooltip)
+        self.assertEqual((note.text, note.isVisible, note.isFullWidth), (picker.STEP_OFF_NOTE, False, True))
+        self.assertEqual(note.text, 'Without STEP you get only .f3d files, which open only in Fusion.')
+        box.value = False
+        self.change(command, box)
+        self.assertTrue(note.isVisible)
+        command.execute.handlers[0].notify(None)
+        self.assertIs(json.loads(self.settings.read_text(encoding='utf-8'))['step'], False)
+        self.assertEqual(sorted(p.suffix for p in Path(self.temp.name).rglob('Part v3.*')), ['.f3d', '.png'])
+        self.assertIn('STEP files were not requested for this export.', self.results()[1]['notes'])
+        command = self.open_dialog()
+        box = command.commandInputs.find('fbx_step')
+        self.assertFalse(box.value)
+        self.assertTrue(command.commandInputs.find('fbx_step_note').isVisible)
+        box.value = True
+        self.change(command, box)
+        self.assertFalse(command.commandInputs.find('fbx_step_note').isVisible)
+        command.execute.handlers[0].notify(None)
+        self.assertTrue(list(Path(self.temp.name).rglob('Part v3.step')))
+
+    def test_an_entry_file_that_does_not_pass_step_uses_the_remembered_choice(self):
+        from fusion_bulk_export import command as package
+        part = fake.File('Part', 'part')
+        self.app.data = fake.data([part])
+        self.open_dialog()
+        picker = self.module._picker
+        self.settings.write_text(json.dumps(dict(output=self.temp.name, step=False)))
+        package.export(self.app, picker.selection(), picker.output, show=lambda data: None, other_files=True)
+        self.assertFalse(list(Path(self.temp.name).rglob('*.step')))
 
     def test_no_linked_parts_checkbox_and_no_link_removed_from_the_dialog(self):
         # The copies with linked parts are a testing-only experiment (LINKED_COPIES_ENV): the dialog
@@ -956,7 +996,8 @@ class FriendlyErrorTests(UIBase):
         self.assertGreaterEqual(command.sizes['minimum'][0], 360)
         # The tree comes last: nothing but tree rows can be pushed below the fold.
         order = [control.id for control in inputs.added]
-        self.assertEqual(order, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_mode',
+        self.assertEqual(order, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_step', 'fbx_step_note',
+                                 'fbx_files', 'fbx_mode',
                                  'fbx_tip', 'fbx_summary', 'fbx_tree'])
 
     def test_long_output_folder_is_shown_with_its_middle_cut(self):
@@ -1165,13 +1206,14 @@ class TreeLayoutContractTests(UIBase):
         command = self.open_dialog()
         self.choose(command)
         shown = [control.id for control in command.commandInputs.added if control.isVisible]
-        self.assertEqual(shown, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_mode',
-                                 'fbx_summary', 'fbx_tree'])
+        self.assertEqual(shown, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_step', 'fbx_files',
+                                 'fbx_mode', 'fbx_summary', 'fbx_tree'])
         width, height = picker.DIALOG_SIZE
         self.assertLessEqual(height, 1080 - 200)  # menu bar, dock or taskbar, title bar, margins
         # Rows above the tree at about 30 units each, the OK/Cancel row about 60: the tree's
         # minimum still fits in the first size.
-        self.assertLessEqual((len(shown) - 1) * 30 + picker.TREE_MIN_HEIGHT + 60, height)
+        # Also with the STEP box unticked, when its note shows too.
+        self.assertLessEqual(len(shown) * 30 + picker.TREE_MIN_HEIGHT + 60, height)
         self.assertLessEqual(picker.DIALOG_MINIMUM[1], height)
 
 

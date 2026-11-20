@@ -19,6 +19,7 @@ spec.loader.exec_module(screens)
 class ScreensTests(unittest.TestCase):
     def test_dialog_words_match_the_add_in(self):
         self.assertEqual(screens.OTHER_FILES, picker.OTHER_FILES)
+        self.assertEqual(screens.STEP, picker.STEP)
         self.assertFalse(hasattr(screens, 'DRAWINGS'))  # drawing export was removed
         self.assertEqual(screens.CHOOSE, picker.CHOOSE)
         self.assertTrue(screens.VERSION.startswith('Fusion Bulk Export '))

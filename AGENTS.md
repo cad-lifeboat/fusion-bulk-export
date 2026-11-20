@@ -88,6 +88,8 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
    - Only part of the account: `--project ID` for whole projects, `--folder ID:Folder/Sub`
      or `--folder ID:id=FOLDER_ID` (ids from `folder_ids` in `inventory.json`) for single
      folders with their subfolders; both repeat. `--designs-only` leaves out the other files.
+     Do not pass `--no-step` unless the person asks for it: without the `.step` an assembly's
+     full geometry and anything readable outside Fusion are missing.
      Do not pass `--drawings`: drawing export was removed (it can crash Fusion), and the flag
      only prints a line saying so.
    - Progress: `python3 scripts/autorun.py status OUT` (counts only, including items still

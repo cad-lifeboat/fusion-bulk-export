@@ -41,7 +41,9 @@ Startup first, then switch Run on, as above.
 Open the Utilities tab and click Fusion Bulk Export (the orange cube in the
 ADD-INS group). Check "Save to" (Browse... picks another folder; it is remembered),
 choose Everything or tick projects and folders, and click Export. "Also save other
-files (PDFs, uploads)" is on by default. Fusion cannot be used while it exports:
+files (PDFs, uploads)" is on by default, and so is "Also save a STEP file for each
+design": keep it, since a STEP opens in almost any CAD program and an .f3d only in
+Fusion. Fusion cannot be used while it exports:
 leave it open and signed in until the summary appears. It gives the counts and the
 paths of the output folder and of index.html, a report of everything saved and
 anything that failed. Drawings and electronics are counted as "can't be exported

@@ -220,6 +220,20 @@ class AutorunTests(unittest.TestCase):
             result = self.run_with()
         self.assertEqual((result['counts']['linked_copies'], result['experiment_linked_copies']), (1, 'both'))
 
+    def test_a_job_without_step(self):
+        result = self.run_with(step=False)
+        self.assertEqual(result['errors'], [])
+        self.assertIs(result['step'], False)
+        self.assertGreater(result['counts']['exported'], 0)
+        self.assertFalse(list(self.output.rglob('*.step')))
+        manifest = json.loads((self.output / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertTrue(all(e['step'] == 'off' for e in manifest['entries'] if e.get('kind') != 'file'))
+        result = self.run_with(step='no')
+        self.assertIn('step must be true or false', result['errors'][0]['error'])
+        result = self.run_with()  # the default adds every STEP
+        self.assertIs(result['step'], True)
+        self.assertTrue(list(self.output.rglob('*.step')))
+
     def test_designs_only(self):
         result = self.run_with(designs_only=True)
         self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=0, files_up_to_date=0, skipped=1, unsupported=0, failed=0, linked_copies=0))
