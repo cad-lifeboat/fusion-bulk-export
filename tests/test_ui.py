@@ -141,6 +141,14 @@ class UItests(UIBase):
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.exported(), ['deep', 'other', 'root', 'second', 'top'])
 
+    def test_dialog_shows_the_version(self):
+        manifest = json.loads((Path(__file__).resolve().parents[1] / 'FusionBulkExport' /
+                               'FusionBulkExport.manifest').read_text())
+        inputs = self.open_dialog().commandInputs
+        self.assertEqual(inputs.find('fbx_version').text, 'Fusion Bulk Export ' + manifest['version'])
+        from fusion_bulk_export.picker import version
+        self.assertIsNone(version(Path(self.temp.name) / 'missing.manifest'))
+
     def test_tree_lists_hubs_projects_and_folders_on_demand(self):
         self.picker_data()
         command = self.open_dialog()

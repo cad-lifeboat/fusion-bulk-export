@@ -16,6 +16,19 @@ OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion 
 TREE_HTML = Path(__file__).resolve().parent.parent / 'ui' / 'tree.html'
 
 
+MANIFEST = Path(__file__).resolve().parent.parent / 'FusionBulkExport.manifest'
+
+
+def version(manifest=MANIFEST):
+    """The add-in's version from its manifest (what Fusion's add-in list shows), or None."""
+    try:
+        with open(str(manifest), encoding='utf-8') as stream:
+            value = json.loads(stream.read()).get('version')
+        return str(value) if value else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def folder_id(folder):
     identity = getattr(folder, 'id', None)
     return None if identity is None else str(identity)
@@ -36,6 +49,9 @@ class Picker:
         self.projects = {}
         self.chosen = {}
         remembered = settings.load()
+        number = version()
+        self.version = inputs.addTextBoxCommandInput(
+            'fbx_version', '', 'Fusion Bulk Export' + (' ' + number if number else ''), 1, True)
         # Output folder: remembered, else the first-use suggestion (created when the export starts).
         self.output = remembered.get('output') or settings.default_output()
         self.folder = inputs.addTextBoxCommandInput('fbx_folder', 'Save to', self.output, 2, True)
