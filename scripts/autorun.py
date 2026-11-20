@@ -213,6 +213,14 @@ def summary(output):
         warned = sum(1 for e in entries if e.get('status') == 'done' and e.get('warnings'))
         if warned:
             lines.append('Warnings: %d item(s) exported with a warning (see the report)' % warned)
+        designs = [e for e in entries if (e.get('kind') or 'design') == 'design']
+        broken = sum(1 for e in designs if e.get('status') == 'failed' and e.get('fusion_error') is not None)
+        if broken:
+            lines.append('Links: %d design(s) failed with a linked design missing or not opening (see the report)'
+                         % broken)
+        stale = sum(1 for e in designs if e.get('references_out_of_date'))
+        if stale:
+            lines.append('Note: %d design(s) with out-of-date links (exported as they are, not a failure)' % stale)
     log = output / 'autorun.log'
     if log.is_file():
         # Only known counter lines: error lines can carry project or design names.

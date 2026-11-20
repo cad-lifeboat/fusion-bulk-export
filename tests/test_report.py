@@ -146,3 +146,34 @@ class ReportTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LinkReportTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        broken = entry('Assembly', 'failed', 'A linked design is missing or cannot be opened (2 links).')
+        broken.update(has_references=True, references=[dict(id='a'), dict(id='b')], fusion_error='5 : not resolved')
+        stale = entry('Older', 'done', files=['Hub/Proj/Older v2.f3d', 'Hub/Proj/Older v2.step'])
+        stale.update(has_references=True, references_out_of_date=True, references=[dict(id='c')])
+        self.manifest = dict(entries=[broken, stale, entry('Plain', 'done', files=['Hub/Proj/Plain v2.f3d'])])
+        self.run_info = dict(finished='t', cancelled=False, stopped_reason=None, discovery_errors=[])
+
+    def test_summary_and_report_name_the_link_problem(self):
+        counts = dict(exported=2, up_to_date=0, files=0, skipped=0, failed=1)
+        text = report.summary_text(counts, self.run_info, self.manifest, '/out')
+        self.assertIn('- Assembly: A linked design is missing or cannot be opened (2 links).', text)
+        self.assertNotIn('not resolved', text)  # Fusion's own text is in the report, not the summary
+        self.assertIn('Note: 1 design(s) with out-of-date links', text)
+        page = report.render_html(self.manifest, self.run_info, counts)
+        self.assertIn('Fusion said: 5 : not resolved', page)
+        self.assertIn('fix its links', page)
+        self.assertIn('1 with out-of-date links (a note, not a failure)', page)
+        self.assertIn('Note: Some of its links are out of date', page)
+        rows = list(csv.DictReader(io.StringIO(report.render_csv(self.manifest, self.run_info))))
+        by_name = {row['design']: row for row in rows}
+        self.assertEqual((by_name['Assembly']['has_links'], by_name['Assembly']['links'],
+                          by_name['Assembly']['fusion_error']), ('yes', '2', '5 : not resolved'))
+        self.assertEqual(by_name['Older']['links_out_of_date'], 'yes')
+        self.assertEqual((by_name['Plain']['has_links'], by_name['Plain']['links']), ('', ''))

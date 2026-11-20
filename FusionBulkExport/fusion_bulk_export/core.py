@@ -340,6 +340,28 @@ def design_time(value, now=None):
     return seconds if EARLIEST_DATE <= seconds <= latest else None
 
 
+def reference_facts(file):
+    """has_references and references_out_of_date of a cloud file: DataFile properties
+    (hasChildReferences, hasOutofDateChildReferences), read where they are, without listing
+    anything. A property this Fusion lacks, or one that cannot be read, is None (unknown)."""
+    facts = {}
+    for key, member in (('has_references', 'hasChildReferences'),
+                        ('references_out_of_date', 'hasOutofDateChildReferences')):
+        try:
+            value = getattr(file, member, None)
+            facts[key] = None if value is None else bool(value)
+        except Exception:
+            facts[key] = None
+    return facts
+
+
+def link_reason(count):
+    """The plain failure reason of a design with links that could not be opened or exported."""
+    if count:
+        return 'A linked design is missing or cannot be opened (%d link%s).' % (count, '' if count == 1 else 's')
+    return 'A linked design is missing or cannot be opened.'
+
+
 class Trouble(Exception):
     """A problem that stops the whole run (not just one design)."""
     def __init__(self, code, reason, error=None):
@@ -841,13 +863,31 @@ class Exporter:
         self.record(entry)
         return entry['status']
 
+    def links(self, file, entry):
+        """Record a design's links on its entry: references (the linked designs, by id and name),
+        has_references and references_out_of_date. Read from the cloud file in hand, never by
+        opening anything; reading them never stops an export (unknown is None)."""
+        entry.update(reference_facts(file))
+        if hasattr(self.adapter, 'references'):
+            try:
+                entry['references'] = self.adapter.references(file)
+            except Exception as error:
+                entry['references'] = None
+                self.log('could not list the links of ' + entry['key'] + ': ' + type(error).__name__)
+        if entry.get('references') and entry.get('has_references') is None:
+            entry['has_references'] = True
+
     def export_design(self, hub, project, folders, file, entry, key, owned=()):
-        """Write a design's .f3d and STEP (two attempts); the Trouble that stops the run, or None."""
+        """Write a design's .f3d and STEP (two attempts); the Trouble that stops the run, or None.
+
+        A design with links (see links()) that fails to open or export gets the plain reason
+        link_reason() in error, and Fusion's own message in fusion_error: the usual cause is a
+        linked design that was deleted, moved or cannot be read. The export is attempted as
+        for any design; only the reason differs."""
+        self.links(file, entry)
         for attempt in range(2):
             entry['attempts'] = attempt + 1
             try:
-                if hasattr(self.adapter, 'references'):
-                    entry['references'] = self.adapter.references(file)
                 stem, facts = self.destination(hub, project, folders, file, owned=owned)
                 entry.update(facts)
                 written = self.adapter.export(file, stem)
@@ -866,22 +906,27 @@ class Exporter:
                 entry.update(details)
                 entry.update(facts)
                 entry.update(status='done', error=None)
+                entry.pop('fusion_error', None)
                 self.mark_long_path(entry)
                 return None
             except NonDesign as error:
                 if self.error_callback:
                     self.error_callback(key, error)
                 entry.update(status='skipped', error=str(error))
+                entry.pop('fusion_error', None)
                 return None
             except Exception as error:
                 if self.error_callback:
                     self.error_callback(key, error)
                 entry.update(status='failed', error=str(error), files=[])
+                entry.pop('fusion_error', None)
                 self.last_error = str(error)
                 self.log('attempt failed ' + key + ': ' + str(error))
                 trouble = self.trouble(error)
                 if trouble is not None:
                     return trouble  # a second attempt cannot succeed either
+                if entry.get('has_references') and not isinstance(error, (OpenInFusion, ValueError)):
+                    entry.update(error=link_reason(len(entry.get('references') or [])), fusion_error=str(error))
         return None
 
     def save_file(self, hub, project, folders, file, entry, entries, owned=()):
@@ -918,6 +963,11 @@ class Exporter:
 
 class NonDesign(Exception):
     """A file opened successfully but contains no Fusion Design product."""
+
+
+class OpenInFusion(RuntimeError):
+    """The design (or drawing) is open in Fusion in a way that stops its export (unsaved edits,
+    another version); the message says what to do. Not a link problem."""
 
 
 class NotSaved(Exception):

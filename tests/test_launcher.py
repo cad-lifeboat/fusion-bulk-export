@@ -84,6 +84,19 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('Stopped by itself (output_missing)', text)
         self.assertIn('10 bytes', text)
 
+    def test_status_counts_link_problems_without_names(self):
+        out = self.root / 'out'
+        out.mkdir()
+        (out / 'manifest.json').write_text(json.dumps(dict(entries=[
+            dict(name='Secret Assembly', status='failed', files=[], has_references=True,
+                 error='A linked design is missing or cannot be opened (1 link).', fusion_error='Secret link'),
+            dict(name='Secret Older', status='done', files=[], references_out_of_date=True),
+            dict(name='Secret Fine', status='done', files=[], references_out_of_date=False)])))
+        text = '\n'.join(launcher.summary(out))
+        self.assertIn('Links: 1 design(s) failed with a linked design missing or not opening', text)
+        self.assertIn('Note: 1 design(s) with out-of-date links', text)
+        self.assertNotIn('Secret', text)
+
     def test_check_command_runs_without_fusion(self):
         out = self.root / 'out'
         out.mkdir()

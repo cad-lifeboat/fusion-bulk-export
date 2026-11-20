@@ -58,10 +58,24 @@ class AutorunTests(unittest.TestCase):
 
     def test_inventory_opens_nothing(self):
         result = self.run_with(mode='inventory')
-        self.assertEqual(result['counts'], dict(hubs=1, projects=2, files=4, designs=3, unreadable=0))
+        self.assertEqual(result['counts'], dict(hubs=1, projects=2, files=4, designs=3, links_out_of_date=0,
+                                                unreadable=0))
         listing = json.loads((self.output / 'inventory.json').read_text())
-        self.assertEqual(len(listing['hubs']['hub-1']['projects']['project-1']['files']), 3)
+        files = listing['hubs']['hub-1']['projects']['project-1']['files']
+        self.assertEqual(len(files), 3)
+        self.assertEqual((files[0]['has_references'], files[0]['references_out_of_date']), (False, False))
+        self.assertNotIn('has_references', files[2])  # a drawing: only designs have links listed
         self.assertTrue(all(file.calls == 0 for file in self.files))
+
+    def test_inventory_lists_out_of_date_links_without_opening(self):
+        linked = fake.File('Linked', 'linked', references=1)
+        linked.hasOutofDateChildReferences = True
+        self.data.dataHubs.item(0).dataProjects.item(1).rootFolder.dataFiles.items.append(linked)
+        result = self.run_with(mode='inventory')
+        self.assertEqual(result['counts']['links_out_of_date'], 1)
+        files = json.loads((self.output / 'inventory.json').read_text())['hubs']['hub-1']['projects']['project-2']['files']
+        self.assertEqual((files[1]['has_references'], files[1]['references_out_of_date']), (True, True))
+        self.assertEqual(linked.calls, 0)
 
     def test_inventory_logs_each_project_saves_as_it_goes_and_stops(self):
         result = self.run_with(mode='inventory')

@@ -27,6 +27,11 @@ class File:
                   for n in range(int(references))]
         self.childReferences = Collection(*linked)
         self.references, self.design = references, design
+        # DataFile.hasChildReferences / hasOutofDateChildReferences: plain properties.
+        self.hasChildReferences = bool(linked)
+        self.hasOutofDateChildReferences = False
+        # Set to a message: Documents.open raises it, as when a linked design is missing.
+        self.open_error = None
         self.step_solids = 1  # solids in the STEP the synthetic exporter writes
         # DataFile.thumbnail: a DataObjectFuture, finished here (see thumbnail()).
         self.thumbnail = thumbnail()
@@ -248,11 +253,17 @@ class Documents(Collection):
     def open(self, file, visible):
         assert visible is False
         file.calls += 1
+        if file.open_error:
+            raise RuntimeError(file.open_error)
         for open_ in self.items:
             if open_.dataFile is not None and open_.dataFile.id == file.id:
                 return open_
         document = self.opened(file)
-        for linked in collection_items(file.childReferences):
+        try:
+            links = collection_items(file.childReferences)
+        except Exception:
+            links = []  # a file whose links cannot be listed through DataFile still opens
+        for linked in links:
             if not any(open_.dataFile is not None and open_.dataFile.id == linked.id for open_ in self.items):
                 self.opened(linked)
         return document

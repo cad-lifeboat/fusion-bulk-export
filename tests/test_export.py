@@ -851,6 +851,84 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(file.calls, 0)
         self.assertEqual(self.manifest['entries'][0]['status'], 'done')
 
+    def test_links_recorded_while_exporting(self):
+        plain, assembly = fake.File('Plain', 'plain'), fake.File('Assembly', 'assembly', references=2)
+        assembly.hasOutofDateChildReferences = True
+        _, counts = self.run_export(fake.data([plain, assembly]))
+        self.assertEqual(counts['exported'], 2)
+        entries = {e['id']: e for e in self.manifest['entries']}
+        self.assertEqual((entries['plain']['has_references'], entries['plain']['references_out_of_date']),
+                         (False, False))
+        self.assertEqual((entries['assembly']['has_references'], entries['assembly']['references_out_of_date']),
+                         (True, True))
+        self.assertNotIn('fusion_error', entries['assembly'])
+
+    def test_missing_link_fails_with_a_plain_reason_and_keeps_fusions_text(self):
+        assembly = fake.File('Assembly', 'assembly', references=2)
+        assembly.open_error = '5 : Reference not resolved'
+        _, counts = self.run_export(fake.data([assembly]))
+        self.assertEqual(counts['failed'], 1)
+        entry = self.manifest['entries'][0]
+        self.assertEqual(entry['error'], 'A linked design is missing or cannot be opened (2 links).')
+        self.assertEqual(entry['fusion_error'], '5 : Reference not resolved')
+        self.assertEqual(entry['attempts'], 2)  # still attempted as usual
+        self.assertEqual(assembly.calls, 2)
+        # Fixed in Fusion: the next run exports it and the link reason goes.
+        assembly.open_error = None
+        self.run_export(fake.data([assembly]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual((entry['status'], entry['error']), ('done', None))
+        self.assertNotIn('fusion_error', entry)
+
+    def test_design_without_links_keeps_fusions_error(self):
+        part = fake.File('Part', 'part')
+        part.open_error = 'Synthetic open failure'
+        self.run_export(fake.data([part]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual(entry['error'], 'Synthetic open failure')
+        self.assertNotIn('fusion_error', entry)
+
+    def test_open_with_edits_is_not_called_a_link_problem(self):
+        assembly = fake.File('Assembly', 'assembly', references=1)
+        mine = fake.Document(assembly, self.app.documents)
+        mine.isModified = True
+        self.app.documents.items.append(mine)
+        self.run_export(fake.data([assembly]))
+        self.assertIn('unsaved changes', self.manifest['entries'][0]['error'])
+
+    def test_link_facts_read_defensively(self):
+        class Unreadable(fake.File):
+            @property
+            def hasOutofDateChildReferences(self):
+                raise RuntimeError('2 : not available')
+
+            @hasOutofDateChildReferences.setter
+            def hasOutofDateChildReferences(self, value):
+                pass
+
+            @property
+            def childReferences(self):
+                raise RuntimeError('3 : cannot list')
+
+            @childReferences.setter
+            def childReferences(self, value):
+                pass
+        odd = Unreadable('Odd', 'odd')
+        del odd.hasChildReferences  # an older Fusion without the property
+        _, counts = self.run_export(fake.data([odd]))
+        self.assertEqual(counts['exported'], 1)  # reading links never stops an export
+        entry = self.manifest['entries'][0]
+        self.assertEqual((entry['has_references'], entry['references_out_of_date'], entry['references']),
+                         (None, None, None))
+        odd.open_error = 'Synthetic open failure'
+        self.root = Path(tempfile.mkdtemp(dir=self.temp.name))
+        self.run_export(fake.data([odd]))
+        self.assertEqual(self.manifest['entries'][0]['error'], 'Synthetic open failure')
+
+    def test_link_reason_counts(self):
+        self.assertEqual(core.link_reason(1), 'A linked design is missing or cannot be opened (1 link).')
+        self.assertEqual(core.link_reason(0), 'A linked design is missing or cannot be opened.')
+
     def test_linked_documents_opened_by_an_assembly_are_closed(self):
         user = fake.Document(fake.File('Mine', 'user-file'), self.app.documents)
         self.app.documents.items.append(user)

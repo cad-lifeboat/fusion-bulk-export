@@ -17,6 +17,9 @@ from .names import long_path
 
 ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'warning': 3, 'done': 4}
 LABEL = {'failed': 'Failed', 'unreadable': 'Not read', 'skipped': 'Skipped', 'done': 'Exported'}
+LINKS_OUT_OF_DATE = ('Some of its links are out of date: a linked design has a newer version than this design '
+                     'uses. The export holds the versions it uses; open it in Fusion and update its links '
+                     'if you want the newer ones.')
 WARNING_STEP = ('The .f3d archive is the complete copy; open the design in Fusion if you need the STEP '
                 'to hold every body.')
 
@@ -46,6 +49,9 @@ def next_step(status, error):
         return 'Save or close this design in Fusion, then export again.'
     if 'disk is full' in text or 'no space' in text:
         return 'Free some disk space, then export again.'
+    if 'linked design is missing' in text:
+        return ('Open the design in Fusion and fix its links (a linked design was deleted, moved or cannot be '
+                'read), then export again. The linked designs themselves are exported in their own right.')
     return 'Export again to retry; if it keeps failing, open the design in Fusion to check it.'
 
 
@@ -57,19 +63,23 @@ def items(manifest, run_info=None):
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
         warnings = [str(w) for w in entry.get('warnings') or []] if status == 'done' else []
         picture = (entry.get('thumbnail') or {}).get('path') if status == 'done' else None
+        links = entry.get('references')
         result.append(dict(status=status, kind='file' if entry.get('kind') == 'file' else 'design',
                            hub=entry.get('hub') or '', project=entry.get('project') or '',
                            folder='/'.join(entry.get('path') or []), name=entry.get('name') or '',
                            version=entry.get('version'), files=files, reason=entry.get('error') or '',
                            next_step=WARNING_STEP if warnings else next_step(status, entry.get('error')),
-                           warnings=warnings, thumbnail=picture or ''))
+                           warnings=warnings, thumbnail=picture or '',
+                           has_links=entry.get('has_references'), links=len(links) if links else 0,
+                           links_out_of_date=bool(entry.get('references_out_of_date')),
+                           fusion_error=entry.get('fusion_error') or ''))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
                            project=where[1] if len(where) > 1 else '', folder='/'.join(where[2:]),
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
                            next_step=next_step('unreadable', problem.get('error')), warnings=[],
-                           thumbnail=''))
+                           thumbnail='', has_links=None, links=0, links_out_of_date=False, fusion_error=''))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
@@ -125,6 +135,10 @@ def table_html(rows, heading, column):
         why = esc(row['reason'])
         for warning in row['warnings']:
             why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(warning) + '</span>'
+        if row['fusion_error']:
+            why += ('<br>' if why else '') + '<span class="muted">Fusion said: ' + esc(row['fusion_error']) + '</span>'
+        if row['links_out_of_date']:
+            why += ('<br>' if why else '') + '<span class="muted">Note: ' + esc(LINKS_OUT_OF_DATE) + '</span>'
         if row['next_step']:
             why += ('<br>' if why else '') + '<span class="muted">' + esc(row['next_step']) + '</span>'
         label = LABEL.get(row['status'], row['status'] or '')
@@ -165,6 +179,9 @@ def render_html(manifest, run_info, counts):
     if others:
         saved = sum(1 for row in others if row['status'] == 'done')
         line += '; %d other files saved, %d not saved' % (saved, len(others) - saved)
+    stale = links_out_of_date(manifest)
+    if stale:
+        line += '; %d with out-of-date links (a note, not a failure)' % stale
     out.append('<div class="muted">%s.</div>' % esc(line))
     long_paths = long_path_count(manifest)
     if long_paths:
@@ -180,7 +197,8 @@ def render_csv(manifest, run_info):
     stream = io.StringIO()
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
-                     'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file'])
+                     'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
+                     'links_out_of_date', 'fusion_error'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '') if design else ''
@@ -188,8 +206,15 @@ def render_csv(manifest, run_info):
         writer.writerow([row['status'], row['hub'], row['project'], row['folder'], row['name'],
                          '' if row['version'] is None else row['version'], archive, step, row['reason'],
                          row['next_step'], '; '.join(row['warnings']), row['thumbnail'], row['kind'],
-                         '' if design else (row['files'][0] if row['files'] else '')])
+                         '' if design else (row['files'][0] if row['files'] else ''),
+                         yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
+                         row['fusion_error']])
     return stream.getvalue()
+
+
+def yes_no(value):
+    """A CSV cell for a fact that may be unknown: yes, no, or empty."""
+    return '' if value is None else ('yes' if value else 'no')
 
 
 def _write(path, text, encoding):
@@ -251,6 +276,12 @@ LONG_PATHS = ('%d item(s) have a path over 260 characters: they are saved, but E
               'cannot open them. A shorter output folder (such as C:\\FusionExport) avoids this.')
 
 
+def links_out_of_date(manifest):
+    """How many designs in the folder use an older version of a linked design (a note)."""
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('kind', 'design') == 'design'
+               and entry.get('references_out_of_date'))
+
+
 def long_path_count(manifest):
     return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done' and entry.get('long_path'))
 
@@ -277,6 +308,9 @@ def summary_text(counts, run_info, manifest, output):
     long_paths = long_path_count(manifest)
     if long_paths:
         lines.append(LONG_PATHS % long_paths)
+    stale = links_out_of_date(manifest)
+    if stale:
+        lines.append('Note: %d design(s) with out-of-date links (exported as they are; see the report).' % stale)
     unreadable = len(run_info.get('discovery_errors') or [])
     if unreadable:
         lines.append('%d folder(s) could not be read (listed in the report).' % unreadable)

@@ -7,7 +7,7 @@ import time
 
 import adsk.core
 import adsk.fusion
-from .core import NonDesign, NotSaved, collection, disk_full
+from .core import NonDesign, NotSaved, OpenInFusion, collection, disk_full
 from .names import fusion_path, long_path
 from .staging import Staging
 
@@ -110,11 +110,13 @@ class FusionAdapter:
             self.details['documents_left_open'] = len(still)
         return len(still)
 
-    def acquire(self, data_file, what, failure):
+    def acquire(self, data_file, what, failure, blocked=None):
         """(document, opened) for exporting data_file. A document already open for it is used
         as it is and never closed (opened False): the user's, if it has no unsaved edits and is
-        the same version (else failure(plain reason) is raised); or one this add-in left open,
-        which is closed and opened again. Otherwise the file is opened hidden (opened True)."""
+        the same version (else blocked(plain reason) is raised, default failure); or one this
+        add-in left open, which is closed and opened again. Otherwise the file is opened hidden
+        (opened True); failure(reason) when Fusion hands back nothing."""
+        blocked = blocked or failure
         identity = str(data_file.id)
         for existing in list(collection(self.app.documents)):
             if document_id(existing) != identity:
@@ -124,13 +126,13 @@ class FusionAdapter:
                     break  # opened afresh below
                 if same_version(existing, data_file):
                     return existing, True  # still this add-in's own; closing is tried again after
-                raise failure('Fusion could not close an older version of this %s; restart Fusion, '
+                raise blocked('Fusion could not close an older version of this %s; restart Fusion, '
                               'then run again.' % what)
             if existing.isModified:
-                raise failure('This %s is open in Fusion with unsaved changes; save or close it, then run again.'
+                raise blocked('This %s is open in Fusion with unsaved changes; save or close it, then run again.'
                               % what)
             if not same_version(existing, data_file):
-                raise failure('Another version of this %s is open in Fusion; close it, then run again.' % what)
+                raise blocked('Another version of this %s is open in Fusion; close it, then run again.' % what)
             return existing, False
         before = self.open_ids()
         document = self.app.documents.open(data_file, False)
@@ -242,7 +244,7 @@ class FusionAdapter:
         before = self.open_ids()
         document, opened = None, False
         try:
-            document, opened = self.acquire(data_file, 'design', RuntimeError)
+            document, opened = self.acquire(data_file, 'design', RuntimeError, OpenInFusion)
             return self.write(document, data_file, stem)
         finally:
             # Never raises: a document Fusion would not close does not undo a good export; it
