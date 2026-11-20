@@ -7,41 +7,49 @@
 ### What you get
 - Readable names: files and folders keep their real names, in any language, with only the characters Windows or macOS cannot store replaced. Designs are saved as `<name> v<version>.f3d` and `.step`. A short `~1a2b` suffix is added only when two items in one folder would get the same name, and same-named sibling folders stay apart.
 - Export folders made by earlier versions keep working: what is already there keeps its short name and is not exported again; new designs get readable names.
-- Other files are saved too: PDFs, images and uploaded files as they are, under their own names, and drawings as PDF. Electronics and other Fusion-only file types are skipped with the reason.
+- Other files are saved too: PDFs, images and uploaded files as they are, under their own names. Electronics and other Fusion-only file types are skipped with the reason.
+- Drawings can be saved as PDF, as a separate choice that is off by default, because Fusion takes minutes to open each drawing. Left off, drawings are skipped with that reason and counted in the last dialog. A drawing open in Fusion is handled like an open design: exported as it is and left open, or skipped with the reason when it has unsaved changes.
+- Linked designs: when a design with links fails, the reason reads "A linked design is missing or cannot be opened (N links)" instead of Fusion's raw error, which is kept beside it in the report. Designs whose links point to older versions are exported as they are and noted (not a failure) in the last dialog, `index.html`, `index.csv` and `status`. `inventory.json` marks designs with links and out-of-date links.
+- On Windows, names are cut at 64 characters so typical layouts stay under 260-character paths; a file whose full path is still longer is saved, and the last dialog and `index.html` say how many there are (Explorer may not open them; a shorter output folder avoids it).
 - Each design's thumbnail is saved beside it as `<name> v<version>.png`.
 - Exported files carry the design's modified date.
 - A report in the output folder: `index.html` lists every item with its status and links to its files, failures first with the reason and what to do; `index.csv` has the same as a table.
-- Separate counts: exported now, already up to date, other files saved, skipped, failed. A re-run no longer looks as if nothing happened.
+- Separate counts: exported now, already up to date (designs), other files saved, other files already up to date, skipped, failed. A re-run no longer looks as if nothing happened.
 - Each STEP is checked as it is written: a broken file is tried again, and a STEP with no bodies or fewer solids than Fusion showed is exported with a warning, shown at the end and in the report. Solid counts now count every visible instance of a part.
 
 ### The dialog
 - Shows the version that is running.
 - **Save to** row with **Browse…**, remembered between runs (first suggestion: `Documents/FusionExport`). The line under it says when the folder already holds an export ("Continues the export in this folder").
-- **Also save other files (PDFs, drawings, uploads)**, on by default and remembered.
+- **Also save other files (PDFs, uploads)**, on by default, and **Also export drawings as PDF**, off by default; both remembered.
 - The tree: a filter box for project names, keyboard use (arrows, Space, Enter), a file count beside each opened project or folder, projects already in the chosen folder marked as exported, a loading row while a folder opens, and an error with **Retry** when a folder cannot be listed instead of a silent "No folders".
-- The progress bar moves within a project, and the text shows the time so far, the average time per design and how many failed.
+- The progress bar moves within a project, and the text shows the time so far, the average time per design and how many failed. Other files show as "file N"; a drawing says it is opening and that this can take minutes.
 - The last dialog shows the counts, the first failures and warnings, and opens the report or the folder.
-- Expected problems (a folder that cannot be used, a damaged manifest, a full disk, Fusion signed out) are explained in a sentence or two with what to do. Anything unexpected is saved to `errors.log` beside the add-in, and the dialog shows the details ready to copy into an issue.
+- Expected problems (a folder that cannot be used, a damaged manifest, a full disk, Fusion signed out) are explained in a sentence or two with what to do. Anything unexpected is saved to `errors.log` beside the add-in, and the dialog shows the details ready to copy into an issue. Those details leave out paths and project and design names.
 - On a Fusion too old for the tree, the dialog still opens and offers Everything.
 
 ### Reliability on big accounts
-- The export stops itself after 5 designs fail in a row (offline or signed out) or when the disk is full or the output folder is gone, instead of failing everything that is left. From the button it asks whether to retry or stop.
+- The export stops itself after 5 designs fail in a row (offline or signed out) or when the disk is full or the output folder is gone, instead of failing everything that is left. From the button it pauses and asks: OK tries again and carries on, Cancel stops.
+- One export at a time per output folder: `export.lock` is held while a run uses it, and a second export into the same folder (another Fusion, or a command-line job) is told "Another export is using this folder".
 - Warns when less than 1 GB is free, and keeps the computer awake while it runs.
-- Designs that an assembly opens alongside it are closed again afterwards, so a long run no longer fills Fusion with open documents. Designs you had open are never touched.
+- Designs that an assembly opens alongside it are closed again afterwards, so a long run no longer fills Fusion with open documents. Designs you had open, and new unsaved documents, are never touched.
+- A drawing's PDF is asked for a second time when Fusion's first export of a freshly opened drawing writes nothing.
 - Finished items are recorded in a small journal file, and the manifest is rewritten only every 50 items or 30 seconds, instead of after every design.
 - Resuming compares each file's size and modified time instead of reading every file again.
 - No limit on how deep folders go or how long the output folder's path is. Fusion writes to a short temporary path first and the add-in moves the file into place, because Fusion stops responding when handed a very long path on Windows.
 
 ### Command line
 - `autorun.py check OUT` checks every exported file again without Fusion; `verify-export.py` now runs the same checks.
-- `--designs-only` leaves out the other files.
+- `--designs-only` leaves out the other files; `--drawings` adds drawings as PDF.
+- `--limit N` stops after exporting N designs in this run; designs already up to date and other files do not count.
 - `--folder PROJECT_ID:id=FOLDER_ID` chooses a folder by its id (listed in `inventory.json`), which also works for names with `/` in them.
-- `status` prints the new counts, when a run stopped itself and why, and low disk space.
+- `status` prints the new counts, when a run stopped itself and why, low disk space, link problems and out-of-date links, and includes items still only in the journal.
+- Stopping the command (Ctrl-C) or a timeout before Fusion started the job withdraws the job, and the command says so, so Fusion does not run it later by itself.
 - The toolbar button and command-line jobs work side by side: the button stays after a command-line export, and a job sent while someone exports with the button gets a "busy" answer instead of waiting.
 - The command no longer edits the add-in's settings to make Fusion start it: if the add-in is not running, it says how to switch it on.
 - `reset` is no longer needed; it only clears job files left by an earlier version.
 
 ### Install
+- macOS: `Install (macOS).command` is not signed; the first time, right-click it and choose Open (or System Settings → Privacy & Security → Open Anyway). The README and the download's `README.txt` say so.
 - The download is one folder, `FusionBulkExport-<version>`, with `Install (macOS).command`, `Install (Windows).bat` and a `README.txt`. The installers copy the add-in into Fusion's add-ins folder, so the green "+" step is no longer needed: switch it on in Fusion and tick Run on Startup.
 - `scripts/install.py` does the same from a download of the repository (`--uninstall` removes it).
 
@@ -49,7 +57,7 @@
 - Removed a developer test from the add-in that could upload files: nothing in the download can upload, save or delete anything in your account, and a test checks the zip for it.
 - Tests run on macOS, Windows and Linux for every change, with a privacy scan.
 - `scripts/release.py prepare X.Y.Z` sets the version, moves these notes under it, runs the tests and builds the zip.
-- `SECURITY.md` and `CONTRIBUTING.md`; the bug form asks for `errors.log`.
+- `SECURITY.md` and `CONTRIBUTING.md`; the bug form asks for `errors.log`, which is safe to paste.
 
 ## 0.2.3
 

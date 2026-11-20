@@ -3,8 +3,8 @@ Fusion Bulk Export {version}
 
 Saves your Autodesk Fusion designs to your own computer, as Fusion archives (.f3d)
 and STEP files under their real names, in your project and folder layout, together
-with your other files (PDFs, uploads, drawings as PDF). It only reads: nothing in
-your Fusion account is changed.
+with your other files (PDFs, uploads, and drawings as PDF if you ask for them). It
+only reads: nothing in your Fusion account is changed.
 
 You need Fusion installed and signed in, on macOS or Windows. Nothing else.
 
@@ -12,8 +12,9 @@ You need Fusion installed and signed in, on macOS or Windows. Nothing else.
 1. Install
 ----------
 macOS:   double-click "Install (macOS).command".
-         If macOS says it cannot check the file, right-click it, choose Open, then
-         Open again (or allow it under System Settings > Privacy & Security).
+         It is not signed, so the first time macOS (Gatekeeper) refuses to open it:
+         right-click it, choose Open, then Open again. If there is no Open button, go
+         to System Settings > Privacy & Security, scroll down and click Open Anyway.
 Windows: double-click "Install (Windows).bat".
          If Windows SmartScreen warns you, click More info, then Run anyway.
 
@@ -35,10 +36,18 @@ the Add-Ins tab click the green "+" and choose that folder.
 ---------
 Open the Utilities tab and click Fusion Bulk Export (the orange cube in the
 ADD-INS group). Check "Save to" (Browse... picks another folder; it is remembered),
-choose Everything or tick projects and folders, and click Export. Fusion cannot be
-used while it exports: leave it open and signed in until the last dialog. That
-dialog opens index.html, a report of everything saved and anything that failed.
-Run it again on the same folder to continue, retry failures or pick up new designs.
+choose Everything or tick projects and folders, and click Export. "Also save other
+files (PDFs, uploads)" is on by default. "Also export drawings as PDF" is off: tick it
+only if you need your drawings, since Fusion takes minutes to open each one. Fusion
+cannot be used while it exports: leave it open and signed in until the last dialog.
+That dialog opens index.html, a report of everything saved and anything that failed.
+If the run gets into trouble (designs failing in a row, a full disk) it pauses and
+asks: OK tries again and carries on, Cancel stops. Run it again on the same folder to
+continue, retry failures or pick up new designs.
+
+On Windows, keep the output folder short (such as C:\FusionExport): names are cut at
+64 characters, and a file whose full path is still over 260 characters is saved but
+may not open from Explorer; the last dialog and index.html say how many there are.
 
 
 Big account?
@@ -54,6 +63,8 @@ Instructions, questions and bug reports:
 https://github.com/cad-lifeboat/fusion-bulk-export
 
 Your output folder's manifest.json, index.html, index.csv and logs contain your
-design names. Keep them private and do not attach them to issues.
+design names. Keep them private and do not attach them to issues. errors.log in the
+add-in folder (and the error text the dialog offers to copy) leaves out paths and
+project and design names, so it can be pasted into an issue; read it first anyway.
 
 Not affiliated with Autodesk. Autodesk and Fusion are trademarks of Autodesk, Inc.

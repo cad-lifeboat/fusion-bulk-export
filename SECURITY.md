@@ -11,7 +11,8 @@ reply within a week.
 
 - **Reads only.** It lists your hubs, projects and folders, opens each design and saves a copy
   (`.f3d` archive, `.step` and thumbnail) to a folder on your computer that you choose. Other
-  files are downloaded as they are, and drawings are opened and saved as PDF. It never uploads,
+  files are downloaded as they are, and drawings (only when you tick that option) are opened and
+  saved as PDF. It never uploads,
   saves, renames, moves or deletes anything in your Fusion account. A test checks that the release
   zip contains no call that could.
 - **No network calls of its own.** All access to your account goes through Fusion's own API in the
@@ -29,3 +30,10 @@ reply within a week.
 The files it writes (`manifest.json`, `index.html`, `index.csv`, `inventory.json`, logs) contain
 your project and design names.
 Treat them as private.
+
+`errors.log` in the add-in folder, and the error text the dialog offers to copy, are the
+exception: they hold the error's type, its message with paths and quoted text left out, and the
+lines of the add-in's own code it passed through, but no paths and no hub, project or design
+names. They are meant to be pasted into an issue; still read them once before you post.
+While an export runs, `export.lock` in the output folder holds the process id, the computer's
+name and the start time, so that a second export cannot use the same folder.
