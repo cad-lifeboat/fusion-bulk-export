@@ -327,7 +327,6 @@ class UItests(UIBase):
         self.change(command, inputs.find('fbx_browse'))
         self.assertEqual(inputs.find('fbx_folder').text, str(other))
         self.assertEqual(inputs.find('fbx_note').text, 'Continues the export in this folder (2 done).')
-        self.assertFalse(inputs.find('fbx_browse').value)
 
     def test_folder_and_mode_are_remembered(self):
         self.picker_data()

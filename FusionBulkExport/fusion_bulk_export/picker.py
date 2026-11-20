@@ -58,6 +58,7 @@ class Picker:
         self.browse = inputs.addBoolValueInput('fbx_browse', 'Browse…', False, '', False)
         self.note = inputs.addTextBoxCommandInput('fbx_note', '', '', 1, True)
         self.facts = None
+        self.browsing = False
         self.refresh_folder()
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
@@ -118,8 +119,14 @@ class Picker:
 
     def changed(self, changed_input):
         if changed_input.id == self.browse.id:
-            self.browse.value = False  # a button: it holds no state
-            self.choose_folder()
+            # A button-style input: each click is one inputChanged. Its value is not reset here,
+            # since setting it could fire inputChanged again.
+            if not self.browsing:
+                self.browsing = True
+                try:
+                    self.choose_folder()
+                finally:
+                    self.browsing = False
         elif changed_input.id == self.mode.id and self.tree is not None:
             self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)
