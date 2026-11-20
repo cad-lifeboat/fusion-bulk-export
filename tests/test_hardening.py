@@ -184,5 +184,54 @@ class OpenDocumentTests(Base):
         self.assertEqual(part.calls, 1)  # attempt 2 used the document attempt 1 left open
 
 
+class FailingInARowTests(Base):
+    def good_and_broken(self, count=5):
+        files = []
+        for n in range(count):
+            broken = fake.File('Broken %d' % n, 'bad%d' % n)
+            broken.failures = 10 ** 6  # never exports
+            files += [fake.File('Good %d' % n, 'good%d' % n), broken]
+        return files
+
+    def test_designs_broken_since_an_earlier_run_never_stop_a_later_one(self):
+        files = self.good_and_broken()
+        exporter, counts = self.run_export(fake.data(files))
+        self.assertIsNone(exporter.run_info['stopped_code'])
+        new = fake.File('New design', 'new')
+        for _ in range(2):  # every later run gets past them
+            exporter, counts = self.run_export(fake.data(files + [new]))
+            self.assertIsNone(exporter.run_info['stopped_code'])
+            self.assertEqual(counts['failed'], 5)
+        self.assertEqual([e['status'] for e in self.manifest['entries'] if e['id'] == 'new'], ['done'])
+
+    def test_up_to_date_items_between_new_failures_neither_reset_nor_count(self):
+        good = [fake.File('Good %d' % n, 'good%d' % n) for n in range(5)]
+        self.run_export(fake.data(good))
+        failing = []
+        for n in range(6):
+            broken = fake.File('Offline %d' % n, 'offline%d' % n)
+            broken.failures = 2
+            failing.append(broken)
+        mixed = [item for pair in zip(good, failing) for item in pair] + failing[5:]
+        exporter, counts = self.run_export(fake.data(mixed))
+        self.assertEqual(exporter.run_info['stopped_code'], 'failing')  # offline: still noticed
+        self.assertEqual(counts['failed'], 5)
+
+    def test_a_design_that_opens_but_holds_no_design_resets_the_count(self):
+        files = []
+        for n in range(4):
+            broken = fake.File('Broken %d' % n, 'bad%d' % n)
+            broken.failures = 2
+            files.append(broken)
+        files.append(fake.File('Drawing only', 'cam', design=False))
+        for n in range(4, 8):
+            broken = fake.File('Broken %d' % n, 'bad%d' % n)
+            broken.failures = 2
+            files.append(broken)
+        exporter, counts = self.run_export(fake.data(files))
+        self.assertIsNone(exporter.run_info['stopped_code'])
+        self.assertEqual(counts['failed'], 8)
+
+
 if __name__ == '__main__':
     unittest.main()

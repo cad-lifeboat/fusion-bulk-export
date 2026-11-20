@@ -20,7 +20,13 @@ SCHEMA = 2  # manifest schema; schema-1 folders are read and saved as 2
 
 LOW_SPACE_BYTES = 1 << 30   # warn before a run below this much free space
 FULL_BYTES = 100 << 20      # after a failed write, below this the disk counts as full
-FAILURES_IN_A_ROW = 5       # this many designs failing one after another means something is wrong
+# This many designs failing one after another (offline, signed out) pauses the run. What counts
+# (see Exporter.run): an attempted design that fails, unless it had failed already in an earlier
+# run (a broken design, not a sign of trouble now). What resets the count: an item for which
+# Fusion answered from the cloud: a design exported or opened (even if it holds no design), an
+# other file downloaded. An item already up to date, or skipped without asking Fusion, neither
+# counts nor resets: it says nothing about whether Fusion can reach the account.
+FAILURES_IN_A_ROW = 5
 SAVE_EVERY_ITEMS = 50       # rewrite manifest.json after this many finished items...
 SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journal has each one)
 
@@ -609,7 +615,8 @@ class Exporter:
         designs opened so far, not counting those already up to date; None before the first).
 
         When the run cannot go on (disk full, output folder gone, or FAILURES_IN_A_ROW designs
-        failing in a row, as when offline or signed out), on_trouble(reason, last_error) is
+        failing in a row, as when offline or signed out; see FAILURES_IN_A_ROW for what counts),
+        on_trouble(reason, last_error) is
         asked: 'retry' carries on (designs failed so far are retried on the next run), anything
         else stops. Without on_trouble it stops. run_info['stopped_reason'] then says why.
 
@@ -691,6 +698,8 @@ class Exporter:
                         self.run_info['cancelled'] = True
                         break
                     began = self.clock()
+                    earlier = entries.get(self.item_key(hub, project, file))
+                    failed_before = earlier is not None and earlier.get('status') == 'failed'
                     try:
                         status = self.export_one(hub, project, folders, file, entries, counts)
                         problem = None
@@ -704,9 +713,9 @@ class Exporter:
                     if status != 'verified' and str(file.fileExtension).lower() == 'f3d':
                         timing['seconds'] += self.clock() - began
                         timing['designs'] += 1
-                    if status == 'done':
+                    if self.reached_cloud(status, entries.get(self.item_key(hub, project, file))):
                         failing = []
-                    elif status == 'failed':
+                    elif status == 'failed' and (problem is not None or not failed_before):
                         failing.append(str(problem.error if problem else self.last_error))
                         if problem is None and len(failing) >= FAILURES_IN_A_ROW:
                             problem = Trouble('failing', '%d designs in a row failed (offline or signed out?).'
@@ -736,11 +745,24 @@ class Exporter:
             self.log('run finished ' + json.dumps(counts))
         return counts
 
+    @staticmethod
+    def item_key(hub, project, file):
+        return json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
+
+    @staticmethod
+    def reached_cloud(status, entry):
+        """Whether this item shows that Fusion can reach the account now: a design exported or
+        opened (a skip as not a design), another file downloaded."""
+        if status == 'done':
+            return True
+        return (status == 'skipped' and entry is not None and entry.get('kind') == 'design'
+                and entry.get('attempts', 0) > 0)
+
     def export_one(self, hub, project, folders, file, entries, counts):
         """Export one design or save one other file; returns its status. Raises Trouble when
         the run must stop."""
         self.last_error = None
-        key = json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
+        key = self.item_key(hub, project, file)
         kind = 'design' if str(file.fileExtension).lower() == 'f3d' else 'file'
         entry = entries.get(key)
         if entry and self.valid(entry):
