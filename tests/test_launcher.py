@@ -58,6 +58,30 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(launcher.alive(self.root, now + 5))
         self.assertFalse(launcher.alive(self.root, now + 60))
 
+    def test_windows_output_root_over_200_characters_is_refused_in_one_line(self):
+        long = 'C:\\' + '\\'.join(['x' * 50] * 5)  # 257 characters
+        problem = launcher.root_problem(long, 'Windows')
+        self.assertIn('257 characters long; on Windows it can be at most 200', problem)
+        self.assertIsNone(launcher.root_problem('C:\\' + 'y' * 197, 'Windows'))
+        self.assertIsNone(launcher.root_problem('/' + 'z' * 300, 'Darwin'))  # no such rule on macOS
+        args = launcher.argparse.Namespace(output=str(self.root / ('d' * 250)), command='export', project=None,
+                                           limit=None, folder=None, designs_only=False, timeout=10)
+        with patch.object(launcher, 'system', return_value='Windows'), \
+                patch.object(launcher, 'root_problem', side_effect=lambda output, name: problem), \
+                patch.object(launcher, 'addins_dir', side_effect=AssertionError('nothing is sent')):
+            with self.assertRaises(SystemExit) as stop:
+                launcher.start(args)
+        self.assertEqual(stop.exception.code, problem)  # printed as one line, no traceback
+
+    def test_an_output_folder_that_cannot_be_made_is_one_plain_line(self):
+        blocker = self.root / 'file'
+        blocker.write_text('x')
+        with self.assertRaises(SystemExit) as stop:
+            launcher.make_output(blocker / 'out')
+        self.assertTrue(str(stop.exception.code).startswith('The output folder cannot be created: '))
+        self.assertNotIn('\n', str(stop.exception.code))
+        self.assertNotIn('Traceback', str(stop.exception.code))
+
     def test_long_output_path_is_allowed(self):
         long = self.root / ('x' * 150) / ('y' * 150)
         self.assertEqual(launcher.check_output(str(long)), long.resolve())
@@ -298,17 +322,34 @@ class LauncherTests(unittest.TestCase):
         def consumed(installed, *rest, **kwargs):
             (installed / 'autorun.json').replace(installed / 'autorun.json.last')  # as the add-in does
             return 0
-        for waiting, expected in ((KeyboardInterrupt, KeyboardInterrupt), (SystemExit('Timed out'), SystemExit)):
+        for waiting in (KeyboardInterrupt, SystemExit('Timed out')):
             with patch.object(launcher, 'system', return_value='Darwin'), \
                     patch.object(launcher, 'addins_dir', return_value=installed.parent), \
                     patch.object(launcher, 'fusion_running', return_value=False), \
                     patch.object(launcher, 'launch_fusion'), \
                     patch.object(launcher, 'wait', side_effect=waiting), \
-                    contextlib.redirect_stderr(io.StringIO()) as stream:
-                with self.assertRaises(expected):
-                    launcher.start(args)
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as stream:
+                if waiting is KeyboardInterrupt:
+                    # Ctrl-C: the "withdrawn" line and nothing after it (no traceback), status 130.
+                    self.assertEqual(launcher.start(args), launcher.INTERRUPTED)
+                    self.assertEqual(stream.getvalue(), 'The job was not started by Fusion and has been withdrawn.\n')
+                else:
+                    with self.assertRaises(SystemExit):
+                        launcher.start(args)
             self.assertFalse((installed / 'autorun.json').exists())
             self.assertIn('withdrawn', stream.getvalue())
+        # Ctrl-C after Fusion took the job: one line saying it goes on.
+        with patch.object(launcher, 'system', return_value='Darwin'), \
+                patch.object(launcher, 'addins_dir', return_value=installed.parent), \
+                patch.object(launcher, 'alive', return_value=True), \
+                patch.object(launcher, 'wait', side_effect=lambda *a, **k: consumed(installed) and None
+                             or (_ for _ in ()).throw(KeyboardInterrupt)), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as stream:
+            self.assertEqual(launcher.start(args), launcher.INTERRUPTED)
+        lines = stream.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith('Stopped waiting; the export goes on in Fusion'))
+        (installed / 'autorun.json.last').unlink()
         with patch.object(launcher, 'system', return_value='Darwin'), \
                 patch.object(launcher, 'addins_dir', return_value=installed.parent), \
                 patch.object(launcher, 'alive', return_value=True), \

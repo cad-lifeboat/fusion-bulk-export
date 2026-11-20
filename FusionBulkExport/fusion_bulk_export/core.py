@@ -14,7 +14,7 @@ from . import checks
 from .journal import Journal, replay
 from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
 from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, clean, design_suffixes, long_path,
-                    too_long, windows_length)
+                    output_root_problem, too_long, windows_length)
 from .power import keep_awake
 from .staging import Staging
 
@@ -417,6 +417,9 @@ def atomic_write(path, value):
 class Exporter:
     def __init__(self, output, adapter, error_callback=None):
         self.root = Path(output).resolve()
+        problem = output_root_problem(self.root, sys.platform)
+        if problem:
+            raise ValueError(problem)
         try:
             os.makedirs(long_path(self.root), exist_ok=True)
         except OSError as error:

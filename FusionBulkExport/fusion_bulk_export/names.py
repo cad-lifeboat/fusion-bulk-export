@@ -29,9 +29,25 @@ ROOT_FILES = ('manifest.json', 'manifest.json.tmp', 'manifest.journal', 'export.
               'index.html', 'index.csv', '.staging', 'export.lock')
 
 WINDOWS_LIMIT = 259     # characters in a full path without the long-path prefix (and Fusion's limit)
+# On Windows the output folder itself may be at most this long: below it the files keep their
+# names (paths past 260 characters are written with the long-path prefix and reported), but a
+# longer root leaves too little room for even the shortened layout, and Windows' own tools stop
+# being able to open the folder.
+OUTPUT_ROOT_LIMIT = 200
 WINDOWS_LONG_LIMIT = 32000
 MAC_LIMIT = 1023        # bytes in a full path on macOS
 OTHER_LIMIT = 4095
+
+
+def output_root_problem(path, platform=None):
+    """Why this output folder cannot be used (one plain sentence and what to do), or None. Only
+    Windows limits it: OUTPUT_ROOT_LIMIT characters."""
+    platform = sys.platform if platform is None else platform
+    length = len(str(path or ''))
+    if platform != 'win32' or length <= OUTPUT_ROOT_LIMIT:
+        return None
+    return ('The output folder\'s path is %d characters long; on Windows it can be at most %d. '
+            'Choose a shorter folder, such as C:\\FusionExport.' % (length, OUTPUT_ROOT_LIMIT))
 
 
 def clean(value, limit=NAME_LIMIT):

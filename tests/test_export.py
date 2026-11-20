@@ -824,6 +824,19 @@ class ExportTests(unittest.TestCase):
             (self.root / 'manifest.json').write_text(json.dumps(dict(schema=3, runs=[], entries=[])))
             Exporter(self.root, self.adapter)
 
+    def test_windows_output_root_over_200_characters_is_refused_with_a_plain_reason(self):
+        from fusion_bulk_export import errors
+        long = self.root / ('x' * 120) / ('y' * 120)
+        with patch.object(core, 'sys', NS(platform='win32')):
+            with self.assertRaises(ValueError) as refused:
+                Exporter(long, self.adapter)
+        self.assertIn('on Windows it can be at most 200', str(refused.exception))
+        self.assertFalse(long.exists())  # nothing was created
+        shown = errors.output_folder(refused.exception, long)
+        self.assertIn('on Windows it can be at most 200', shown.text())
+        self.assertIsNone(names.output_root_problem(long, 'darwin'))
+        self.assertIsNone(names.output_root_problem('C:\\' + 'z' * 197, 'win32'))
+
     def test_output_folder_rules(self):
         deep = self.root / ('o' * 150)
         exporter = Exporter(deep, self.adapter)  # no 100-character cap any more

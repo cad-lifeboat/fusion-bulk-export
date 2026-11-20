@@ -937,3 +937,18 @@ class HeartbeatTests(UIBase):
         beat = json.loads((self.addin / 'autorun.alive').read_text())
         self.assertEqual(beat['busy'], 'button')
         self.assertGreater(beat['time'], 0)
+
+
+class OutputRootTests(UIBase):
+    def test_a_windows_output_folder_over_200_characters_is_refused_in_the_dialog(self):
+        from fusion_bulk_export import names
+        long = 'C:\\' + '\\'.join(['Folder %02d' % n + 'x' * 30 for n in range(6)])
+        self.settings.write_text(json.dumps(dict(output=long)))
+        with patch('fusion_bulk_export.picker.output_root_problem',
+                   side_effect=lambda path: names.output_root_problem(path, 'win32')):
+            command = self.open_dialog()
+            note = command.commandInputs.find('fbx_note').text
+            self.assertIn('on Windows it can be at most 200', note)
+            self.assertFalse(self.valid(command))  # Export stays greyed out
+            self.settings.write_text(json.dumps(dict(output='C:\\FusionExport')))
+            self.assertTrue(self.valid(self.open_dialog()))

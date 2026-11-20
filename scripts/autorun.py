@@ -61,6 +61,7 @@ def runtime_files(directory, names):
         relative = Path()
     return {name for name in names if is_runtime(relative / name)}
 ALIVE_SECONDS = 20
+INTERRUPTED = 130  # the exit status after Ctrl-C
 SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
 MANUAL_HINT = ('Fusion has not started the add-in. In Fusion press Shift+S, open the Add-Ins tab, '
@@ -211,8 +212,26 @@ DRAWINGS_REMOVED = ('--drawings does nothing now: drawing export was removed bec
                     '(drawings are listed as not supported; export them with File > Export in Fusion).')
 
 
+def make_output(output):
+    """Create the output folder, or stop with one plain line saying why it cannot be."""
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise SystemExit('The output folder cannot be created: %s (%s). Choose another folder.'
+                         % (output, error.strerror or type(error).__name__))
+
+
+def root_problem(output, name=None):
+    """Why output cannot be an export's folder on this system (the add-in's own rule), or None."""
+    package = REPO / 'FusionBulkExport'
+    if str(package) not in sys.path:
+        sys.path.insert(0, str(package))
+    from fusion_bulk_export.names import output_root_problem
+    return output_root_problem(output, 'win32' if (name or system()) == 'Windows' else sys.platform)
+
+
 def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):
-    output.mkdir(parents=True, exist_ok=True)
+    make_output(output)
     for stale in ('autorun-result.json', 'STOP'):
         try:
             (output / stale).unlink()
@@ -354,6 +373,9 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
 def start(args):
     name = system()
     output = check_output(args.output)
+    problem = root_problem(output, name)
+    if problem:
+        raise SystemExit(problem)
     installed = addins_dir(name) / 'FusionBulkExport'
     watching = alive(installed)
     if getattr(args, 'drawings', False):
@@ -372,6 +394,13 @@ def start(args):
         # does not come up, wait() prints MANUAL_HINT once.
         launch_fusion(name)
         return wait(installed, output, args.timeout)
+    except KeyboardInterrupt:
+        # Ctrl-C: one plain line, never a traceback. A job Fusion never took is withdrawn (that
+        # says so); one it took goes on.
+        if not withdraw_job(installed):
+            print('Stopped waiting; the export goes on in Fusion ("autorun.py stop %s" pauses it).' % output,
+                  file=sys.stderr, flush=True)
+        return INTERRUPTED
     finally:
         withdraw_job(installed)
 
@@ -477,7 +506,11 @@ def main(argv=None):
         return 0
     if getattr(args, 'limit', None) is not None and args.limit < 1:
         parser.error('--limit must be positive')
-    return start(args)
+    try:
+        return start(args)
+    except KeyboardInterrupt:  # before the job was sent (start handles it once it is)
+        print('Stopped.', file=sys.stderr, flush=True)
+        return INTERRUPTED
 
 
 if __name__ == '__main__':

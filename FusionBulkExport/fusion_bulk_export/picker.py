@@ -8,6 +8,7 @@ import adsk.core
 
 from . import settings
 from .core import Selection, collection
+from .names import output_root_problem
 
 EVERYTHING = 'Everything'
 CHOOSE = 'Choose projects or folders'
@@ -199,6 +200,9 @@ class Picker:
         describe(self.folder, self.output or '', self.trace)
         self.facts = settings.folder_facts(self.output)
         self.note.text = settings.folder_note(self.facts) if self.output else 'Choose where to save the export.'
+        problem = output_root_problem(self.output)
+        if problem:
+            self.note.text = problem  # Export stays greyed out (ready()) until another folder is chosen
 
     def choose_folder(self):
         """Browse…: the system folder dialog, starting at the current folder."""
@@ -233,7 +237,7 @@ class Picker:
 
     def ready(self):
         """Whether Export can be pressed: a folder is set and something is chosen."""
-        return bool(self.output) and self.selection() is not None
+        return bool(self.output) and output_root_problem(self.output) is None and self.selection() is not None
 
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
