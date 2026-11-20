@@ -1,11 +1,26 @@
 """Adapter using Autodesk's public Fusion API. Imported only inside Fusion."""
+import importlib
 import os
+from pathlib import Path
+import shutil
+import time
 
 import adsk.core
 import adsk.fusion
-from .core import NonDesign, collection
+from .core import NonDesign, NotSaved, collection, disk_full
 from .names import fusion_path, long_path
 from .staging import Staging
+
+# Fusion's own file types other than designs. Fusion has no API call that writes them as files
+# (a drawing's PDF export needs the drawing opened in its workspace, not available here), so
+# when downloading one does not work either, the skip says so plainly.
+# Fusion's own types other than designs and drawings: DataFile.download refuses them ("file
+# type not available for download", seen on real Fusion for .f2d, .fsch, .fbrd and .flbr) and
+# there is no export for them in the API, so they are skipped without asking.
+FUSION_NATIVE = {'f2d', 'f2t', 'fsch', 'fbrd', 'flbr', 'fprj', 'cam360'}
+NATIVE_REASON = 'Fusion cannot export this file type through its API'
+PDF_WAIT_SECONDS = 20     # how long a drawing's PDF is waited for after Fusion's export returns
+PRODUCT_TRIES = 5         # a just-opened drawing's products can fail to read the first time
 
 
 class FusionAdapter:
@@ -13,6 +28,7 @@ class FusionAdapter:
         self.app = app
         self.details = {}  # facts about the last exported design, stored in its manifest entry
         self.staging = None  # set by the Exporter: where Fusion writes before files are moved
+        self.pdf_broken = None  # why drawings are not tried any more in this run, once one failed
 
     def references(self, data_file):
         """Designs this one references (linked components, derives), by cloud id and name.
@@ -67,6 +83,88 @@ class FusionAdapter:
         if left:
             self.details['documents_left_open'] = left
         return left
+
+    def download(self, data_file, target):
+        """Save a file that is not a design to target, its readable final path. Uploaded files
+        (PDF, images, STEP...) come down as they are; a drawing is saved as a PDF of its sheets;
+        electronics and other Fusion-only types cannot be had through the API and are skipped
+        without asking Fusion. Raises NotSaved with the reason when nothing could be saved.
+        Reads only: nothing in the account changes."""
+        extension = str(data_file.fileExtension or '').lower().strip('.')
+        if extension == 'f2d':
+            return self.drawing_pdf(data_file, target)
+        if extension in FUSION_NATIVE:
+            raise NotSaved('%s (.%s)' % (NATIVE_REASON, extension))
+        staging = self.stage()
+        # A short file path in a fresh folder: Fusion writes exactly that file (it would hang on
+        # a long path, and the folder form writes the file under its cloud name, which can be long).
+        folder = staging.fresh_folder()
+        staged = os.path.join(folder, 'download' + Path(str(target)).suffix)
+        try:
+            try:
+                result = data_file.download(fusion_path(staged), None)
+            except Exception as error:
+                if disk_full(error):
+                    raise  # stops the run, like any write to a full disk
+                raise NotSaved(reason(extension, 'Fusion could not download it: %s' % (error or type(error).__name__)))
+            if result is False:
+                raise NotSaved(reason(extension, 'Fusion did not download it'))
+            if not os.path.isfile(long_path(staged)):
+                found = []
+                for place, _, names in os.walk(long_path(folder)):
+                    found += [os.path.join(place, name) for name in names]
+                if not found:
+                    raise NotSaved(reason(extension, 'Fusion reported a download but wrote no file'))
+                if len(found) > 1:
+                    raise NotSaved('Fusion downloaded %d files for it; not saved' % len(found))
+                staged = found[0]
+            return staging.place(staged, target)
+        finally:
+            shutil.rmtree(long_path(folder), ignore_errors=True)
+
+    def drawing_pdf(self, data_file, target):
+        """A drawing as a PDF: opened (hidden), exported through its DrawingExportManager to a
+        short staging path, then moved to target. Fusion may write the PDF a little after
+        execute() returns, so the file is waited for (PDF_WAIT_SECONDS). If one drawing's PDF
+        never appears, the others in this run are not tried (each would cost that wait)."""
+        if self.pdf_broken:
+            raise NotSaved(self.pdf_broken)
+        before = self.open_ids()
+        document = None
+        try:
+            try:
+                document = self.app.documents.open(data_file, False)
+            except Exception as error:
+                raise NotSaved('Fusion could not open the drawing: %s' % (error or type(error).__name__))
+            if not document:
+                raise NotSaved('Fusion could not open the drawing')
+            drawing = drawing_product(document)
+            if drawing is None:
+                raise NotSaved('%s (.f2d: no drawing found in the opened file)' % NATIVE_REASON)
+            staging = self.stage()
+            staged = staging.path('.pdf')
+            try:
+                manager = drawing.exportManager
+                options = manager.createPDFExportOptions(fusion_path(staged))
+                if hasattr(options, 'openPDF'):
+                    options.openPDF = False  # never open a viewer during an export
+                result = manager.execute(options)
+            except Exception as error:
+                raise NotSaved('%s (.f2d; PDF export failed: %s)' % (NATIVE_REASON, error or type(error).__name__))
+            if result is False:
+                raise NotSaved('%s (.f2d; PDF export returned false)' % NATIVE_REASON)
+            if not wait_for_file(staged, PDF_WAIT_SECONDS):
+                self.pdf_broken = 'Fusion did not write the drawing PDF'
+                raise NotSaved(self.pdf_broken)
+            return staging.place(staged, target)
+        finally:
+            if document:
+                try:
+                    if document.close(False) is False:
+                        self.details['documents_left_open'] = 1
+                except Exception:
+                    pass
+            self.close_opened(before)  # a drawing opens the designs it shows, too
 
     def export(self, data_file, stem):
         """Write <stem>.f3d and <stem>.step; returns their paths, plus <stem>.png when the
@@ -174,6 +272,61 @@ def visible_counts(root):
             components[getattr(component, 'id', id(component))] = solids
     return dict(visible_solid_bodies=per_occurrence,
                 visible_solid_bodies_distinct=shown_solids(root) + sum(components.values()))
+
+
+def drawing_product(document):
+    """The Drawing product of an opened drawing document, or None. Reading products right after
+    opening can fail once ("InternalValidationError") while the drawing loads: tried again."""
+    products = None
+    for attempt in range(PRODUCT_TRIES):
+        try:
+            products = list(collection(document.products))
+            break
+        except Exception:
+            adsk.doEvents()
+            time.sleep(0.5)
+    if products is None:
+        return None
+    try:
+        cast = importlib.import_module('adsk.drawing').Drawing.cast
+    except Exception:
+        cast = None
+    for product in products:
+        try:
+            drawing = cast(product) if cast else None
+        except Exception:
+            drawing = None
+        if drawing:
+            return drawing
+        manager = getattr(product, 'exportManager', None)
+        if manager is not None and hasattr(manager, 'createPDFExportOptions'):
+            return product
+    return None
+
+
+def wait_for_file(path, seconds):
+    """Wait (letting Fusion work) until path exists with a size that stopped changing."""
+    deadline = time.monotonic() + seconds
+    size = -1
+    while True:
+        try:
+            now_size = os.path.getsize(long_path(path))
+        except OSError:
+            now_size = -1
+        if now_size > 0 and now_size == size:
+            return True
+        size = now_size
+        if time.monotonic() >= deadline:
+            return now_size > 0
+        adsk.doEvents()
+        time.sleep(0.25)
+
+
+def reason(extension, detail):
+    """Why another file was not saved: for Fusion's own types, that the API cannot export them."""
+    if extension in FUSION_NATIVE:
+        return '%s (.%s; %s)' % (NATIVE_REASON, extension, detail[0].lower() + detail[1:])
+    return detail
 
 
 def thumbnail_future(data_file):

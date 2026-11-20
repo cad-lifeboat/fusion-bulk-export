@@ -8,6 +8,8 @@ Configuration (all paths absolute):
                                      optional; chosen folders, by name path or by id
                                      (inventory.json lists each file's folder_ids); a folder
                                      by id is exactly that folder, even beside a same-named one
+   "designs_only": false,            optional; true: skip other files (PDFs, drawings, uploads),
+                                     which are otherwise saved as Fusion hands them out
    "limit": 25,                      optional; export at most this many designs
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
@@ -16,7 +18,7 @@ members and text commands this build offers) for bug reports; it reads no design
 "inventory" writes inventory.json (every hub, project and design with ids and
 versions) without opening anything. An export also writes index.html and index.csv (the
 human-readable report) into the output folder; counts in autorun-result.json are exported,
-up_to_date, skipped and failed. Creating a file named STOP in the output
+up_to_date, files (other files saved), skipped and failed. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
 
 A job that arrives while an export from the toolbar button is running is not started: its
@@ -94,7 +96,10 @@ def check_settings(config):
     timeout = float(config.get('hub_timeout_seconds', 600))
     if not 0 < timeout <= 86400:
         raise ValueError('hub_timeout_seconds must be between 0 and 86400')
-    return mode, selection, limit, timeout
+    designs_only = config.get('designs_only', False)
+    if not isinstance(designs_only, bool):
+        raise ValueError('designs_only must be true or false')
+    return mode, selection, limit, timeout, not designs_only
 
 
 def find_folder(folder, identity, path=()):
@@ -262,14 +267,15 @@ def run_autorun(app, config_path):
     started = time.monotonic()
     try:
         try:
-            output, mode, selection, limit, timeout = read_config(config_path)
+            output, mode, selection, limit, timeout, other_files = read_config(config_path)
         except Exception as error:
             output = getattr(error, 'output', None) or config_path.parent / 'autorun-output'
             raise
         finally:
             output.mkdir(parents=True, exist_ok=True)
             log = Log(output)
-        log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit)
+        log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
+                          other_files=other_files)
         log.write('autorun start ' + mode)
         if mode == 'diagnostics':
             report = diagnostics(app)
@@ -303,7 +309,7 @@ def run_autorun(app, config_path):
             try:
                 log.result['counts'] = exporter.run(
                     data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
-                    selection=selection)
+                    selection=selection, other_files=other_files)
             finally:
                 try:
                     write_report(exporter)

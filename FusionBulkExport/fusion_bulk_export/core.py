@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from . import checks
 from .journal import Journal, replay
-from .names import Names, clean, long_path, too_long
+from .names import NAME_LIMIT, Names, clean, file_kind, long_path, tag, too_long
 from .power import keep_awake
 from .staging import Staging
 
@@ -26,13 +26,23 @@ SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journa
 
 
 # Run counts, by what happened to each item this run.
-COUNT_KEYS = ('exported', 'up_to_date', 'skipped', 'failed')
+COUNT_KEYS = ('exported', 'up_to_date', 'files', 'skipped', 'failed')
 COUNT_OF_STATUS = {'done': 'exported', 'verified': 'up_to_date', 'skipped': 'skipped', 'failed': 'failed'}
+FILES_SAVED = 'files'  # the count of other files (not designs) saved this run
+
+
+def count_key(entry, status):
+    """The run count an item adds to: other files saved count apart from designs exported."""
+    if status == 'done' and entry is not None and entry.get('kind') == 'file':
+        return FILES_SAVED
+    return COUNT_OF_STATUS[status]
 
 
 def new_counts():
-    """exported: written this run; up_to_date: already exported and checked; skipped: not a
-    design (or no design product); failed: will be tried again on the next run."""
+    """exported: designs written this run; up_to_date: already exported and checked; files: other
+    files (PDFs, drawings, uploads) saved this run; skipped: not saved, with a reason (a file type
+    Fusion does not hand out, other files when only designs are wanted, a design without a design
+    product); failed: will be tried again on the next run."""
     return dict((key, 0) for key in COUNT_KEYS)
 
 
@@ -223,6 +233,33 @@ def sanitize(value, limit=42):
     return value[:limit].rstrip(' .') or '_'
 
 
+# Other files that are saved in another format: a drawing is saved as its PDF.
+SAVED_AS = {'f2d': 'pdf'}
+EXTENSION = re.compile(r'(?=.*[A-Za-z])[A-Za-z0-9]{1,8}')
+
+
+def file_name_parts(file):
+    """(name, extension) of another file on disk. Fusion's DataFile.name of an uploaded file
+    already ends in its real extension (and fileExtension can disagree with it), so the name is
+    trusted: "Manual.PDF" stays "Manual.PDF", "notes.scr" stays so even when Fusion calls it htm.
+    A name without an extension gets fileExtension; a drawing is saved as a PDF."""
+    name = str(file.name)
+    declared = str(getattr(file, 'fileExtension', '') or '').strip().strip('.')
+    if declared.lower() in SAVED_AS:
+        if name.lower().endswith('.' + declared.lower()) and len(name) > len(declared) + 1:
+            name = name[:-(len(declared) + 1)]
+        return name, SAVED_AS[declared.lower()]
+    stem, dot, suffix = name.rpartition('.')
+    if dot and stem.strip() and (suffix.lower() == declared.lower() or EXTENSION.fullmatch(suffix)):
+        return stem, clean(suffix, 16)
+    return name, (clean(declared, 16) if declared else '')
+
+
+def shorten_for(base, suffix):
+    """base cut so that base + "~1a2b" + suffix stays within one name's limit."""
+    return base[:max(NAME_LIMIT - len(suffix) - 9, 1)].rstrip(' .') or '_'
+
+
 def digest(value):
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
@@ -234,6 +271,23 @@ def file_info(path, root):
     stat = os.stat(long_path(path))
     return {'path': path.relative_to(root).as_posix(), 'sha256': sha256, 'bytes': stat.st_size,
             'mtime_ns': stat.st_mtime_ns}
+
+
+def drop_older_files(manifest):
+    """Remove entries of another file's older versions saved where a newer version has been
+    saved since (it replaced them on disk). Normally done as the newer one is saved; this
+    covers a run that stopped before its manifest was saved."""
+    newest = {}
+    for entry in manifest['entries']:
+        if entry.get('kind') == 'file' and entry.get('status') == 'done':
+            for info in entry.get('files') or []:
+                key = (entry.get('id'), info.get('path'))
+                if key not in newest or entry.get('version', 0) > newest[key].get('version', 0):
+                    newest[key] = entry
+    keep = set(id(entry) for entry in newest.values())
+    manifest['entries'] = [e for e in manifest['entries'] if not (
+        e.get('kind') == 'file' and e.get('status') == 'done' and id(e) not in keep
+        and any((e.get('id'), info.get('path')) in newest for info in e.get('files') or []))]
 
 
 def free_bytes(path):
@@ -326,6 +380,7 @@ class Exporter:
         # Items finished after the last full save (the previous run stopped without one).
         self.journal = Journal(self.root / 'manifest.journal')
         self.replayed = replay(self.manifest, self.journal.read())
+        drop_older_files(self.manifest)
         self.names = Names()
         for entry in self.manifest['entries']:
             self.names.remember(entry)
@@ -334,6 +389,7 @@ class Exporter:
         self.saved_at = time.monotonic()
         self.clock = time.monotonic
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
+        self.other_files = True
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
         self.manifest['runs'].append(self.run_info)
 
@@ -388,7 +444,7 @@ class Exporter:
         it is hashed only once; self.refreshed then says the entry changed. Full hashing of
         everything is checks.check_folder ("Check this folder")."""
         self.refreshed = False
-        if entry.get('status') != 'done' or len(entry.get('files', [])) != 2:
+        if entry.get('status') != 'done' or len(entry.get('files', [])) != (1 if entry.get('kind') == 'file' else 2):
             return False
         try:
             for expected in entry['files']:
@@ -423,6 +479,36 @@ class Exporter:
                 self.log('could not set a file time: ' + str(error))
                 return
 
+    def segments(self, hub, project, folders):
+        """[(cleaned name, identity), ...] from the output root to an item's folder."""
+        ids = getattr(folders, 'ids', None) or [None] * len(folders)
+        segments = [(clean(hub.name), 'hub:' + str(hub.id)), (clean(project.name), 'project:' + str(project.id))]
+        for index, (name, identity) in enumerate(zip(folders, ids)):
+            segments.append((clean(name), 'folder:' + identity if identity is not None else
+                             'path:' + json.dumps([str(project.id)] + list(folders[:index + 1]), ensure_ascii=False)))
+        return segments
+
+    def short_directory(self, hub, project, folders):
+        """The folder of the layout of schema 1: 12 ASCII characters and a hash per name."""
+        def segment(obj):
+            return sanitize(obj.name, 12) + '~' + digest(str(obj.id))[:8]
+        directory = self.root / segment(hub) / segment(project)
+        if folders:
+            directory /= 'folders~' + digest(json.dumps([str(project.id)] + list(folders), ensure_ascii=False))[:16]
+        return directory
+
+    def make_directory(self, directory):
+        """True when the folder exists now; False when it cannot be created (the item then goes to
+        the shortened layout). Raises when the output folder as a whole is unusable."""
+        try:
+            os.makedirs(long_path(directory), exist_ok=True)
+            return True
+        except OSError as error:
+            if self.trouble(error) is not None:
+                raise
+            self.log('cannot create a folder, using the shortened layout: ' + str(error))
+            return False
+
     def destination(self, hub, project, folders, file, short=False):
         """Where a design goes: (stem path without extension, facts for its manifest entry).
 
@@ -432,38 +518,66 @@ class Exporter:
         to the shortened layout of earlier versions instead, recorded as shortened: true."""
         version = ' v' + str(int(file.versionNumber))
         if not short:
-            ids = getattr(folders, 'ids', None) or [None] * len(folders)
-            segments = [(clean(hub.name), 'hub:' + str(hub.id)), (clean(project.name), 'project:' + str(project.id))]
-            for index, (name, identity) in enumerate(zip(folders, ids)):
-                segments.append((clean(name), 'folder:' + identity if identity is not None else
-                                 'path:' + json.dumps([str(project.id)] + list(folders[:index + 1]), ensure_ascii=False)))
+            segments = self.segments(hub, project, folders)
             parts, base = self.names.place(segments, clean(file.name), 'file:' + str(file.id))
             directory = self.root.joinpath(*parts)
             stem = directory / (base + version)
             facts = dict(location='/'.join(parts), identities=[identity for _, identity in segments],
                          base=base, shortened=False)
-            if not too_long(str(stem) + '.step', self.platform):
-                try:
-                    os.makedirs(long_path(directory), exist_ok=True)
-                    return stem, facts
-                except OSError as error:
-                    if self.trouble(error) is not None:
-                        raise
-                    self.log('cannot create a folder, using the shortened layout: ' + str(error))
-        # The layout of schema 1: 12 ASCII characters and a hash per name.
-        def segment(obj):
-            return sanitize(obj.name, 12) + '~' + digest(str(obj.id))[:8]
-        directory = self.root / segment(hub) / segment(project)
-        if folders:
-            directory /= 'folders~' + digest(json.dumps([str(project.id)] + list(folders), ensure_ascii=False))[:16]
+            if not too_long(str(stem) + '.step', self.platform) and self.make_directory(directory):
+                return stem, facts
+        directory = self.short_directory(hub, project, folders)
         stem = directory / (sanitize(file.name, 12) + '~' + digest(str(file.id))[:24] + version)
         if too_long(str(stem) + '.step', self.platform):
             raise ValueError('The export path is too long even when shortened; choose a shorter output folder.')
         os.makedirs(long_path(directory), exist_ok=True)
         return stem, dict(location=None, identities=None, base=None, shortened=True)
 
+    def file_destination(self, hub, project, folders, file, owned=()):
+        """Where another file (not a design) goes: (path, facts for its manifest entry). It keeps
+        its own name and extension, "<name>.<extension>", in the same layout as designs; the
+        "~1a2b" suffix, where needed, goes before the extension. A newer version of the file
+        replaces the older one at the same path."""
+        name, extension = file_name_parts(file)
+        suffix = '.' + extension if extension else ''
+        identity = 'file:' + str(file.id)
+        segments = self.segments(hub, project, folders)
+        kind = file_kind(extension)
+        parts, base = self.names.place(segments, clean(name, NAME_LIMIT - len(suffix)), identity, kind)
+        location = '/'.join(parts)
+        if os.path.lexists(long_path(self.root.joinpath(*parts) / (base + suffix))) and \
+                (location + '/' + base + suffix) not in (self.paths_of(file.id) | set(owned)):
+            # Something else is there already (a design's export of that name, say): keep both.
+            base = self.names.claim(location, kind, shorten_for(base, suffix) + '~' + tag(identity), identity)
+        directory = self.root.joinpath(*parts)
+        target = directory / (base + suffix)
+        facts = dict(location=location, identities=[identity for _, identity in segments], base=base,
+                     extension=extension, shortened=False)
+        if not too_long(str(target), self.platform) and self.make_directory(directory):
+            return target, facts
+        directory = self.short_directory(hub, project, folders)
+        target = directory / (sanitize(name, 12) + '~' + digest(str(file.id))[:24] + sanitize(suffix, 16))
+        if too_long(str(target), self.platform):
+            raise ValueError('The export path is too long even when shortened; choose a shorter output folder.')
+        os.makedirs(long_path(directory), exist_ok=True)
+        return target, dict(location=None, identities=None, base=None, extension=extension, shortened=True)
+
+    def paths_of(self, file_id):
+        """Relative paths recorded for any version of this cloud file."""
+        return {info.get('path') for entry in self.manifest['entries'] if entry.get('id') == str(file_id)
+                for info in entry.get('files') or []}
+
+    def drop_replaced(self, entry, entries):
+        """After a newer version of another file was saved over the same path: the older
+        versions' entries describe a file that is gone, so they go."""
+        paths = {info['path'] for info in entry['files']}
+        for old in [e for e in self.manifest['entries'] if e is not entry and e.get('kind') == 'file'
+                    and e.get('id') == entry['id'] and {i.get('path') for i in e.get('files') or []} & paths]:
+            self.manifest['entries'].remove(old)
+            entries.pop(old['key'], None)
+
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None):
+            on_trouble=None, other_files=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         progress(state) is called while listing and before each design, with a dict:
@@ -478,7 +592,12 @@ class Exporter:
         failing in a row, as when offline or signed out), on_trouble(reason, last_error) is
         asked: 'retry' carries on (designs failed so far are retried on the next run), anything
         else stops. Without on_trouble it stops. run_info['stopped_reason'] then says why.
+
+        other_files: also save the files that are not designs (PDFs, drawings, uploads) as
+        Fusion hands them out; when false they are skipped as "Not a Fusion design".
         """
+        self.other_files = bool(other_files)
+        self.run_info['other_files'] = self.other_files
         counts = new_counts()
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
@@ -562,7 +681,7 @@ class Exporter:
                         if problem is None:
                             raise
                         status = 'failed'
-                    if status != 'verified':
+                    if status != 'verified' and str(file.fileExtension).lower() == 'f3d':
                         timing['seconds'] += self.clock() - began
                         timing['designs'] += 1
                     if status == 'done':
@@ -598,9 +717,11 @@ class Exporter:
         return counts
 
     def export_one(self, hub, project, folders, file, entries, counts):
-        """Export one file; returns its status. Raises Trouble when the run must stop."""
+        """Export one design or save one other file; returns its status. Raises Trouble when
+        the run must stop."""
         self.last_error = None
         key = json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
+        kind = 'design' if str(file.fileExtension).lower() == 'f3d' else 'file'
         entry = entries.get(key)
         if entry and self.valid(entry):
             counts[COUNT_OF_STATUS['verified']] += 1
@@ -608,65 +729,108 @@ class Exporter:
             if self.refreshed:
                 self.record(entry)  # its files' times were recorded now; else nothing to save
             return 'verified'
-        entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': list(folders),
+        entry = {'key': key, 'kind': kind, 'hub': hub.name, 'project': project.name, 'path': list(folders),
                  'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
                  'date': file.dateModified, 'files': [], 'status': 'skipped', 'error': None,
                  'attempts': 0}
         # Fusion dateModified is a Unix timestamp, retained without conversion.
+        owned = set()  # paths this item's earlier record held: it may write over them
         if key in entries:
+            owned = {info.get('path') for info in entries[key].get('files') or []}
             self.manifest['entries'].remove(entries[key])
         self.manifest['entries'].append(entry)
         entries[key] = entry
         trouble = None
-        if file.fileExtension.lower() != 'f3d':
-            entry['error'] = 'Not a Fusion design: ' + file.fileExtension
+        if kind == 'file':
+            if self.other_files and hasattr(self.adapter, 'download'):
+                trouble = self.save_file(hub, project, folders, file, entry, entries, owned)
+            else:
+                entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
-            stem = None
-            for attempt in range(2):
-                entry['attempts'] = attempt + 1
-                try:
-                    if hasattr(self.adapter, 'references'):
-                        entry['references'] = self.adapter.references(file)
-                    stem, facts = self.destination(hub, project, folders, file)
-                    entry.update(facts)
-                    written = self.adapter.export(file, stem)
-                    paths = [path for path in written if not str(path).lower().endswith('.png')]
-                    pictures = [path for path in written if str(path).lower().endswith('.png')]
-                    details = dict(getattr(self.adapter, 'details', None) or {})
-                    # Quick checks now: a broken file is retried; an empty STEP is a warning.
-                    facts = checks.inline(paths, details.get('visible_solid_bodies'),
-                                          details.get('visible_solid_bodies_distinct'))
-                    # Files get the design's date first, then are recorded with that time.
-                    self.set_times(paths + pictures, file)
-                    entry['files'] = [file_info(Path(path), self.root) for path in paths]
-                    entry.pop('thumbnail', None)
-                    if pictures:
-                        entry['thumbnail'] = file_info(Path(pictures[0]), self.root)
-                    entry.update(details)
-                    entry.update(facts)
-                    entry.update(status='done', error=None)
-                    break
-                except NonDesign as error:
-                    if self.error_callback:
-                        self.error_callback(key, error)
-                    entry.update(status='skipped', error=str(error))
-                    break
-                except Exception as error:
-                    if self.error_callback:
-                        self.error_callback(key, error)
-                    entry.update(status='failed', error=str(error), files=[])
-                    self.last_error = str(error)
-                    self.log('attempt failed ' + key + ': ' + str(error))
-                    trouble = self.trouble(error)
-                    if trouble is not None:
-                        break  # a second attempt cannot succeed either
-        counts[COUNT_OF_STATUS[entry['status']]] += 1
+            trouble = self.export_design(hub, project, folders, file, entry, key)
+        counts[count_key(entry, entry['status'])] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
             raise trouble  # the run's final save keeps this entry if the disk still allows
         self.record(entry)
         return entry['status']
 
+    def export_design(self, hub, project, folders, file, entry, key):
+        """Write a design's .f3d and STEP (two attempts); the Trouble that stops the run, or None."""
+        for attempt in range(2):
+            entry['attempts'] = attempt + 1
+            try:
+                if hasattr(self.adapter, 'references'):
+                    entry['references'] = self.adapter.references(file)
+                stem, facts = self.destination(hub, project, folders, file)
+                entry.update(facts)
+                written = self.adapter.export(file, stem)
+                paths = [path for path in written if not str(path).lower().endswith('.png')]
+                pictures = [path for path in written if str(path).lower().endswith('.png')]
+                details = dict(getattr(self.adapter, 'details', None) or {})
+                # Quick checks now: a broken file is retried; an empty STEP is a warning.
+                facts = checks.inline(paths, details.get('visible_solid_bodies'),
+                                      details.get('visible_solid_bodies_distinct'))
+                # Files get the design's date first, then are recorded with that time.
+                self.set_times(paths + pictures, file)
+                entry['files'] = [file_info(Path(path), self.root) for path in paths]
+                entry.pop('thumbnail', None)
+                if pictures:
+                    entry['thumbnail'] = file_info(Path(pictures[0]), self.root)
+                entry.update(details)
+                entry.update(facts)
+                entry.update(status='done', error=None)
+                return None
+            except NonDesign as error:
+                if self.error_callback:
+                    self.error_callback(key, error)
+                entry.update(status='skipped', error=str(error))
+                return None
+            except Exception as error:
+                if self.error_callback:
+                    self.error_callback(key, error)
+                entry.update(status='failed', error=str(error), files=[])
+                self.last_error = str(error)
+                self.log('attempt failed ' + key + ': ' + str(error))
+                trouble = self.trouble(error)
+                if trouble is not None:
+                    return trouble  # a second attempt cannot succeed either
+        return None
+
+    def save_file(self, hub, project, folders, file, entry, entries, owned=()):
+        """Save another file (PDF, drawing, upload) as Fusion hands it out, under its own name.
+        Anything Fusion does not hand out is a skip with the reason (it is tried again on the next
+        run); only a full disk or a lost output folder is a failure. Returns the Trouble that
+        stops the run, or None."""
+        entry['attempts'] = 1
+        try:
+            target, facts = self.file_destination(hub, project, folders, file, owned)
+            entry.update(facts)
+            path = Path(self.adapter.download(file, target))
+            self.set_times([path], file)
+            entry['files'] = [file_info(path, self.root)]
+            entry.update(status='done', error=None)
+            self.drop_replaced(entry, entries)
+            return None
+        except NotSaved as error:
+            entry.update(status='skipped', error=str(error), files=[])
+            return None
+        except Exception as error:
+            if self.error_callback:
+                self.error_callback(entry['key'], error)
+            self.log('saving failed ' + entry['key'] + ': ' + str(error))
+            trouble = self.trouble(error)
+            if trouble is not None:
+                entry.update(status='failed', error=str(error), files=[])
+                self.last_error = str(error)
+                return trouble
+            entry.update(status='skipped', error='Not saved: ' + str(error), files=[])
+            return None
+
 
 class NonDesign(Exception):
     """A file opened successfully but contains no Fusion Design product."""
+
+
+class NotSaved(Exception):
+    """Fusion did not hand out another file (not a design); the message says why."""

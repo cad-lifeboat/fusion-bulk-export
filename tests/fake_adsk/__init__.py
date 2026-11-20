@@ -34,6 +34,37 @@ class File:
         self.failures = 0
         self.calls = 0
         self.documents = []
+        # DataFile.download(folder, None): how the synthetic Fusion answers ('ok', 'false',
+        # 'raise', 'nothing', 'two' files, or 'pdf': the file comes down as a PDF), and what.
+        self.download_mode = 'ok'
+        # A drawing (.f2d): how its PDF export behaves: 'now', 'later' (written a few doEvents
+        # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false'.
+        self.pdf_mode = 'now'
+        self.products_flaky = 0
+        self.content = b'Synthetic file content of ' + identity.encode('utf-8')
+        self.downloads = []
+
+    def download(self, path, handler):
+        """Documented form: download(path, handler); with no handler it is synchronous and
+        returns whether it worked. Writes the file under its name into the folder path."""
+        assert handler is None
+        self.downloads.append(path)
+        assert len(path) <= 259 and not path.startswith('\\\\?\\'), 'Fusion would hang on ' + path
+        if str(self.fileExtension).lower() in ('f2d', 'fsch', 'fbrd', 'flbr'):
+            raise RuntimeError('3 : file type not available for download')  # as real Fusion does
+        if self.download_mode == 'raise':
+            raise RuntimeError('Synthetic download failure')
+        if self.download_mode == 'false':
+            return False
+        if self.download_mode == 'nothing':
+            return True
+        # Like Fusion: a folder gets the file under its name (which, for an uploaded file, already
+        # holds its extension); a file path is written as given.
+        target = Path(path, self.name) if Path(path).is_dir() else Path(path)
+        target.write_bytes(self.content)
+        if self.download_mode == 'two':
+            Path(target.parent, 'second').write_bytes(self.content)
+        return True
 
 
 def folder(name='Root', files=(), folders=(), identity=None):
@@ -87,6 +118,40 @@ def thumbnail(state='finished', data=PNG):
     return NS(state=states[state], dataObject=NS(saveToFile=save) if state == 'finished' else None)
 
 
+PENDING = []  # writes the synthetic Fusion does a little later (on doEvents)
+
+
+def do_events():
+    """adsk.doEvents for tests that need Fusion's late work done: runs one pending write."""
+    if PENDING:
+        PENDING.pop(0)()
+
+
+class DrawingManager:
+    """DrawingExportManager of a synthetic drawing."""
+    def __init__(self, file):
+        self.file = file
+
+    def createPDFExportOptions(self, path):
+        return NS(filename=path, openPDF=True, sheetRange=0, sheetsToExport=0, useLineWeights=True)
+
+    def execute(self, options):
+        path = options.filename
+        assert len(path) <= 259 and not path.startswith('\\\\?\\'), 'Fusion would hang on ' + path
+        assert options.openPDF is False, 'a PDF viewer would open'
+        mode = self.file.pdf_mode
+        if mode == 'false':
+            return False
+
+        def write():
+            Path(path).write_bytes(b'%PDF-1.4 synthetic drawing')
+        if mode == 'now':
+            write()
+        elif mode == 'later':
+            PENDING.extend([lambda: None, lambda: None, write])
+        return True
+
+
 def write_archive(path):
     """A small zip with the members of a Fusion archive (no real CAD data)."""
     with zipfile.ZipFile(path, 'w') as archive:
@@ -138,9 +203,21 @@ class Document:
             part = component('part', [body(shown=False)])
             root = component('root', [body(), body(solid=False)], [occurrence(part)])
             components = [root, part]
-        self.products = NS(itemByProductType=lambda product: NS(
+        self._products = NS(itemByProductType=lambda product: NS(
             exportManager=Manager(file), rootComponent=root,
             allComponents=Collection(*components)) if file.design else None)
+        if str(file.fileExtension).lower() == 'f2d':
+            # A drawing: its products hold one Drawing with a DrawingExportManager.
+            self._products = Collection(NS(objectType='adsk::drawing::Drawing',
+                                           exportManager=DrawingManager(file)))
+
+    @property
+    def products(self):
+        # Seen on real Fusion: reading a just-opened drawing's products can fail once.
+        if self.dataFile.products_flaky:
+            self.dataFile.products_flaky -= 1
+            raise RuntimeError('2 : InternalValidationError : adapter')
+        return self._products
 
     def close(self, save):
         assert save is False
@@ -176,6 +253,7 @@ def install():
         return
     adsk = ModuleType('adsk')
     adsk._synthetic = True
+    adsk.doEvents = lambda: None
     adsk.core = ModuleType('adsk.core')
     adsk.fusion = ModuleType('adsk.fusion')
     adsk.fusion.Design = NS(cast=lambda value: value)

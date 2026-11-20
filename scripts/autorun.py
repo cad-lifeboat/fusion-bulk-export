@@ -3,8 +3,10 @@
 
   autorun.py inventory OUTPUT                       list everything, open nothing
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
-                    [--folder ID:id=FOLDER_ID ...] [--limit N]
-                                                    export (rerun the same command to resume)
+                    [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only]
+                                                    export (rerun the same command to resume);
+                                                    other files (PDFs, drawings, uploads) are
+                                                    saved too unless --designs-only
   autorun.py status OUTPUT                          counts so far (no design names)
   autorun.py check OUTPUT                           check every exported file again (full hashes,
                                                     archives, STEP files); needs no Fusion
@@ -133,7 +135,7 @@ def folder_map(values):
     return folders or None
 
 
-def install(installed, output, mode, projects=None, limit=None, folders=None):
+def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):
     output.mkdir(parents=True, exist_ok=True)
     for stale in ('autorun-result.json', 'STOP'):
         try:
@@ -158,14 +160,16 @@ def install(installed, output, mode, projects=None, limit=None, folders=None):
         config['folders'] = folders
     if limit:
         config['limit'] = limit
+    if designs_only:
+        config['designs_only'] = True
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
 
 
 def count_line(counts):
     """The run's counts in words; results of versions before 0.3 had done/failed/skipped."""
     if 'exported' in counts:
-        return ('Counts: %d exported now, %d already up to date, %d skipped, %d failed'
-                % tuple(counts.get(key, 0) for key in ('exported', 'up_to_date', 'skipped', 'failed')))
+        return ('Counts: %d exported now, %d already up to date, %d other files saved, %d skipped, %d failed'
+                % tuple(counts.get(key, 0) for key in ('exported', 'up_to_date', 'files', 'skipped', 'failed')))
     return 'Counts: ' + json.dumps(counts, sort_keys=True)
 
 
@@ -189,11 +193,16 @@ def summary(output):
     manifest = output / 'manifest.json'
     if manifest.is_file():
         entries = json.loads(manifest.read_text(encoding='utf-8')).get('entries', [])
-        statuses = {}
-        for entry in entries:
-            statuses[entry.get('status')] = statuses.get(entry.get('status'), 0) + 1
         size = sum(f.get('bytes', 0) for e in entries if e.get('status') == 'done' for f in e.get('files', []))
-        lines.append('Manifest: %d entries %s, %d bytes' % (len(entries), json.dumps(statuses, sort_keys=True), size))
+        for label, kind in (('Manifest', None), ('Designs', 'design'), ('Other files', 'file')):
+            chosen = [e for e in entries if kind is None or (e.get('kind') or 'design') == kind]
+            if kind is not None and not chosen:
+                continue
+            statuses = {}
+            for entry in chosen:
+                statuses[entry.get('status')] = statuses.get(entry.get('status'), 0) + 1
+            lines.append('%s: %d entries %s%s' % (label, len(chosen), json.dumps(statuses, sort_keys=True),
+                                                  ', %d bytes' % size if kind is None else ''))
         warned = sum(1 for e in entries if e.get('status') == 'done' and e.get('warnings'))
         if warned:
             lines.append('Warnings: %d item(s) exported with a warning (see the report)' % warned)
@@ -252,7 +261,7 @@ def start(args):
     installed = addins_dir(name) / 'FusionBulkExport'
     watching = alive(installed)
     install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
-            folder_map(getattr(args, 'folder', None)))
+            folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False))
     if watching:
         return wait(installed, output, args.timeout)
     if fusion_running(name):
@@ -324,6 +333,8 @@ def main(argv=None):
                            help='a folder (and its subfolders) in project ID, by names (ID:Parts/Brackets) or by '
                                 'folder id (ID:id=FOLDER_ID, see folder_ids in inventory.json); repeatable')
             p.add_argument('--limit', type=int, help='export at most this many designs')
+            p.add_argument('--designs-only', action='store_true',
+                           help='skip other files (PDFs, drawings, uploads); by default they are saved too')
     sub.add_parser('reset', help='clear stale job files (the button is always available)')
     args = parser.parse_args(argv)
     if args.command == 'reset':

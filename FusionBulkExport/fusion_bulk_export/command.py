@@ -101,8 +101,9 @@ def show_summary(ui, text, output, page, opener):
     return target
 
 
-def export(app, selection, output, opener=None):
-    """Export into output with progress, then write the report and show the summary."""
+def export(app, selection, output, opener=None, other_files=True):
+    """Export into output with progress, then write the report and show the summary.
+    other_files: also save the files that are not designs (the dialog's checkbox)."""
     ui = app.userInterface
     if not has_hubs(app):
         raise errors.no_hubs()
@@ -128,7 +129,8 @@ def export(app, selection, output, opener=None):
             return answer
 
         try:
-            counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble)
+            counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
+                                  other_files=other_files)
         except Exception as error:
             known = errors.friendly(error)
             if known is None:

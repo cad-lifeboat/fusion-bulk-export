@@ -153,7 +153,7 @@ class ExportTests(unittest.TestCase):
     def test_archive_references_step_and_manifest(self):
         a, b = fake.File(), fake.File('Assembly', 'assembly', references=True)
         _, counts = self.run_export(fake.data([a, b]))
-        self.assertEqual(counts, dict(exported=2, up_to_date=0, skipped=0, failed=0))
+        self.assertEqual(counts, dict(exported=2, up_to_date=0, files=0, skipped=0, failed=0))
         for entry in self.manifest['entries']:
             self.assertEqual(entry['version'], 3)
             self.assertEqual(entry['date'], 1700000000)
@@ -456,11 +456,180 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(b.calls, 1)
 
     def test_non_design_skipped(self):
-        files = [fake.File(extension='f2d'), fake.File(identity='cam', design=False), fake.File(extension='txt')]
-        _, counts = self.run_export(fake.data(files))
+        files = [fake.File(identity='drawing', extension='f2d'), fake.File(identity='cam', design=False),
+                 fake.File(identity='text', extension='txt')]
+        _, counts = self.run_export(fake.data(files), other_files=False)
         self.assertEqual(counts['skipped'], 3)
-        self.assertEqual(files[0].calls, 0)
+        self.assertEqual((files[0].calls, files[0].downloads), (0, []))
+        self.assertEqual([e['kind'] for e in self.manifest['entries']], ['file', 'design', 'file'])
         self.assertTrue(all(e['status'] == 'skipped' and e['error'] for e in self.manifest['entries']))
+
+    def test_other_files_are_saved_under_their_own_names(self):
+        # As on real Fusion, an uploaded file's name already holds its extension.
+        spec, manual = fake.File('Spec.pdf', 'spec', extension='pdf'), fake.File('Manual.PDF', 'manual', extension='pdf')
+        picture = fake.File('Photo.jpg', 'photo', extension='jpg')
+        script = fake.File('notes.scr', 'script', extension='htm')  # fileExtension can disagree: trust the name
+        design = fake.File('Part', 'part')
+        data = fake.data([design], [fake.folder('Docs', [spec, manual, picture, script], identity='docs')])
+        _, counts = self.run_export(data)
+        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=4, skipped=0, failed=0))
+        entries = {e['id']: e for e in self.manifest['entries']}
+        self.assertEqual([f['path'] for f in entries['spec']['files']], ['Hub/Project/Docs/Spec.pdf'])
+        self.assertEqual(entries['manual']['files'][0]['path'], 'Hub/Project/Docs/Manual.PDF')
+        self.assertEqual(entries['photo']['files'][0]['path'], 'Hub/Project/Docs/Photo.jpg')
+        self.assertEqual(entries['script']['files'][0]['path'], 'Hub/Project/Docs/notes.scr')
+        self.assertEqual((entries['spec']['kind'], entries['part']['kind']), ('file', 'design'))
+        self.assertEqual((entries['spec']['base'], entries['spec']['extension']), ('Spec', 'pdf'))
+        path = self.root / 'Hub/Project/Docs/Spec.pdf'
+        self.assertEqual(path.read_bytes(), spec.content)
+        self.assertEqual(path.stat().st_mtime, 1700000000)  # the file's date in Fusion
+        self.assertEqual(entries['spec']['files'][0]['bytes'], len(spec.content))
+        # Fusion is given a short file path in a fresh staging folder, which is gone afterwards.
+        self.assertEqual(Path(spec.downloads[0]).parent.parent, self.root / '.staging')
+        self.assertLess(len(spec.downloads[0]), 260)
+        self.assertFalse((self.root / '.staging').exists())
+        self.assertEqual(sorted(p.name for p in (self.root / 'Hub/Project/Docs').iterdir()),
+                         ['Manual.PDF', 'Photo.jpg', 'Spec.pdf', 'notes.scr'])
+        self.assertEqual(spec.calls, 0)  # never opened as a document
+        _, counts = self.run_export(data)
+        self.assertEqual(counts, dict(exported=0, up_to_date=5, files=0, skipped=0, failed=0))
+        self.assertEqual(len(spec.downloads), 1)
+        path.write_bytes(b'damaged')
+        _, counts = self.run_export(data)
+        self.assertEqual((counts['files'], len(spec.downloads)), (1, 2))
+        self.assertEqual(path.read_bytes(), spec.content)
+
+    def test_a_name_without_an_extension_gets_fusions(self):
+        from fusion_bulk_export.core import file_name_parts
+        self.assertEqual(file_name_parts(fake.File('Rev 1.2', extension='pdf')), ('Rev 1.2', 'pdf'))
+        self.assertEqual(file_name_parts(fake.File('Notes', extension='txt')), ('Notes', 'txt'))
+        self.assertEqual(file_name_parts(fake.File('Sheet', extension='f2d')), ('Sheet', 'pdf'))
+        self.assertEqual(file_name_parts(fake.File('.hidden', extension='')), ('.hidden', ''))
+
+    def test_files_fusion_does_not_hand_out_are_skipped_with_the_reason(self):
+        cases = {'false': 'Fusion did not download it', 'raise': 'Synthetic download failure',
+                 'nothing': 'wrote no file'}
+        files = []
+        for mode in cases:
+            file = fake.File('File %s.pdf' % mode, mode, extension='pdf')
+            file.download_mode = mode
+            files.append(file)
+        boards = [fake.File('Board', 'board', extension='fbrd'), fake.File('Schematic', 'sch', extension='fsch')]
+        _, counts = self.run_export(fake.data(files + boards))
+        self.assertEqual(counts, dict(exported=0, up_to_date=0, files=0, skipped=5, failed=0))
+        entries = {e['id']: e for e in self.manifest['entries']}
+        for mode, reason in cases.items():
+            self.assertEqual(entries[mode]['status'], 'skipped')
+            self.assertIn(reason, entries[mode]['error'])
+            self.assertEqual(entries[mode]['files'], [])
+        self.assertEqual(entries['board']['error'], 'Fusion cannot export this file type through its API (.fbrd)')
+        self.assertEqual([b.downloads for b in boards], [[], []])  # not even asked: no extra API calls
+        self.assertEqual([p.name for p in (self.root / 'Hub' / 'Project').iterdir()], [])  # nothing left over
+        for file in files:
+            file.download_mode = 'ok'
+        _, counts = self.run_export(fake.data(files + boards))  # skips are tried again
+        self.assertEqual((counts['files'], counts['skipped']), (3, 2))
+
+    def test_a_drawing_is_saved_as_its_pdf(self):
+        drawing = fake.File('Sheet A', 'drawing', extension='f2d', references=2)
+        drawing.products_flaky = 1  # the first read right after opening fails, as seen on real Fusion
+        with patch('fusion_bulk_export.fusion.time.sleep'):
+            _, counts = self.run_export(fake.data([drawing]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual((counts['files'], entry['kind'], entry['status']), (1, 'file', 'done'))
+        self.assertEqual(entry['files'][0]['path'], 'Hub/Project/Sheet A.pdf')
+        self.assertTrue((self.root / 'Hub/Project/Sheet A.pdf').read_bytes().startswith(b'%PDF'))
+        self.assertEqual(self.app.documents.items, [])  # the drawing and what it pulled in are closed
+        self.assertEqual(drawing.downloads, [])
+        _, counts = self.run_export(fake.data([drawing]))
+        self.assertEqual(counts['up_to_date'], 1)
+
+    def test_a_drawing_pdf_written_late_is_waited_for(self):
+        drawing = fake.File('Sheet', 'drawing', extension='f2d')
+        drawing.pdf_mode = 'later'
+        with patch('fusion_bulk_export.fusion.adsk.doEvents', fake.do_events, create=True), \
+                patch('fusion_bulk_export.fusion.time.sleep'):
+            _, counts = self.run_export(fake.data([drawing]))
+        self.assertEqual(counts['files'], 1)
+
+    def test_a_drawing_pdf_that_never_appears_is_a_skip_and_not_retried_this_run(self):
+        from fusion_bulk_export import fusion
+        first, second = fake.File('One', 'one', extension='f2d'), fake.File('Two', 'two', extension='f2d')
+        refused = fake.File('Three', 'three', extension='f2d')
+        first.pdf_mode = second.pdf_mode = 'never'
+        with patch.object(fusion, 'PDF_WAIT_SECONDS', 0.05), patch('fusion_bulk_export.fusion.time.sleep'):
+            _, counts = self.run_export(fake.data([first, second]))
+        self.assertEqual(counts['skipped'], 2)
+        self.assertEqual([e['error'] for e in self.manifest['entries']], ['Fusion did not write the drawing PDF'] * 2)
+        self.assertEqual((first.calls, second.calls), (1, 0))  # the second was not opened: no wait
+        self.assertEqual(self.app.documents.items, [])
+        refused.pdf_mode = 'false'
+        self.adapter.pdf_broken = None
+        self.run_export(fake.data([refused]))
+        self.assertIn('Fusion cannot export this file type through its API (.f2d',
+                      self.manifest['entries'][-1]['error'])
+
+    def test_full_disk_while_saving_a_file_stops_the_run(self):
+        a, b = fake.File('A.pdf', 'a', extension='pdf'), fake.File('B.pdf', 'b', extension='pdf')
+
+        def full(path, handler):
+            raise OSError(errno.ENOSPC, 'No space left on device')
+        a.download = full
+        exporter, counts = self.run_export(fake.data([a, b]))
+        self.assertEqual(exporter.run_info['stopped_code'], 'disk_full')
+        self.assertEqual((counts['failed'], b.downloads), (1, []))
+
+    def test_same_named_files_and_a_file_named_like_an_export(self):
+        one, two = fake.File('Spec', 'one', extension='pdf'), fake.File('spec', 'two', extension='pdf')
+        other_type = fake.File('Spec', 'three', extension='txt')
+        design = fake.File('Bracket', 'bracket')
+        lookalike = fake.File('Bracket v3', 'lookalike', extension='step')
+        data = fake.data([one, two, other_type, design, lookalike])
+        self.run_export(data)
+        paths = {e['id']: [f['path'] for f in e['files']] for e in self.manifest['entries']}
+        self.assertEqual(paths['one'], ['Hub/Project/Spec.pdf'])
+        self.assertEqual(paths['two'], ['Hub/Project/spec~%s.pdf' % names.tag('file:two')])
+        self.assertEqual(paths['three'], ['Hub/Project/Spec.txt'])  # another extension: no clash
+        self.assertEqual(paths['lookalike'], ['Hub/Project/Bracket v3~%s.step' % names.tag('file:lookalike')])
+        self.assertEqual((self.root / 'Hub/Project/Bracket v3.step').read_bytes(), fake.step_text(1))
+        two.versionNumber = 4
+        self.run_export(data)  # names rebuilt from the manifest on the next run: the same choices
+        self.assertEqual([f['path'] for e in self.manifest['entries'] if e['id'] == 'two' for f in e['files']],
+                         ['Hub/Project/spec~%s.pdf' % names.tag('file:two')])
+
+    def test_a_new_version_of_a_file_replaces_the_old_one(self):
+        spec = fake.File('Spec', 'spec', extension='pdf')
+        self.run_export(fake.data([spec]))
+        spec.versionNumber, spec.content = 4, b'version four'
+        _, counts = self.run_export(fake.data([spec]))
+        self.assertEqual(counts['files'], 1)
+        self.assertEqual([(e['version'], e['files'][0]['path']) for e in self.manifest['entries']],
+                         [(4, 'Hub/Project/Spec.pdf')])
+        self.assertEqual((self.root / 'Hub/Project/Spec.pdf').read_bytes(), b'version four')
+        # Both versions in the manifest (a run that stopped before saving it): the older one goes.
+        manifest = json.loads((self.root / 'manifest.json').read_text())
+        older = dict(manifest['entries'][0], version=3, key='["old"]')
+        manifest['entries'].insert(0, older)
+        (self.root / 'manifest.json').write_text(json.dumps(manifest))
+        self.assertEqual([e['version'] for e in Exporter(self.root, self.adapter).manifest['entries']], [4])
+
+    def test_designs_only_skips_other_files(self):
+        spec = fake.File('Spec', 'spec', extension='pdf')
+        exporter, counts = self.run_export(fake.data([spec, fake.File()]), other_files=False)
+        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=0, skipped=1, failed=0))
+        self.assertEqual(spec.downloads, [])
+        self.assertFalse(exporter.run_info['other_files'])
+        self.assertEqual(self.manifest['entries'][0]['error'], 'Not a Fusion design: pdf')
+
+    def test_check_folder_covers_other_files(self):
+        from fusion_bulk_export import checks
+        spec = fake.File('Spec', 'spec', extension='pdf')
+        self.run_export(fake.data([spec, fake.File()]))
+        totals = checks.check_folder(self.root)
+        self.assertEqual((totals['designs'], totals['other_files'], totals['failed_checks']), (1, 1, 0))
+        (self.root / 'Hub/Project/Spec.pdf').write_bytes(b'Synthetic file content of spe!')
+        totals = checks.check_folder(self.root)
+        self.assertEqual((totals['changed'], totals['failed_checks']), (1, 1))
 
     def test_atomic_write_leaves_old_manifest_on_replace_failure(self):
         target = self.root / 'manifest.json'
@@ -651,7 +820,7 @@ class ExportTests(unittest.TestCase):
         (self.root / 'manifest.json').write_text(json.dumps(dict(schema=1, runs=[{}], entries=[entry])))
         new = fake.File('New', 'new')
         _, counts = self.run_export(fake.data([old, new]))
-        self.assertEqual(counts, dict(exported=1, up_to_date=1, skipped=0, failed=0))
+        self.assertEqual(counts, dict(exported=1, up_to_date=1, files=0, skipped=0, failed=0))
         self.assertEqual(old.calls, 0)
         self.assertEqual(self.manifest['schema'], 2)
         self.assertEqual(self.manifest['entries'][0], entry)  # untouched, files where they were
@@ -757,7 +926,7 @@ class ExportTests(unittest.TestCase):
     def test_five_failures_in_a_row_stop_and_retry_next_run(self):
         files = self.failing_files(7)
         exporter, counts = self.run_export(fake.data(files))
-        self.assertEqual(counts, dict(exported=0, up_to_date=0, skipped=0, failed=5))
+        self.assertEqual(counts, dict(exported=0, up_to_date=0, files=0, skipped=0, failed=5))
         self.assertEqual([f.calls for f in files], [2] * 5 + [0, 0])
         self.assertIn('5 designs in a row failed', exporter.run_info['stopped_reason'])
         self.assertEqual(exporter.run_info['stopped_code'], 'failing')
@@ -772,7 +941,7 @@ class ExportTests(unittest.TestCase):
     def test_a_success_resets_the_failure_count(self):
         files = self.failing_files(4) + [fake.File(identity='good')] + self.failing_files(4)
         exporter, counts = self.run_export(fake.data(files))
-        self.assertEqual(counts, dict(exported=1, up_to_date=0, skipped=0, failed=8))
+        self.assertEqual(counts, dict(exported=1, up_to_date=0, files=0, skipped=0, failed=8))
         self.assertIsNone(exporter.run_info['stopped_reason'])
 
     def test_on_trouble_retry_carries_on_and_stop_stops(self):
@@ -890,7 +1059,7 @@ class ExportTests(unittest.TestCase):
             stream.write('{"entry": {"key": "cut sh')  # the line being written when it crashed
         exporter, counts = self.run_export(fake.data(files))
         self.assertEqual(exporter.run_info['journal_replayed'], 6)
-        self.assertEqual(counts, dict(exported=1, up_to_date=5, skipped=0, failed=0))
+        self.assertEqual(counts, dict(exported=1, up_to_date=5, files=0, skipped=0, failed=0))
         self.assertEqual([f.calls for f in files], [1] * 5 + [3])
         self.assertEqual(len(self.manifest['entries']), 6)
         self.assertFalse((self.root / 'manifest.journal').exists())

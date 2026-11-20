@@ -66,7 +66,7 @@ class LauncherTests(unittest.TestCase):
         out = self.root / 'out'
         out.mkdir()
         (out / 'autorun-result.json').write_text(json.dumps(dict(
-            mode='export', finished='t', fusion_version='v', counts=dict(exported=1, up_to_date=3, skipped=0, failed=1), stopped_reason='Secret folder gone',
+            mode='export', finished='t', fusion_version='v', counts=dict(exported=1, up_to_date=3, files=0, skipped=0, failed=1), stopped_reason='Secret folder gone',
             stopped_code='output_missing',
             found=2, bytes=10, errors=[dict(stage='x', error='Secret Design failed')])))
         (out / 'manifest.json').write_text(json.dumps(dict(entries=[
@@ -80,7 +80,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('Last progress: t1 project 1/1 design 2', text)
         self.assertFalse(launcher.SAFE_LOG.match('t design 2/2'))  # the form of earlier versions
         self.assertIn('"done": 1', text)
-        self.assertIn('Counts: 1 exported now, 3 already up to date, 0 skipped, 1 failed', text)
+        self.assertIn('Counts: 1 exported now, 3 already up to date, 0 other files saved, 0 skipped, 1 failed', text)
         self.assertIn('Stopped by itself (output_missing)', text)
         self.assertIn('10 bytes', text)
 
@@ -209,6 +209,20 @@ class LauncherTests(unittest.TestCase):
             status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
         self.assertEqual(status, 1)
         self.assertIn('Fusion is busy: An export started', stream.getvalue())
+
+    def test_designs_only_flag_reaches_the_job(self):
+        installed, out = self.root / 'installed', self.root / 'out'
+        installed.mkdir()
+        with patch.object(launcher.shutil, 'copytree'):
+            launcher.install(installed, out, 'export', designs_only=True)
+            self.assertTrue(json.loads((installed / 'autorun.json').read_text())['designs_only'])
+            launcher.install(installed, out, 'export')
+            self.assertNotIn('designs_only', json.loads((installed / 'autorun.json').read_text()))
+        seen = []
+        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.designs_only) or 0):
+            launcher.main(['export', str(out), '--designs-only'])
+            launcher.main(['export', str(out)])
+        self.assertEqual(seen, [True, False])
 
     def test_folder_arguments(self):
         self.assertEqual(launcher.folder_map(['p1:Parts/Brackets/', 'p1:Jigs', 'p2:/X']),

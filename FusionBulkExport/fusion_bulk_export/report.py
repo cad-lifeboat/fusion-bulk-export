@@ -27,8 +27,16 @@ def next_step(status, error):
     if status == 'done':
         return ''
     if status == 'skipped':
-        if 'not a fusion design' in text or 'no fusion design' in text or 'not a fusion document' in text:
+        if 'not a fusion design' in text:
+            return 'Not saved: only designs were exported. Tick "Also save other files" to save it.'
+        if 'no fusion design' in text or 'not a fusion document' in text:
             return 'Nothing to do: not a 3D design.'
+        if 'drawing pdf' in text:
+            return 'Export again to retry; or open the drawing in Fusion and export its PDF by hand.'
+        if 'cannot export this file type' in text:
+            return 'If you need it, open it in Fusion and export or download it by hand.'
+        if 'download' in text or 'not saved' in text:
+            return 'Export again to retry; if it is skipped again, download it from Fusion by hand.'
         return 'Nothing to do unless you need this file; open it in Fusion to check it.'
     if status == 'unreadable':
         return 'Check you can open this folder in Fusion, then export again.'
@@ -47,14 +55,15 @@ def items(manifest, run_info=None):
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
         warnings = [str(w) for w in entry.get('warnings') or []] if status == 'done' else []
         picture = (entry.get('thumbnail') or {}).get('path') if status == 'done' else None
-        result.append(dict(status=status, hub=entry.get('hub') or '', project=entry.get('project') or '',
+        result.append(dict(status=status, kind='file' if entry.get('kind') == 'file' else 'design',
+                           hub=entry.get('hub') or '', project=entry.get('project') or '',
                            folder='/'.join(entry.get('path') or []), name=entry.get('name') or '',
                            version=entry.get('version'), files=files, reason=entry.get('error') or '',
                            next_step=WARNING_STEP if warnings else next_step(status, entry.get('error')),
                            warnings=warnings, thumbnail=picture or ''))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
-        result.append(dict(status='unreadable', hub=where[0] if where else '',
+        result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
                            project=where[1] if len(where) > 1 else '', folder='/'.join(where[2:]),
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
                            next_step=next_step('unreadable', problem.get('error')), warnings=[],
@@ -88,6 +97,46 @@ table { border-collapse: collapse; width: 100%; } th, td { text-align: left; ver
 '''
 
 
+def counts_html(counts):
+    return ('<div class="counts"><span>Exported now: <b>%d</b></span><span>Already up to date: <b>%d</b></span>'
+            '<span>Other files saved: <b>%d</b></span><span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b>'
+            '</span></div>' % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
+                               counts.get('skipped', 0), counts.get('failed', 0)))
+
+
+def table_html(rows, heading, column):
+    """One table of items (designs, or other files)."""
+    esc = html.escape
+    out = ['<h2>%s</h2><table><thead><tr><th>Status</th><th>Project</th><th>Folder</th><th>%s</th>'
+           '<th>Files</th><th>Reason and next step</th></tr></thead><tbody>' % (esc(heading), esc(column))]
+    for row in rows:
+        files = ' '.join('<a href="%s">%s</a>' % (esc(link(path)), esc(path.rsplit('.', 1)[-1].upper()
+                                                                        if '.' in path.rsplit('/', 1)[-1] else 'File'))
+                         for path in row['files'])
+        version = ' v%s' % row['version'] if row['version'] is not None and row['kind'] == 'design' else ''
+        name = esc(row['name'] + version)
+        if row['kind'] == 'file' and row['version'] is not None:
+            name += ' <span class="muted">(version %s)</span>' % esc(str(row['version']))
+        if row['thumbnail']:
+            name = '<img class="thumb" src="%s" alt="" loading="lazy">%s' % (esc(link(row['thumbnail'])), name)
+        why = esc(row['reason'])
+        for warning in row['warnings']:
+            why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(warning) + '</span>'
+        if row['next_step']:
+            why += ('<br>' if why else '') + '<span class="muted">' + esc(row['next_step']) + '</span>'
+        label = LABEL.get(row['status'], row['status'] or '')
+        if row['status'] == 'done' and row['kind'] == 'file':
+            label = 'Saved'
+        out.append('<tr><td class="%s">%s</td><td>%s<div class="muted">%s</div></td><td>%s</td><td>%s</td>'
+                   '<td>%s</td><td>%s</td></tr>'
+                   % (esc(row['status'] or ''), esc(label + (', with a warning' if row['warnings'] else '')),
+                      esc(row['project']), esc(row['hub']), esc(row['folder']), name, files, why))
+    if not rows:
+        out.append('<tr><td colspan="6" class="muted">Nothing exported yet.</td></tr>')
+    out.append('</tbody></table>')
+    return out
+
+
 def render_html(manifest, run_info, counts):
     rows = items(manifest, run_info)
     esc = html.escape
@@ -99,39 +148,25 @@ def render_html(manifest, run_info, counts):
     out.append('<div class="muted">Last run finished %s. This page lists everything in this folder\'s '
                'manifest.json.</div>' % esc(finished))
     if counts:
-        out.append('<div class="counts"><span>Exported now: <b>%d</b></span><span>Already up to date: '
-                   '<b>%d</b></span><span>Skipped: <b>%d</b></span><span>Failed: <b>%d</b></span></div>'
-                   % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('skipped', 0),
-                      counts.get('failed', 0)))
+        out.append(counts_html(counts))
     if (run_info or {}).get('stopped_reason'):
         out.append('<p class="stop">The run stopped itself: %s</p>' % esc(run_info['stopped_reason']))
+    designs = [row for row in rows if row['kind'] != 'file']
+    others = [row for row in rows if row['kind'] == 'file']
     totals = {}
-    for row in rows:
+    for row in designs:
         totals[row['status']] = totals.get(row['status'], 0) + 1
-    out.append('<div class="muted">In this folder: %d exported, %d failed, %d skipped%s.</div>'
-               % (totals.get('done', 0), totals.get('failed', 0), totals.get('skipped', 0),
-                  ', %d folders not read' % totals['unreadable'] if totals.get('unreadable') else ''))
-    out.append('<h2>Items</h2><table><thead><tr><th>Status</th><th>Project</th><th>Folder</th><th>Design</th>'
-               '<th>Files</th><th>Reason and next step</th></tr></thead><tbody>')
-    for row in rows:
-        files = ' '.join('<a href="%s">%s</a>' % (esc(link(path)), esc(path.rsplit('.', 1)[-1].upper()))
-                         for path in row['files'])
-        name = esc(row['name'] + (' v%s' % row['version'] if row['version'] is not None else ''))
-        if row['thumbnail']:
-            name = '<img class="thumb" src="%s" alt="" loading="lazy">%s' % (esc(link(row['thumbnail'])), name)
-        why = esc(row['reason'])
-        for warning in row['warnings']:
-            why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(warning) + '</span>'
-        if row['next_step']:
-            why += ('<br>' if why else '') + '<span class="muted">' + esc(row['next_step']) + '</span>'
-        out.append('<tr><td class="%s">%s</td><td>%s<div class="muted">%s</div></td><td>%s</td><td>%s</td>'
-                   '<td>%s</td><td>%s</td></tr>'
-                   % (esc(row['status'] or ''), esc(LABEL.get(row['status'], row['status'] or '')
-                                                    + (', with a warning' if row['warnings'] else '')),
-                      esc(row['project']), esc(row['hub']), esc(row['folder']), name, files, why))
-    if not rows:
-        out.append('<tr><td colspan="6" class="muted">Nothing exported yet.</td></tr>')
-    out.append('</tbody></table></body></html>')
+    line = ('In this folder: %d designs exported, %d failed, %d skipped%s'
+            % (totals.get('done', 0), totals.get('failed', 0), totals.get('skipped', 0),
+               ', %d folders not read' % totals['unreadable'] if totals.get('unreadable') else ''))
+    if others:
+        saved = sum(1 for row in others if row['status'] == 'done')
+        line += '; %d other files saved, %d not saved' % (saved, len(others) - saved)
+    out.append('<div class="muted">%s.</div>' % esc(line))
+    out += table_html(designs, 'Designs', 'Design')
+    if others:
+        out += table_html(others, 'Other files', 'File')
+    out.append('</body></html>')
     return '\n'.join(out) + '\n'
 
 
@@ -139,13 +174,15 @@ def render_csv(manifest, run_info):
     stream = io.StringIO()
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
-                     'reason', 'next_step', 'warnings', 'thumbnail'])
+                     'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file'])
     for row in items(manifest, run_info):
-        archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '')
-        step = next((p for p in row['files'] if p.lower().endswith(('.step', '.stp'))), '')
+        design = row['kind'] != 'file'
+        archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '') if design else ''
+        step = next((p for p in row['files'] if p.lower().endswith(('.step', '.stp'))), '') if design else ''
         writer.writerow([row['status'], row['hub'], row['project'], row['folder'], row['name'],
                          '' if row['version'] is None else row['version'], archive, step, row['reason'],
-                         row['next_step'], '; '.join(row['warnings']), row['thumbnail']])
+                         row['next_step'], '; '.join(row['warnings']), row['thumbnail'], row['kind'],
+                         '' if design else (row['files'][0] if row['files'] else '')])
     return stream.getvalue()
 
 
@@ -180,6 +217,21 @@ def failure_reasons(manifest, run_info=None, limit=3):
     return lines
 
 
+def count_sentence(counts):
+    """The run's counts in one line, designs and other files apart."""
+    return ('%d exported now, %d already up to date, %d other file(s) saved, %d skipped, %d failed.'
+            % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
+               counts.get('skipped', 0), counts.get('failed', 0)))
+
+
+def skipped_files(manifest):
+    """How many other files are recorded as not saved (with a reason), not counting those left
+    out because only designs were wanted."""
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('kind') == 'file'
+               and entry.get('status') == 'skipped'
+               and not str(entry.get('error') or '').startswith('Not a Fusion design'))
+
+
 def warning_lines(manifest, limit=3):
     """(number of items with a warning, up to limit "name: warning" lines)."""
     rows = [row for row in items(manifest) if row['warnings']]
@@ -194,10 +246,7 @@ def summary_text(counts, run_info, manifest, output):
         head = 'The export stopped: ' + run_info['stopped_reason']
     else:
         head = 'Export finished.'
-    lines = [head, '',
-             '%d exported now, %d already up to date, %d skipped (not a design), %d failed.'
-             % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('skipped', 0),
-                counts.get('failed', 0))]
+    lines = [head, '', count_sentence(counts)]
     reasons = failure_reasons(manifest, run_info)
     if reasons:
         lines += ['', 'Failures:'] + ['- ' + line for line in reasons]
@@ -205,6 +254,9 @@ def summary_text(counts, run_info, manifest, output):
     if warned:
         lines += ['', '%d exported with a warning (the .f3d is complete; see the report):' % warned]
         lines += ['- ' + line for line in lines_of_warnings]
+    not_saved = skipped_files(manifest)
+    if not_saved:
+        lines.append('%d other file(s) could not be saved; the report says why.' % not_saved)
     unreadable = len(run_info.get('discovery_errors') or [])
     if unreadable:
         lines.append('%d folder(s) could not be read (listed in the report).' % unreadable)

@@ -79,13 +79,14 @@ class Names:
                 return candidate
         raise ValueError('No free name for ' + json.dumps(name, ensure_ascii=False))
 
-    def place(self, segments, stem, file_identity):
+    def place(self, segments, stem, file_identity, kind='f'):
         """segments: [(cleaned name, identity), ...] from the output root down. Returns the
-        relative directory (a list of names) and the design's stem name."""
+        relative directory (a list of names) and the item's stem name. kind is 'f' for a design's
+        stem; other files use file_kind(extension), so only names with the same extension compete."""
         directory = []
         for name, identity in segments:
             directory.append(self.claim('/'.join(directory), 'd', name, identity))
-        return directory, self.claim('/'.join(directory), 'f', stem, file_identity)
+        return directory, self.claim('/'.join(directory), kind, stem, file_identity)
 
     def remember(self, entry):
         """Take the names a manifest entry (schema 2) already uses."""
@@ -97,7 +98,13 @@ class Names:
             return
         for index, (name, identity) in enumerate(zip(parts, identities)):
             self.taken.setdefault('/'.join(parts[:index]), {}).setdefault(('d', fold(name)), identity)
-        self.taken.setdefault('/'.join(parts), {}).setdefault(('f', fold(entry['base'])), 'file:' + entry['id'])
+        kind = file_kind(entry.get('extension')) if entry.get('kind') == 'file' else 'f'
+        self.taken.setdefault('/'.join(parts), {}).setdefault((kind, fold(entry['base'])), 'file:' + entry['id'])
+
+
+def file_kind(extension):
+    """The Names kind of a saved file with this extension (a design's stem is 'f')."""
+    return 'f.' + fold(extension) if extension else 'f.'
 
 
 def windows_length(path):

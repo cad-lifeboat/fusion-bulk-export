@@ -182,7 +182,7 @@ class Execute(adsk.core.CommandEventHandler):
             _picker.remember()
             _busy['by'] = 'button'
             try:
-                _code['export'](app, selection, _picker.output)
+                _code['export'](app, selection, _picker.output, other_files=_picker.other_files)
             finally:
                 _busy['by'] = None
         except Exception:

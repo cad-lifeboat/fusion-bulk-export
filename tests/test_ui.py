@@ -257,7 +257,7 @@ class UItests(UIBase):
         self.assertIsNone(self.module._busy['by'])  # free for command-line jobs again
         self.assertEqual(len(self.summaries), 1)
         message, title = self.summaries[0][:2]
-        self.assertIn('1 exported now, 0 already up to date, 0 skipped (not a design), 0 failed.', message)
+        self.assertIn('1 exported now, 0 already up to date, 0 other file(s) saved, 0 skipped, 0 failed.', message)
         self.assertIn(self.temp.name, message)
         self.assertNotIn('Run again', message)
         self.assertEqual(title, 'Fusion Bulk Export')
@@ -275,7 +275,7 @@ class UItests(UIBase):
         self.file.failures = 2  # both attempts fail
         self.open_dialog().execute.handlers[0].notify(None)
         message = self.summaries[0][0]
-        self.assertIn('0 exported now, 0 already up to date, 0 skipped (not a design), 1 failed.', message)
+        self.assertIn('0 exported now, 0 already up to date, 0 other file(s) saved, 0 skipped, 1 failed.', message)
         self.assertIn('- Part: Synthetic export failure', message)
         self.assertIn('Run again to retry the 1 failed.', message)
         page = (Path(self.temp.name) / 'index.html').read_text()
@@ -356,11 +356,30 @@ class UItests(UIBase):
         self.page(command, 'selection', {'project-2': None})
         command.execute.handlers[0].notify(None)
         self.assertEqual(json.loads(self.settings.read_text()),
-                         dict(output=self.temp.name, mode='Choose projects or folders'))
+                         dict(output=self.temp.name, mode='Choose projects or folders', other_files=True))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
         self.assertTrue(inputs.find('fbx_tree').isVisible)
         self.assertEqual(inputs.find('fbx_folder').text, self.temp.name)
+
+    def test_other_files_checkbox_is_on_by_default_and_remembered(self):
+        spec = fake.File('Spec', 'spec', extension='pdf')
+        self.app.data = fake.data([self.file, spec])
+        command = self.open_dialog()
+        box = command.commandInputs.find('fbx_files')
+        self.assertEqual(box.name, 'Also save other files (PDFs, drawings, uploads)')
+        self.assertTrue(box.value)
+        command.execute.handlers[0].notify(None)
+        self.assertIn('1 exported now, 0 already up to date, 1 other file(s) saved', self.summaries[0][0])
+        self.assertTrue((Path(self.temp.name) / 'Hub' / 'Project' / 'Spec.pdf').is_file())
+        command = self.open_dialog()
+        command.commandInputs.find('fbx_files').value = False
+        spec.versionNumber = 4
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(json.loads(self.settings.read_text())['other_files'], False)
+        self.assertEqual(len(spec.downloads), 1)  # not saved with the box off
+        self.assertIn('1 already up to date, 0 other file(s) saved, 1 skipped', self.summaries[1][0])
+        self.assertFalse(self.open_dialog().commandInputs.find('fbx_files').value)
 
     def test_first_use_suggests_documents_folder(self):
         self.settings.unlink()
@@ -436,7 +455,7 @@ class FriendlyErrorTests(UIBase):
 
     def test_unexpected_error_is_logged_with_copyable_details(self):
         command = self.open_dialog()
-        self.module._code['export'] = lambda *args: {}['boom']
+        self.module._code['export'] = lambda *args, **kwargs: {}['boom']
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.errors, [])
         prompt, title, details = self.details[-1]
@@ -484,7 +503,7 @@ class ProgressTextTests(unittest.TestCase):
     def state(self, **changes):
         state = dict(phase='listing', project=3, projects=17, project_name='P', path=['A', 'B'], design=40,
                      name=None, folder_files=None, folder_item=0, elapsed=725, seconds_per_design=None,
-                     counts=dict(exported=0, up_to_date=0, skipped=0, failed=2))
+                     counts=dict(exported=0, up_to_date=0, files=0, skipped=0, failed=2))
         state.update(changes)
         return state
 

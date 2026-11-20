@@ -32,7 +32,7 @@ class ReportTests(unittest.TestCase):
         ])
         self.run_info = dict(finished='2026-01-01T00:00:00+00:00', cancelled=False, stopped_reason=None,
                              discovery_errors=[dict(path=['Hub', 'Proj', 'Locked'], error='No access')],
-                             counts=dict(exported=1, up_to_date=0, skipped=1, failed=2))
+                             counts=dict(exported=1, up_to_date=0, files=0, skipped=1, failed=2))
 
     def write(self):
         exporter = NS(root=self.root, manifest=self.manifest, run_info=self.run_info)
@@ -61,13 +61,13 @@ class ReportTests(unittest.TestCase):
     def test_summary_text(self):
         text = report.summary_text(self.run_info['counts'], self.run_info, self.manifest, '/out')
         self.assertTrue(text.startswith('Export finished.'))
-        self.assertIn('1 exported now, 0 already up to date, 1 skipped (not a design), 2 failed.', text)
+        self.assertIn('1 exported now, 0 already up to date, 0 other file(s) saved, 1 skipped, 2 failed.', text)
         self.assertEqual(text.count('\n- '), 3)
         self.assertIn('Run again to retry the 2 failed.', text)
         self.assertIn('1 folder(s) could not be read', text)
         info = dict(self.run_info, stopped_reason='The disk is full.', stopped_code='disk_full',
                     low_space=True, free_bytes=50 << 20)
-        text = report.summary_text(dict(exported=0, up_to_date=0, skipped=0, failed=0), info, dict(entries=[]), '/o')
+        text = report.summary_text(dict(exported=0, up_to_date=0, files=0, skipped=0, failed=0), info, dict(entries=[]), '/o')
         self.assertTrue(text.startswith('The export stopped: The disk is full.'))
         self.assertIn('Free some disk space', text)
         self.assertIn('Low disk space: 50 MB free.', text)
@@ -96,6 +96,36 @@ class ReportTests(unittest.TestCase):
                       page.read_text(encoding='utf-8'))
         rows = list(csv.DictReader(io.StringIO(table.read_text(encoding='utf-8-sig'))))
         self.assertEqual(rows[-1]['thumbnail'], 'Hub/Proj/Größen/Good _b_ v2.png')
+
+    def test_other_files_have_their_own_table_and_count(self):
+        pdf = entry('Spec', 'done', files=['Hub/Proj/Spec.pdf'])
+        pdf['kind'] = 'file'
+        drawing = entry('Drawing', 'skipped', 'Fusion cannot export this file type through its API (.f2d; '
+                                              'fusion did not download it)')
+        drawing['kind'] = 'file'
+        self.manifest['entries'] += [pdf, drawing]
+        self.run_info['counts'] = dict(exported=1, up_to_date=0, files=1, skipped=2, failed=2)
+        page, table = self.write()
+        text = page.read_text(encoding='utf-8')
+        self.assertIn('<h2>Other files</h2>', text)
+        self.assertLess(text.index('<h2>Designs</h2>'), text.index('<h2>Other files</h2>'))
+        self.assertLess(text.index('<h2>Other files</h2>'), text.index('Spec'))
+        self.assertIn('Other files saved: <b>1</b>', text)
+        self.assertIn('href="Hub/Proj/Spec.pdf">PDF</a>', text)
+        self.assertIn('open it in Fusion and export or download it by hand', text)
+        self.assertIn('1 other files saved, 1 not saved', text)
+        rows = list(csv.DictReader(io.StringIO(table.read_text(encoding='utf-8-sig'))))
+        spec = next(r for r in rows if r['design'] == 'Spec')
+        self.assertEqual((spec['kind'], spec['file'], spec['archive']), ('file', 'Hub/Proj/Spec.pdf', ''))
+        self.assertEqual(next(r for r in rows if r['design'] == 'Bad')['kind'], 'design')
+        summary = report.summary_text(self.run_info['counts'], self.run_info, self.manifest, '/out')
+        self.assertIn('1 exported now, 0 already up to date, 1 other file(s) saved, 2 skipped, 2 failed.', summary)
+        self.assertIn('1 other file(s) could not be saved; the report says why.', summary)
+
+    def test_designs_only_skip_says_how_to_save_it(self):
+        self.assertIn('Also save other files', report.next_step('skipped', 'Not a Fusion design: pdf'))
+        self.assertIn('not a 3D design', report.next_step('skipped', 'No Fusion Design product (drawing)'))
+        self.assertIn('export its PDF by hand', report.next_step('skipped', 'Fusion did not write the drawing PDF'))
 
     def test_empty_folder_report(self):
         self.manifest = dict(entries=[])
