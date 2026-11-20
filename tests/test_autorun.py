@@ -268,6 +268,26 @@ class AutorunTests(unittest.TestCase):
         self.assertTrue(all(file.calls == 0 for file in self.files))
         self.assertIn('autorun busy', (self.output / 'autorun.log').read_text())
 
+    def test_package_is_never_reloaded_during_an_export(self):
+        import adsk
+        import sys
+        module, events = self.start_add_in()
+        synthetic = patch.object(adsk, '_synthetic', False)  # as in real Fusion: forgetting is on
+        synthetic.start()
+        self.addCleanup(synthetic.stop)
+        modules = patch.dict(sys.modules)  # whatever is forgotten here comes back afterwards
+        modules.start()
+        self.addCleanup(modules.stop)
+        errors = sys.modules['fusion_bulk_export.errors']
+        self.addCleanup(module._busy.update, by=None)
+        for busy in ('button', 'job'):
+            module._busy['by'] = busy
+            module.forget_package()
+            self.assertIs(sys.modules.get('fusion_bulk_export.errors'), errors)
+        module._busy['by'] = None
+        module.forget_package()
+        self.assertNotIn('fusion_bulk_export.errors', sys.modules)
+
     def test_busy_job_with_unreadable_config_answers_beside_add_in(self):
         module, events = self.start_add_in()
         module._busy['by'] = 'button'

@@ -14,11 +14,17 @@ if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
 
 
+# One export at a time: None, 'button' (the dialog's export) or 'job' (an autorun.json job).
+# Kept in this file, not the package, so it survives the package being reloaded.
+_busy = {'by': None}
+
+
 def forget_package():
     """Fusion keeps Python modules loaded between Stop and Run and between jobs; drop ours so
-    the next import reads the installed files. (The synthetic test API keeps them: tests
-    patch these modules.)"""
-    if getattr(adsk, '_synthetic', False):
+    the next import reads the installed files. Never while an export runs: its code would then
+    raise errors of the old modules that the new ones do not recognise. (The synthetic test API
+    keeps them: tests patch these modules.)"""
+    if getattr(adsk, '_synthetic', False) or _busy['by'] is not None:
         return
     for name in [n for n in sys.modules if n == 'fusion_bulk_export' or n.startswith('fusion_bulk_export.')]:
         del sys.modules[name]
@@ -44,17 +50,13 @@ _watcher = None
 _custom_event = None
 
 
-# One export at a time: None, 'button' (the dialog's export) or 'job' (an autorun.json job).
-# Kept in this file, not the package, so it survives the package being reloaded.
-_busy = {'by': None}
-
-
 class AutorunEvent(adsk.core.CustomEventHandler):
     """Runs a pending autorun.json on Fusion's main thread."""
     def notify(self, args):
         if _busy['by'] == 'job' or not (_HERE / 'autorun.json').is_file():
             return
-        # Each job uses the add-in package as currently installed.
+        # Each job uses the add-in package as currently installed (but no reload while the
+        # button's export runs: see forget_package).
         forget_package()
         from fusion_bulk_export import autorun
         if _busy['by'] == 'button':
