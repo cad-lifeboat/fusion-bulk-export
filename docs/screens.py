@@ -201,12 +201,21 @@ def dialog_svg():
     row += 22
     parts.append(text(x + 16, row + 12, folder_note(), 12, MUTED))
     row += 26
+    for label, ticked in ((OTHER_FILES, 1),):
+        parts.append(text(x + 16, row + 12, label, 12, MUTED))
+        parts.append(checkbox(cx, row + 2, ticked))
+        row += 26
+    row += 4
     parts.append(text(x + 16, row + 17, EXPORT_LABEL, 12, MUTED))
     parts.append(f'<rect x="{cx}" y="{row}" width="{cw}" height="26" rx="3" fill="{FIELD}" stroke="{LINE}"/>')
     parts.append(text(cx + 8, row + 17, CHOOSE, 12))
     parts.append(caret(cx + cw - 14, row + 13, True))
     row += 36
-    # The tree page (an HTML input across the whole dialog).
+    whole = sum(1 for value in CHOSEN.values() if value is None)
+    folders = sum(len(value) for value in CHOSEN.values() if value is not None)
+    parts.append(text(x + 16, row + 12, '%d whole project(s) and %d folder(s) chosen.' % (whole, folders), 12, MUTED))
+    row += 26
+    # The tree page (an HTML input across the whole dialog), last.
     tx, tw = x + 12, w - 24
     hint = wrap(TREE_HINT, tw - 8, 12)
     for index, line in enumerate(hint):
@@ -218,15 +227,6 @@ def dialog_svg():
     rows, rows_h = tree_rows(tx, row, tw)
     parts.append(rows)
     row += rows_h + 8
-    whole = sum(1 for value in CHOSEN.values() if value is None)
-    folders = sum(len(value) for value in CHOSEN.values() if value is not None)
-    parts.append(text(x + 16, row + 12, '%d whole project(s) and %d folder(s) chosen.' % (whole, folders), 12, MUTED))
-    row += 28
-    for label, ticked in ((OTHER_FILES, 1),):
-        parts.append(text(x + 16, row + 12, label, 12, MUTED))
-        parts.append(checkbox(cx, row + 2, ticked))
-        row += 26
-    row += 4
     parts.append(f'<path d="M{x},{row} h{w}" stroke="{LINE}"/>')
     parts.append(button(x + w - 16 - 80 - 8 - 80, row + 12, 80, OK_BUTTON, primary=True))
     parts.append(button(x + w - 16 - 80, row + 12, 80, 'Cancel'))

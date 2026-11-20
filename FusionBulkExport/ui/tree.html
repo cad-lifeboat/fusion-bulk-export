@@ -5,10 +5,10 @@
 <title>Choose what to export</title>
 <style>
   :root { --text: #e3e6ea; --muted: #9aa4b1; --hover: rgba(255, 255, 255, 0.07); --box: #8d97a4; --tick: #2f9bd8;
-    --bad: #ff8178; --line: #4a515b; --good: #56d364; }
+    --bad: #ff8178; --line: #4a515b; --good: #56d364; color-scheme: dark; }
   @media (prefers-color-scheme: light) {
     :root { --text: #1f2328; --muted: #5d6670; --hover: rgba(0, 0, 0, 0.06); --box: #6b7480; --tick: #0a6fc2;
-      --bad: #b42318; --line: #c4ccd5; --good: #1a7f37; }
+      --bad: #b42318; --line: #c4ccd5; --good: #1a7f37; color-scheme: light; }
   }
   /* The page must read well from about 220 px to 900 px wide: never a horizontal scrollbar; long
      names end in an ellipsis (the full name is the row's tooltip); counts and badges stay whole. */
@@ -17,7 +17,15 @@
   /* Height by construction (the dialog sets the same minimum on the input, picker.py
      TREE_MIN_HEIGHT): never decided by how much the page holds, so an empty or loading tree is as
      tall as a full one. */
-  html, body { min-height: 300px; }
+  html, body { min-height: 260px; }
+  /* Scrollbars in the page's own colours, not a bright white track on the dark theme. */
+  html { scrollbar-color: var(--line) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; border: 2px solid transparent;
+    background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--box); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
   * { box-sizing: border-box; }
   ul { list-style: none; margin: 0; padding: 0; }
   .row { display: flex; align-items: center; gap: 6px; height: 24px; border-radius: 4px; cursor: default;

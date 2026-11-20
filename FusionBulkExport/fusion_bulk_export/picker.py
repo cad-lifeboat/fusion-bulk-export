@@ -21,13 +21,14 @@ BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
-DIALOG_SIZE = (520, 640)
+# 600 high: on a screen 1080 points high every control is in view at first (the tree is last).
+DIALOG_SIZE = (520, 600)
 DIALOG_MINIMUM = (380, 460)
 # The tree's height in Fusion's units, set explicitly on the HTML input when it is made and again
 # each time it is shown (on macOS, test builds showed the tree collapsed to a ~40-unit strip when
 # nothing but the page's own content decided its height). The page (ui/tree.html) holds the same
 # minimum in its CSS, so its content height never falls below it either.
-TREE_MIN_HEIGHT = 300
+TREE_MIN_HEIGHT = 260
 TREE_MAX_HEIGHT = 0  # 0: no maximum, the tree grows with the dialog
 PATH_LIMIT = 64  # longer output folders are shown with their middle cut out (full path as tooltip)
 TREE_HTML = Path(__file__).resolve().parent.parent / 'ui' / 'tree.html'
@@ -104,10 +105,11 @@ class Picker:
         self.chosen = {}
         remembered = settings.load()
         number = version()
-        # Top to bottom: version; Save to [Browse…] with the folder and its note; the Export
-        # choice with the tree (the main choice, kept near the top); the checkboxes. Rows without
-        # a label span the whole dialog (isFullWidth as well, since the HTML tree otherwise sits
-        # in the right-hand column).
+        # Top to bottom: version; Save to [Browse…] with the folder and its note; the checkbox;
+        # the Export choice; what is chosen; the tree, last, so that only tree rows can fall below
+        # the dialog's first size and every control is in view (the tree scrolls inside itself).
+        # Rows without a label span the whole dialog (isFullWidth as well, since the HTML tree
+        # otherwise sits in the right-hand column).
         title = 'Fusion Bulk Export' + (' ' + number if number else '')
         self.version = inputs.addTextBoxCommandInput('fbx_version', '', title, 1, True)
         full_width(self.version, trace)
@@ -132,6 +134,10 @@ class Picker:
         self.facts = None
         self.browsing = False
         self.refresh_folder()
+        # On unless the user switched it off last time.
+        self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
+                                              remembered.get('other_files') is not False)
+        describe(self.files, OTHER_FILES_WHY, trace)
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
@@ -141,6 +147,10 @@ class Picker:
         full_width(self.tip, trace)
         self.tree = self.summary = None
         add_browser = getattr(inputs, 'addBrowserCommandInput', None)
+        if add_browser is not None:
+            self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
+            full_width(self.summary, trace)
+            self.summary.isVisible = False
         try:
             self.tree = (add_browser('fbx_tree', '', TREE_HTML.as_uri(), TREE_MIN_HEIGHT, TREE_MAX_HEIGHT)
                          if add_browser else None)
@@ -151,18 +161,12 @@ class Picker:
             old = inputs.addTextBoxCommandInput('fbx_old', '', OLD_FUSION, 2, True)
             full_width(old, trace)
             self.tip.isVisible = False  # it speaks of choosing, which this Fusion cannot offer
+            self.summary = None
         else:
             full_width(self.tree, trace)
             size_tree(self.tree, trace)
             self.mode.listItems.add(CHOOSE, False, '')
             self.tree.isVisible = False
-            self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
-            full_width(self.summary, trace)
-            self.summary.isVisible = False
-        # On unless the user switched it off last time.
-        self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
-                                              remembered.get('other_files') is not False)
-        describe(self.files, OTHER_FILES_WHY, trace)
         if self.tree is not None and remembered.get('mode') == CHOOSE:
             for item in self.mode.listItems:
                 item.isSelected = item.name == CHOOSE

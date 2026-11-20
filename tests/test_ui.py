@@ -678,7 +678,7 @@ class FriendlyErrorTests(UIBase):
         tree = inputs.find('fbx_tree')
         self.assertEqual(tree.name, '')
         self.assertTrue(tree.isFullWidth)
-        self.assertGreaterEqual(tree.minimumHeight, 300)
+        self.assertGreaterEqual(tree.minimumHeight, 240)
         self.assertEqual(tree.maximumHeight, 0)  # grows with the dialog
         captions = {control.text for control in inputs.added if getattr(control, 'isCheckBox', True) is False}
         self.assertEqual(captions, {'Browse…'})
@@ -691,14 +691,13 @@ class FriendlyErrorTests(UIBase):
         self.assertEqual(inputs.find('fbx_browse').name, 'Save to')
         width, height = command.sizes['initial']
         self.assertGreaterEqual(width, 500)
-        self.assertGreaterEqual(height, 600)
+        self.assertGreaterEqual(height, 560)
         self.assertLessEqual(command.sizes['minimum'][0], width)
         self.assertGreaterEqual(command.sizes['minimum'][0], 360)
-        # The main choice comes before the checkboxes, so it is not pushed below the fold.
+        # The tree comes last: nothing but tree rows can be pushed below the fold.
         order = [control.id for control in inputs.added]
-        self.assertEqual(order[:6], ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_mode', 'fbx_tip'])
-        self.assertLess(order.index('fbx_tree'), order.index('fbx_files'))
-        self.assertLess(order.index('fbx_summary'), order.index('fbx_files'))
+        self.assertEqual(order, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_mode',
+                                 'fbx_tip', 'fbx_summary', 'fbx_tree'])
 
     def test_long_output_folder_is_shown_with_its_middle_cut(self):
         from fusion_bulk_export.picker import shown_path
@@ -875,3 +874,19 @@ class TreeLayoutContractTests(UIBase):
         self.assertNotIn('fbx_tree', source)
         self.assertNotIn('tree.html', source)
         self.assertNotIn('fbx_results', ids)
+
+    def test_every_control_is_in_view_at_first_on_a_1080_point_screen(self):
+        # In Choose mode the checkbox once sat below the tree, out of view: now the tree is last,
+        # so only tree rows (which scroll inside the tree) can be below the dialog's first size.
+        from fusion_bulk_export import picker
+        command = self.open_dialog()
+        self.choose(command)
+        shown = [control.id for control in command.commandInputs.added if control.isVisible]
+        self.assertEqual(shown, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_files', 'fbx_mode',
+                                 'fbx_summary', 'fbx_tree'])
+        width, height = picker.DIALOG_SIZE
+        self.assertLessEqual(height, 1080 - 200)  # menu bar, dock or taskbar, title bar, margins
+        # Rows above the tree at about 30 units each, the OK/Cancel row about 60: the tree's
+        # minimum still fits in the first size.
+        self.assertLessEqual((len(shown) - 1) * 30 + picker.TREE_MIN_HEIGHT + 60, height)
+        self.assertLessEqual(picker.DIALOG_MINIMUM[1], height)

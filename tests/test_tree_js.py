@@ -52,6 +52,17 @@ class TreePageLayoutTests(unittest.TestCase):
         self.assertIn((media, selector), self.css)
         return self.css[(media, selector)]
 
+    def test_scrollbars_follow_the_theme(self):
+        # Fusion's dark theme showed a bright white scrollbar track: the page names its colour
+        # scheme for both themes and styles its scrollbars with its own colours.
+        self.assertEqual(self.rule(':root')['color-scheme'], 'dark')
+        self.assertEqual(self.rule(':root', '(prefers-color-scheme: light)')['color-scheme'], 'light')
+        self.assertEqual(self.rule('html')['scrollbar-color'], 'var(--line) transparent')
+        self.assertEqual(self.rule('::-webkit-scrollbar-track')['background'], 'transparent')
+        self.assertEqual(self.rule('::-webkit-scrollbar')['background'], 'transparent')
+        self.assertIn('var(--line)', self.rule('::-webkit-scrollbar-thumb')['background'])
+        self.assertNotIn('#fff', self.rule('::-webkit-scrollbar-thumb')['background'])
+
     def test_height_does_not_depend_on_the_content(self):
         # The same minimum as the dialog sets on the input (picker.TREE_MIN_HEIGHT), as an absolute
         # length on both html and body: an empty or loading page is as tall as a full one.
