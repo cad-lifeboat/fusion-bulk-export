@@ -15,15 +15,21 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # 3.12: Fusion's bundled Python runs the add-in. 3.9: the oldest the scripts support
+        # (macOS's own python3 is 3.9). Fusion runs only on macOS and Windows, and Python 3.9 is
+        # no longer built for current Ubuntu images, so 3.9 runs on those two only.
         python: ['3.9', '3.12']
+        exclude:
+          - os: ubuntu-latest
+            python: '3.9'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
       - name: Unit tests (the tree test runs through node)
         run: python -m unittest discover -s tests -v
       - name: Tree logic test
@@ -35,25 +41,8 @@ jobs:
     name: Privacy scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # every commit message is checked, not just the newest
       - name: No private names in tracked files or commit messages
-        shell: bash
-        run: |
-          # The banned words are stored encoded so this file does not contain them itself.
-          pattern="$(printf '%s' 'ZHV0Y2h8c29saWRjcmFmdHxjYWRtcGVnfGNhZCA/bGVhcHxjbGF1ZGV8Y29kZXh8YW50aHJvcGljfG9wZW5haXxyYXlraG9sb3xzcGFuaWVyfGNvaGVzaW9ufHJvdGFyeXxhZG9tfG5lbWExN3xtaW5pMjU2fHRhaWwyNjYz' | base64 -d)"
-          status=0
-          if git grep -IilE "$pattern"; then
-            echo "::error::The files listed above contain a banned word. Remove it before merging."
-            status=1
-          fi
-          bad_commits="$(git rev-list HEAD | while read -r commit; do
-            git log -1 --format=%B "$commit" | grep -qiE "$pattern" && echo "$commit"
-          done)"
-          if [ -n "$bad_commits" ]; then
-            echo "$bad_commits"
-            echo "::error::The commits listed above have a banned word in their message."
-            status=1
-          fi
-          exit $status
+        run: python3 scripts/privacy_scan.py  # the image's own Python 3 is enough

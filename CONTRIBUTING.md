@@ -6,4 +6,5 @@ Windows and Linux. Build the release zip with `python3 scripts/package.py`, inst
 Fusion with `python3 scripts/install.py`.
 
 **Privacy:** never put real hub, project, design or user names in issues, pull requests, tests,
-screenshots or commit messages. Use made-up names, and replace your user name in paths with `X`.
+screenshots or commit messages. Use made-up names, and replace your user name in paths with `X`. CI's
+privacy scan runs locally too: `python3 scripts/privacy_scan.py`.
