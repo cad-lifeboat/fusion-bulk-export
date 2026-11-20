@@ -120,6 +120,21 @@ class LauncherTests(unittest.TestCase):
         (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts={}, memory=None)))
         self.assertFalse([line for line in launcher.summary(out) if 'memory' in line])
 
+    def test_the_fusion_memory_line_covers_every_run_into_the_folder(self):
+        out = self.root / 'out'
+        out.mkdir()
+        gb = 1 << 30
+        runs = [dict(memory=dict(start_rss=int(0.7 * gb), peak_rss=int(1.1 * gb), last_rss=int(0.8 * gb))),
+                dict(),  # a run without figures (the synthetic API, an older version)
+                dict(memory=dict(start_rss=int(0.8 * gb), peak_rss=int(1.0 * gb), last_rss=int(0.9 * gb)))]
+        (out / 'manifest.json').write_text(json.dumps(dict(schema=2, runs=runs, entries=[])))
+        (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts={}, memory=runs[2]['memory'])))
+        lines = [line for line in launcher.summary(out) if line.startswith('Fusion memory')]
+        self.assertEqual(lines, ['Fusion memory: 0.9 GB at the end (at most 1.1 GB over the 2 runs into this folder, '
+                                 '0.7 GB at the start of the first)'])
+        self.assertEqual(launcher.folder_memory_line(dict(runs=runs[:1])),
+                         'Fusion memory: 0.8 GB at the end (at most 1.1 GB, 0.7 GB at the start)')
+
     def test_status_counts_link_problems_without_names(self):
         out = self.root / 'out'
         out.mkdir()

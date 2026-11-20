@@ -359,6 +359,26 @@ def memory_line(facts):
     return 'Fusion memory: %s at the end%s' % (last, ' (%s)' % ', '.join(more) if more else '')
 
 
+def folder_memory_line(manifest):
+    """The Fusion memory line over every run into this folder (each launch is a run: a long
+    export resumed after stops is several), from the manifest's runs: the last run's end, the
+    highest of all, the first run's start. None when no run measured it."""
+    measured = [run['memory'] for run in (manifest or {}).get('runs') or []
+                if isinstance(run, dict) and isinstance(run.get('memory'), dict)
+                and isinstance(run['memory'].get('last_rss'), int)]
+    if len(measured) < 2:
+        return memory_line(measured[0]) if measured else None
+    size = lambda value: '%.1f GB' % (value / float(1 << 30))
+    peaks = [facts['peak_rss'] for facts in measured if isinstance(facts.get('peak_rss'), int)]
+    first = measured[0].get('start_rss')
+    more = []
+    if peaks:
+        more.append('at most %s over the %d runs into this folder' % (size(max(peaks)), len(measured)))
+    if isinstance(first, int):
+        more.append('%s at the start of the first' % size(first))
+    return 'Fusion memory: %s at the end%s' % (size(measured[-1]['last_rss']), ' (%s)' % ', '.join(more) if more else '')
+
+
 def summary(output):
     """Counts only: manifests and logs hold design names, which stay private."""
     lines = []
@@ -377,7 +397,13 @@ def summary(output):
             lines.append('Note: ' + LOW_MEMORY_NOTE)
         if report.get('low_space'):
             lines.append('Low disk space: %d MB free' % ((report.get('free_bytes') or 0) >> 20))
-        memory = memory_line(report.get('memory'))
+        memory = None
+        if (output / 'manifest.json').is_file():
+            try:
+                memory = folder_memory_line(package_checks().read_manifest(output))
+            except (OSError, ValueError):
+                memory = None
+        memory = memory or memory_line(report.get('memory'))
         if memory:
             lines.append(memory)
         for key in ('found', 'cancelled', 'discovery_errors', 'bytes'):
@@ -776,11 +802,20 @@ def check(output, names=False):
     return 0 if not totals['failed_checks'] else 1
 
 
+EXPORT_EPILOG = """Exit status: 0 done; 1 the job failed or was refused; 75 the export stopped itself because
+Fusion was using a lot of memory (restart Fusion and run the same command again: it carries on;
+--restart-fusion does that by itself, except within 50 designs of a start, when a restart would
+not help); 76 --restart-fusion opened Fusion again but the add-in did not start (switch on its
+Run on Startup); 77 Fusion closed or crashed before the export finished (open it and run again);
+130 interrupted (Ctrl-C)."""
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
     for command in ('inventory', 'export', 'diagnostics', 'status', 'stop', 'check'):
-        p = sub.add_parser(command)
+        p = sub.add_parser(command, **(dict(epilog=EXPORT_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+                                       if command == 'export' else {}))
         p.add_argument('output')
         if command == 'check':
             p.add_argument('--names', action='store_true', help='show design names (private) in problem lines')
@@ -798,11 +833,10 @@ def main(argv=None):
                            help='skip other files (PDFs, uploads); by default they are saved too')
             p.add_argument('--restart-fusion', nargs='?', const='polite', choices=('polite', 'force'),
                            metavar='force',
-                           help='when the export stops because Fusion is using a lot of memory, or Fusion closes '
-                                'mid-run, quit Fusion (only when no saved design or unsaved document is open in '
-                                'it), open it again and carry on; needs Run on Startup. Risk: it closes and '
-                                'reopens Fusion by itself, and with =force it ends a Fusion that will not quit '
-                                'within 60 s, losing anything unsaved in it.')
+                           help='when the export stops for memory or Fusion closes during it, this closes and reopens '
+                                'Fusion by itself (only with no saved design or unsaved document open in it, and '
+                                'with Run on Startup on) and carries on, while =force also ends a Fusion that will '
+                                'not quit within 60 s, losing anything unsaved in it.')
             p.add_argument('--max-restarts', type=int, default=MAX_RESTARTS, metavar='N',
                            help='with --restart-fusion: restart Fusion at most N times (default %d), and never '
                                 'more than once per %d designs exported' % (MAX_RESTARTS, DESIGNS_PER_RESTART))

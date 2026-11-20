@@ -197,10 +197,12 @@ class SamplingTests(unittest.TestCase):
         self.assertEqual(info['start_rss'], GB)
         self.assertEqual(info['last_rss'], GB + 1000 * (10 << 20))
         self.assertEqual(info['peak_rss'], info['last_rss'])
-        self.assertEqual([point[0] for point in info['series']], list(range(0, 1001, 100)))
+        # A point (and a log line) at design 25, so short runs have one, then every 100.
+        self.assertEqual([point[0] for point in info['series']], [0, 25] + list(range(100, 1001, 100)))
         self.assertEqual(info['samples'], 1001)
         self.assertTrue(all(line.startswith('memory') and 'MB' in line for line in lines))
-        self.assertEqual(len(lines), 11)
+        self.assertEqual(len(lines), 12)
+        self.assertTrue(lines[1].startswith('memory after 25 designs: Fusion'))
         with patch.object(memory, 'SERIES_MAX', 5):
             info = {}
             tracker = memory.Tracker(Sampler(), info)

@@ -272,7 +272,16 @@ class HelpTests(unittest.TestCase):
             launcher.main(['export', '--help'])
         text = ' '.join(stream.getvalue().split())
         self.assertIn('--restart-fusion', text)
-        self.assertIn('Risk: it closes and reopens Fusion by itself', text)
+        # Its help is one plain sentence, and it names the risk.
+        flag = text[text.rindex('--restart-fusion [force]'):text.rindex('--max-restarts N')]
+        sentence = flag.split(']', 1)[1].strip()
+        self.assertEqual(sentence.count('. '), 0, sentence)
+        self.assertTrue(sentence.endswith('.'), sentence)
+        self.assertIn('closes and reopens Fusion by itself', sentence)
+        self.assertIn('losing anything unsaved', sentence)
+        # Every exit status is listed in "export --help" itself.
+        for status in ('0 ', '1 ', '75 ', '76 ', '77 ', '130 '):
+            self.assertIn(status, text[text.index('Exit status:'):])
         args = NS()
         parser_args = []
         with patch.object(launcher, 'start', side_effect=lambda a: parser_args.append(a) or 0):

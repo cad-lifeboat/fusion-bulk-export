@@ -226,14 +226,15 @@ def _linux():
                 available=_guard(lambda: field('/proc/meminfo', 'MemAvailable')))
 
 
-SERIES_EVERY = 100  # a point of run_info['memory']['series'] every this many designs...
+SERIES_FIRST = 25   # the first point of run_info['memory']['series'] (and log line), so short runs have one...
+SERIES_EVERY = 100  # ...then one every this many designs...
 SERIES_MAX = 200    # ...and never more points: past this, every other one goes and the step doubles
 
 
 class Tracker:
     """Fusion's memory over one run, kept in info (run_info['memory']): total and available
     physical memory, rss at the start, its peak and last value, and a bounded series of
-    [designs, rss, available] every SERIES_EVERY designs. sampler() is sample() inside Fusion and
+    [designs, rss, available] at SERIES_FIRST designs, then every SERIES_EVERY designs. sampler() is sample() inside Fusion and
     a fake in tests; with none (the synthetic test API) nothing is recorded."""
     def __init__(self, sampler, info, log=None):
         self.sampler, self.info, self.log = sampler, info, log
@@ -279,7 +280,9 @@ class Tracker:
         if found['rss'] is not None and (info.get('peak_rss') is None or found['rss'] > info['peak_rss']):
             info['peak_rss'] = found['rss']
         series = info['series']
-        if designs >= series[-1][0] + info['series_every']:
+        last = series[-1][0]
+        due = SERIES_FIRST if last < SERIES_FIRST else (last // info['series_every'] + 1) * info['series_every']
+        if designs >= due:
             series.append([designs, found['rss'], found['available']])
             self.note('memory after %d designs' % designs, found)
             if len(series) > SERIES_MAX:
