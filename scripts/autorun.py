@@ -2,7 +2,8 @@
 """Unattended Fusion Bulk Export on macOS or Windows.
 
   autorun.py inventory OUTPUT                       list everything, open nothing
-  autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...] [--limit N]
+  autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
+                    [--folder ID:id=FOLDER_ID ...] [--limit N]
                                                     export (rerun the same command to resume)
   autorun.py status OUTPUT                          counts so far (no design names)
   autorun.py stop OUTPUT                            pause an export between designs
@@ -35,7 +36,7 @@ RUNTIME_FILES = shutil.ignore_patterns(
 
 REPO = Path(__file__).resolve().parent.parent
 ALIVE_SECONDS = 20
-SAFE_LOG = re.compile(r'^\S+ (design \d+/\d+|project \d+/\d+ design \d+|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
+SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
 MANUAL_HINT = ('Fusion has not started the add-in. In Fusion: Utilities > Add-Ins > Scripts and '
                'Add-Ins, select FusionBulkExport, click Run (tick Run on Startup).')
@@ -106,19 +107,26 @@ def set_startup(installed, on):
 
 
 def check_output(output):
-    output = Path(output).expanduser().resolve()
-    if len(str(output).encode('utf-16-le')) // 2 > 100:
-        raise SystemExit('Use an output path of at most 100 characters.')
-    return output
+    """The output folder as an absolute path. Its length is not limited: the add-in writes
+    long paths itself (and says so if a folder cannot be used)."""
+    return Path(output).expanduser().resolve()
 
 
 def folder_map(values):
-    """--folder ID:Path/To/Folder values as {project id: [paths]}."""
+    """--folder values as {project id: [paths or {"id": folder id}]}: ID:Path/To/Folder by
+    names, or ID:id=FOLDER_ID by the folder's id (from inventory.json's folder_ids), which also
+    works for a folder whose name holds "/"."""
     folders = {}
     for value in values or []:
         project, sep, path = value.partition(':')
+        if path.startswith('id='):
+            if not sep or not project or not path[3:]:
+                raise SystemExit('--folder needs PROJECT_ID:id=FOLDER_ID, got ' + repr(value))
+            folders.setdefault(project, []).append(dict(id=path[3:]))
+            continue
         if not sep or not project or not path.strip('/'):
-            raise SystemExit('--folder needs PROJECT_ID:Folder/Subfolder, got ' + repr(value))
+            raise SystemExit('--folder needs PROJECT_ID:Folder/Subfolder or PROJECT_ID:id=FOLDER_ID, got '
+                             + repr(value))
         folders.setdefault(project, []).append(path.strip('/'))
     return folders or None
 
@@ -279,7 +287,8 @@ def main(argv=None):
         if command == 'export':
             p.add_argument('--project', action='append', help='project id from inventory.json (repeatable)')
             p.add_argument('--folder', action='append', metavar='ID:PATH',
-                           help='a folder (and its subfolders) in project ID, e.g. ID:Parts/Brackets (repeatable)')
+                           help='a folder (and its subfolders) in project ID, by names (ID:Parts/Brackets) or by '
+                                'folder id (ID:id=FOLDER_ID, see folder_ids in inventory.json); repeatable')
             p.add_argument('--limit', type=int, help='export at most this many designs')
     sub.add_parser('reset', help='clear stale job files (the button is always available)')
     args = parser.parse_args(argv)

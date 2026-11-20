@@ -4,7 +4,9 @@ Configuration (all paths absolute):
   {"output": "/path/out",            required; same folder resumes
    "mode": "export" | "inventory" | "diagnostics",   default "export"
    "projects": ["<project id>", ...],  optional; whole projects (default: everything)
-   "folders": {"<project id>": ["Folder/Subfolder", ...]},  optional; chosen folders
+   "folders": {"<project id>": ["Folder/Subfolder", {"id": "<folder id>"}, ...]},
+                                     optional; chosen folders, by name path or by id
+                                     (inventory.json lists each file's folder_ids)
    "limit": 25,                      optional; export at most this many designs
    "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
 
@@ -73,9 +75,18 @@ def check_settings(config):
         raise ValueError('projects must be a nonempty list of project ids')
     folders = config.get('folders')
     if folders is not None and (not isinstance(folders, dict) or not folders
-                                or not all(isinstance(v, list) and v for v in folders.values())):
-        raise ValueError('folders must map project ids to nonempty lists of folder paths')
-    selection = Selection.from_config(projects, folders)
+                                or not all(isinstance(v, list) and v for v in folders.values())
+                                or not all(isinstance(item, str) or (isinstance(item, dict) and set(item) == {'id'}
+                                                                     and isinstance(item['id'], str) and item['id'])
+                                           for v in folders.values() for item in v)):
+        raise ValueError('folders must map project ids to nonempty lists of folder paths or {"id": folder id}')
+    names = None if folders is None else {project: [item for item in items if isinstance(item, str)]
+                                          for project, items in folders.items()}
+    selection = Selection.from_config(projects, names)
+    # Folders given by id are turned into name paths once the account can be read.
+    selection.folder_ids = {} if folders is None else {
+        str(project): [item['id'] for item in items if isinstance(item, dict)]
+        for project, items in folders.items() if any(isinstance(item, dict) for item in items)}
     limit = config.get('limit')
     if limit is not None and (not isinstance(limit, int) or limit < 1):
         raise ValueError('limit must be a positive integer')
@@ -83,6 +94,36 @@ def check_settings(config):
     if not 0 < timeout <= 86400:
         raise ValueError('hub_timeout_seconds must be between 0 and 86400')
     return mode, selection, limit, timeout
+
+
+def find_folder(folder, identity, path=()):
+    """The name path below folder of the subfolder with this id, or None."""
+    for child in collection(folder.dataFolders):
+        if str(getattr(child, 'id', None)) == identity:
+            return list(path) + [child.name]
+        found = find_folder(child, identity, list(path) + [child.name])
+        if found is not None:
+            return found
+    return None
+
+
+def resolve_folder_ids(data, selection):
+    """Add the name path of every folder chosen by id (a name may hold "/", which a name path
+    on the command line cannot)."""
+    wanted = getattr(selection, 'folder_ids', None) or {}
+    if not wanted:
+        return
+    projects = {str(project.id): project for hub in collection(data.dataHubs) for project in collection(hub.dataProjects)}
+    for project_id, identities in wanted.items():
+        if project_id not in projects:
+            raise ValueError('Project %s was not found' % project_id)
+        if selection.projects.get(project_id, []) is None:
+            continue  # the whole project is chosen anyway
+        for identity in identities:
+            path = find_folder(projects[project_id].rootFolder, identity)
+            if path is None:
+                raise ValueError('Folder id %s was not found in project %s' % (identity, project_id))
+            selection.projects.setdefault(project_id, []).append(path)
 
 
 def wait_for_hubs(app, timeout, log):
@@ -159,7 +200,7 @@ def inventory(data, log, stop=lambda: False, output=None):
             view = _one_project(hub, project)
             for _, _, path, file in walk(view, unreadable):
                 adsk.doEvents()
-                p['files'].append(dict(id=str(file.id), name=file.name, path=path,
+                p['files'].append(dict(id=str(file.id), name=file.name, path=path, folder_ids=path.ids,
                                        extension=file.fileExtension, version=int(file.versionNumber)))
             log.write('inventory hub %d/%d project %d/%d: %d files'
                       % (hub_number, len(hub_list), project_number, len(projects), len(p['files'])))
@@ -233,6 +274,8 @@ def run_autorun(app, config_path):
             return log.result
         wait_for_hubs(app, timeout, log)
         data = app.data
+        resolve_folder_ids(data, selection)
+        log.result['selection'] = selection.describe()
         if not selection.everything:
             wanted = set(selection.projects)
             data = select_projects(data, selection.keeps_project)

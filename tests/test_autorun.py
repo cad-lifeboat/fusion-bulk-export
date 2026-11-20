@@ -106,6 +106,27 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, skipped=1, failed=0))  # Sub holds only a drawing
         self.assertEqual(self.files[0].calls + self.files[1].calls + self.files[3].calls, 0)
 
+    def test_folder_selection_by_id_even_with_a_slash_in_its_name(self):
+        project = self.data.dataHubs.item(0).dataProjects.item(0)
+        odd = fake.folder('A/B', files=[fake.File('Odd', 'odd')], identity='folder-odd')
+        project.rootFolder.dataFolders.item(0).dataFolders = fake.Collection(odd)
+        result = self.run_with(folders={'project-1': [{'id': 'folder-odd'}]})
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
+        self.assertEqual(result['counts']['exported'], 1)
+        self.assertEqual(sum(f.calls for f in self.files), 0)
+        listing = self.run_with(mode='inventory', output=str(self.root / 'inv'))
+        files = json.loads((self.root / 'inv' / 'inventory.json').read_text())['hubs']['hub-1']['projects']['project-1']['files']
+        odd_entry = next(f for f in files if f['id'] == 'odd')
+        self.assertEqual((odd_entry['path'], odd_entry['folder_ids']), (['Sub', 'A/B'], [None, 'folder-odd']))
+        self.assertEqual(listing['errors'], [])
+
+    def test_unknown_folder_id_is_an_error(self):
+        result = self.run_with(folders={'project-1': [{'id': 'nope'}]})
+        self.assertIn('Folder id nope was not found', result['errors'][0]['error'])
+        result = self.run_with(folders={'project-1': [{'name': 'x'}]})
+        self.assertIn('folders must map', result['errors'][0]['error'])
+
     def test_bad_folders_setting_is_reported(self):
         result = self.run_with(folders={'project-1': []})
         self.assertIn('folders must map', result['errors'][0]['error'])

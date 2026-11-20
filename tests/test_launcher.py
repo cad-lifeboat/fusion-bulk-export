@@ -58,9 +58,9 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(launcher.alive(self.root, now + 5))
         self.assertFalse(launcher.alive(self.root, now + 60))
 
-    def test_output_path_limit(self):
-        with self.assertRaises(SystemExit):
-            launcher.check_output('/' + 'x' * 120)
+    def test_long_output_path_is_allowed(self):
+        long = self.root / ('x' * 150) / ('y' * 150)
+        self.assertEqual(launcher.check_output(str(long)), long.resolve())
 
     def test_status_reports_counts_without_names(self):
         out = self.root / 'out'
@@ -72,12 +72,13 @@ class LauncherTests(unittest.TestCase):
         (out / 'manifest.json').write_text(json.dumps(dict(entries=[
             dict(name='Secret Design', status='done', files=[dict(bytes=4), dict(bytes=6)]),
             dict(name='Hidden Part', status='failed', files=[])])))
-        (out / 'autorun.log').write_text('t1 design 2/2\nt2 could not read ["Private Hub"]: no access\n'
+        (out / 'autorun.log').write_text('t1 project 1/1 design 2\nt1 design 2/2\nt2 could not read ["Private Hub"]: no access\n'
                                          't3 autorun: Traceback ... Hidden Part\n')
         text = '\n'.join(launcher.summary(out))
         for secret in ('Secret', 'Hidden', 'Private'):
             self.assertNotIn(secret, text)
-        self.assertIn('design 2/2', text)
+        self.assertIn('Last progress: t1 project 1/1 design 2', text)
+        self.assertFalse(launcher.SAFE_LOG.match('t design 2/2'))  # the form of earlier versions
         self.assertIn('"done": 1', text)
         self.assertIn('Counts: 1 exported now, 3 already up to date, 0 skipped, 1 failed', text)
         self.assertIn('Stopped by itself (output_missing)', text)
@@ -184,7 +185,8 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(launcher.folder_map(['p1:Parts/Brackets/', 'p1:Jigs', 'p2:/X']),
                          {'p1': ['Parts/Brackets', 'Jigs'], 'p2': ['X']})
         self.assertIsNone(launcher.folder_map(None))
-        for bad in ('noseparator', 'p1:', ':Parts', 'p1:/'):
+        self.assertEqual(launcher.folder_map(['p1:id=urn:x/y', 'p1:Jigs']), {'p1': [dict(id='urn:x/y'), 'Jigs']})
+        for bad in ('noseparator', 'p1:', ':Parts', 'p1:/', 'p1:id=', ':id=x'):
             with self.assertRaises(SystemExit):
                 launcher.folder_map([bad])
 
