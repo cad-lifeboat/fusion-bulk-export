@@ -2,6 +2,7 @@
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace as NS
+import zipfile
 
 
 class Collection:
@@ -26,6 +27,8 @@ class File:
                   for n in range(int(references))]
         self.childReferences = Collection(*linked)
         self.references, self.design = references, design
+        self.step_solids = 1  # solids in the STEP the synthetic exporter writes
+        self.root = None      # a root component (see component()) to use instead of the default
         self.failures = 0
         self.calls = 0
         self.documents = []
@@ -60,8 +63,43 @@ class Manager:
         if self.file.failures:
             self.file.failures -= 1
             raise RuntimeError('Synthetic export failure')
-        Path(path).write_bytes(b'Synthetic CAD placeholder')
+        if path.endswith('.f3d'):
+            write_archive(path)
+        else:
+            Path(path).write_bytes(step_text(self.file.step_solids))
         return True
+
+
+def write_archive(path):
+    """A small zip with the members of a Fusion archive (no real CAD data)."""
+    with zipfile.ZipFile(path, 'w') as archive:
+        archive.writestr('Manifest.dat', 'synthetic')
+        archive.writestr('FusionAssetName[Active]/Synthetic', 'synthetic')
+
+
+def step_text(solids=1, complete=True):
+    """A STEP file holding this many solids (placeholders, no real geometry)."""
+    lines = ["ISO-10303-21;", "HEADER;", "FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));", "ENDSEC;", "DATA;"]
+    lines += ["#%d=MANIFOLD_SOLID_BREP('',#%d);" % (2 * n + 1, 2 * n + 2) for n in range(solids)]
+    lines += ['/* synthetic padding */'] * 100 + ['ENDSEC;']
+    if complete:
+        lines.append('END-ISO-10303-21;')
+    return ('\n'.join(lines) + '\n').encode('ascii')
+
+
+def body(solid=True, shown=True):
+    return NS(isSolid=solid, isLightBulbOn=shown)
+
+
+def component(identity, bodies=(), occurrences=()):
+    """A component with bodies; on a root, occurrences is its allOccurrences (see occurrence())."""
+    return NS(id=identity, bRepBodies=Collection(*bodies), allOccurrences=Collection(*occurrences),
+              isBodiesFolderLightBulbOn=True)
+
+
+def occurrence(part, visible=True, bulb=True, parent=None):
+    """An occurrence of part; parent is the occurrence it sits in (its assemblyContext)."""
+    return NS(component=part, isVisible=visible, isLightBulbOn=bulb, assemblyContext=parent)
 
 
 class Document:
@@ -71,15 +109,21 @@ class Document:
         self.owner = owner  # the Documents collection it is listed in, once opened there
         self.documentReferences = Collection(*([NS()] if file.references else []))
         self.isModified = False
-        body = NS(isSolid=True, isLightBulbOn=True)
-        hidden = NS(isSolid=True, isLightBulbOn=False)
-        component = NS(id='root', bRepBodies=Collection(body, NS(isSolid=False, isLightBulbOn=True)),
-                       allOccurrences=Collection())
-        part = NS(id='part', bRepBodies=Collection(hidden))
-        component.allOccurrences = Collection(NS(isVisible=True, component=part))
+        if file.root is not None:
+            root = file.root
+            parts = {}
+            for index in range(root.allOccurrences.count):
+                part = root.allOccurrences.item(index).component
+                parts[part.id] = part
+            components = [root] + list(parts.values())
+        else:
+            # Root: one solid and one surface body; a visible part holds one hidden solid.
+            part = component('part', [body(shown=False)])
+            root = component('root', [body(), body(solid=False)], [occurrence(part)])
+            components = [root, part]
         self.products = NS(itemByProductType=lambda product: NS(
-            exportManager=Manager(file), rootComponent=component,
-            allComponents=Collection(component, part)) if file.design else None)
+            exportManager=Manager(file), rootComponent=root,
+            allComponents=Collection(*components)) if file.design else None)
 
     def close(self, save):
         assert save is False

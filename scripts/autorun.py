@@ -6,6 +6,8 @@
                     [--folder ID:id=FOLDER_ID ...] [--limit N]
                                                     export (rerun the same command to resume)
   autorun.py status OUTPUT                          counts so far (no design names)
+  autorun.py check OUTPUT                           check every exported file again (full hashes,
+                                                    archives, STEP files); needs no Fusion
   autorun.py stop OUTPUT                            pause an export between designs
 
 Sign in to Fusion first. The first run needs Fusion closed (or the add-in started by
@@ -192,6 +194,9 @@ def summary(output):
             statuses[entry.get('status')] = statuses.get(entry.get('status'), 0) + 1
         size = sum(f.get('bytes', 0) for e in entries if e.get('status') == 'done' for f in e.get('files', []))
         lines.append('Manifest: %d entries %s, %d bytes' % (len(entries), json.dumps(statuses, sort_keys=True), size))
+        warned = sum(1 for e in entries if e.get('status') == 'done' and e.get('warnings'))
+        if warned:
+            lines.append('Warnings: %d item(s) exported with a warning (see the report)' % warned)
     log = output / 'autorun.log'
     if log.is_file():
         # Only known counter lines: error lines can carry project or design names.
@@ -278,12 +283,41 @@ def reset(installed):
     return 0
 
 
+def check(output, names=False):
+    """Check this folder: every exported file again, without Fusion. Counts only unless names."""
+    package = REPO / 'FusionBulkExport'
+    if str(package) not in sys.path:
+        sys.path.insert(0, str(package))
+    from fusion_bulk_export import checks
+    if not (output / 'manifest.json').is_file():
+        print('Nothing to check: no manifest.json in ' + str(output))
+        return 1
+
+    def show(number, entry, line, problems, notes):
+        if not (problems or notes):
+            return
+        label = entry.get('name') if names else ('file %d' if entry.get('kind') == 'file' else 'design %d') % number
+        for problem in problems:
+            print('%s: PROBLEM %s' % (label, problem))
+        for note in notes:
+            print('%s: NOTE %s' % (label, note))
+    totals = checks.check_folder(output, show=show)
+    print('Checked %d finished item(s): %d with a problem, %d missing file(s), %d changed file(s), '
+          '%d STEP solid count(s) different, %d not exported yet (failed).'
+          % (totals['done'], totals['failed_checks'] - totals['failed'], totals['missing'], totals['changed'],
+             totals['solids_differ'], totals['failed']))
+    print(json.dumps(totals))
+    return 0 if not totals['failed_checks'] else 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
-    for command in ('inventory', 'export', 'diagnostics', 'status', 'stop'):
+    for command in ('inventory', 'export', 'diagnostics', 'status', 'stop', 'check'):
         p = sub.add_parser(command)
         p.add_argument('output')
+        if command == 'check':
+            p.add_argument('--names', action='store_true', help='show design names (private) in problem lines')
         if command == 'export':
             p.add_argument('--project', action='append', help='project id from inventory.json (repeatable)')
             p.add_argument('--folder', action='append', metavar='ID:PATH',
@@ -299,6 +333,8 @@ def main(argv=None):
         for line in summary(check_output(args.output)):
             print(line)
         return 0
+    if args.command == 'check':
+        return check(check_output(args.output), args.names)
     if args.command == 'stop':
         output = check_output(args.output)
         output.mkdir(parents=True, exist_ok=True)

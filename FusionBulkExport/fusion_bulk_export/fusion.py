@@ -28,17 +28,12 @@ class FusionAdapter:
             self.details['solid_bodies'] = sum(
                 1 for component in collection(design.allComponents)
                 for body in collection(component.bRepBodies) if body.isSolid)
-            # STEP export leaves out hidden bodies and hidden components: count what it keeps.
-            root = design.rootComponent
-            shown = {root.id: root}
-            for occurrence in collection(root.allOccurrences):
-                if occurrence.isVisible:
-                    shown[occurrence.component.id] = occurrence.component
-            self.details['visible_solid_bodies'] = sum(
-                1 for component in shown.values()
-                for body in collection(component.bRepBodies) if body.isSolid and body.isLightBulbOn)
         except Exception as error:
             # Counting is for checking only; it never stops an export.
+            self.details['count_error'] = str(error)
+        try:
+            self.details.update(visible_counts(design.rootComponent))
+        except Exception as error:
             self.details['count_error'] = str(error)
 
     def open_ids(self):
@@ -120,6 +115,44 @@ class FusionAdapter:
         if not os.path.isfile(long_path(step)):
             raise RuntimeError('Fusion reported a successful STEP export but wrote no file')
         return [archive, step]
+
+
+def shown_solids(component):
+    """Solid bodies of a component that are switched on (hidden bodies are not in the STEP)."""
+    if not getattr(component, 'isBodiesFolderLightBulbOn', True):
+        return 0
+    return sum(1 for body in collection(component.bRepBodies) if body.isSolid and body.isLightBulbOn)
+
+
+def occurrence_shown(occurrence):
+    """Whether an occurrence is shown: visible itself, and every occurrence above it (its
+    assemblyContext chain) has its light bulb on. Fusion's isVisible may already include the
+    parents; checking them too costs little and is right either way."""
+    if not occurrence.isVisible:
+        return False
+    parent = getattr(occurrence, 'assemblyContext', None)
+    while parent is not None:
+        if not getattr(parent, 'isLightBulbOn', True) or not getattr(parent, 'isVisible', True):
+            return False
+        parent = getattr(parent, 'assemblyContext', None)
+    return True
+
+
+def visible_counts(root):
+    """What a STEP export can be expected to hold: visible_solid_bodies counts each shown
+    occurrence of a component once (two instances of a part are two solids), plus the root's own
+    bodies; visible_solid_bodies_distinct counts each shown component once (a STEP writer may
+    write a part used several times only once)."""
+    per_occurrence = shown_solids(root)
+    components = {}
+    for occurrence in collection(root.allOccurrences):
+        if occurrence_shown(occurrence):
+            component = occurrence.component
+            solids = shown_solids(component)
+            per_occurrence += solids
+            components[getattr(component, 'id', id(component))] = solids
+    return dict(visible_solid_bodies=per_occurrence,
+                visible_solid_bodies_distinct=shown_solids(root) + sum(components.values()))
 
 
 def document_id(document):

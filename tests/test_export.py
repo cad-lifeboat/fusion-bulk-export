@@ -135,13 +135,87 @@ class ExportTests(unittest.TestCase):
             self.assertEqual([Path(f['path']).suffix for f in entry['files']], ['.f3d', '.step'])
             for info in entry['files']:
                 self.assertEqual(len(info['sha256']), 64)
-                self.assertEqual(info['bytes'], len(b'Synthetic CAD placeholder'))
+                self.assertEqual(info['bytes'], (self.root / info['path']).stat().st_size)
         self.assertEqual(self.manifest['entries'][0]['references'], [])
         # Root has one solid (plus one surface body); a visible part holds one hidden solid.
         self.assertTrue(all(entry['solid_bodies'] == 2 for entry in self.manifest['entries']))
         self.assertTrue(all(entry['visible_solid_bodies'] == 1 for entry in self.manifest['entries']))
         self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part')])
         self.assertTrue(all(doc.closed for file in [a, b] for doc in file.documents))
+
+    def test_each_step_is_checked_inline_and_warnings_stored(self):
+        good, empty, fewer = fake.File('Good', 'good'), fake.File('Empty', 'empty'), fake.File('Fewer', 'fewer')
+        empty.step_solids = 0
+        fewer.step_solids = 3
+        _, counts = self.run_export(fake.data([good, empty, fewer]))
+        self.assertEqual(counts['exported'], 3)  # warnings are not failures
+        entries = {e['id']: e for e in self.manifest['entries']}
+        self.assertEqual((entries['good']['step_solids'], entries['good']['warnings']), (1, []))
+        self.assertEqual(entries['empty']['warnings'], ['STEP has no bodies (Fusion showed 1)'])
+        self.assertEqual(entries['fewer']['warnings'], ['STEP has 3 solids, Fusion showed 1'])
+        self.assertEqual(entries['fewer']['step_solids'], 3)
+
+    def test_truncated_step_or_broken_archive_fails_and_is_retried(self):
+        for broken in ('step', 'archive'):
+            with self.subTest(broken=broken):
+                self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
+                self.addCleanup(self.temp.cleanup)
+                self.root = Path(self.temp.name)
+                file = fake.File()
+                original = fake.Manager.execute
+
+                def execute(manager, path):
+                    original(manager, path)
+                    if path.endswith('.step') and broken == 'step':
+                        Path(path).write_bytes(fake.step_text(1, complete=False))
+                    if path.endswith('.f3d') and broken == 'archive':
+                        Path(path).write_bytes(b'not a zip')
+                    return True
+                with patch.object(fake.Manager, 'execute', execute):
+                    self.run_export(fake.data([file]))
+                entry = self.manifest['entries'][0]
+                self.assertEqual((entry['status'], entry['attempts']), ('failed', 2))
+                self.assertIn('incomplete' if broken == 'step' else 'damaged', entry['error'])
+                self.run_export(fake.data([file]))  # a good export next time
+                self.assertEqual(self.manifest['entries'][0]['status'], 'done')
+
+    def test_visible_solids_count_each_shown_occurrence(self):
+        part = fake.component('part', [fake.body(), fake.body(shown=False)])
+        sub = fake.component('sub', [fake.body()])
+        hidden_parent = fake.occurrence(sub, bulb=False, visible=False)
+        occurrences = [fake.occurrence(part), fake.occurrence(part),             # two instances: two solids
+                       fake.occurrence(part, visible=False),                      # hidden: none
+                       hidden_parent, fake.occurrence(part, parent=hidden_parent),  # inside a hidden one
+                       fake.occurrence(sub), fake.occurrence(part, parent=fake.occurrence(sub, bulb=False))]
+        file = fake.File('Assembly', 'assembly')
+        file.root = fake.component('root', [fake.body(), fake.body(solid=False)], occurrences)
+        file.step_solids = 4
+        self.run_export(fake.data([file]))
+        entry = self.manifest['entries'][0]
+        # root 1 + part twice + sub once = 4; each shown component once: root 1 + part 1 + sub 1 = 3
+        self.assertEqual((entry['visible_solid_bodies'], entry['visible_solid_bodies_distinct']), (4, 3))
+        self.assertEqual(entry['warnings'], [])
+        file.step_solids = 3  # a STEP writer that writes a repeated part once: also a match
+        file.versionNumber = 4
+        self.run_export(fake.data([file]))
+        self.assertEqual(self.manifest['entries'][-1]['warnings'], [])
+
+    def test_counting_problems_never_stop_an_export(self):
+        file = fake.File()
+        file.root = fake.component('root', [fake.body()], [NS(component=fake.component('x'))])  # no isVisible
+        _, counts = self.run_export(fake.data([file]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual(counts['exported'], 1)
+        self.assertIn('count_error', entry)
+        self.assertEqual(entry['warnings'], [])  # nothing to compare with
+
+    def test_step_solids_are_found_across_chunk_boundaries(self):
+        from fusion_bulk_export import checks
+        path = self.root / 'a.step'
+        path.write_bytes(fake.step_text(40))
+        for size in (7, 31, 64, 1 << 20):
+            with patch.object(checks, 'CHUNK', size), patch.object(checks, 'OVERLAP', 64):
+                self.assertEqual(checks.step_facts(path), ([], [], 40))
 
     def test_reported_success_without_file_is_failure(self):
         file = fake.File()

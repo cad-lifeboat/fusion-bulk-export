@@ -10,6 +10,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
+from . import checks
 from .journal import Journal, replay
 from .names import WINDOWS_LIMIT, Names, clean, long_path, too_long, windows_length
 from .power import keep_awake
@@ -548,8 +549,13 @@ class Exporter:
                     stem, facts = self.destination(hub, project, folders, file, short)
                     entry.update(facts)
                     paths = self.adapter.export(file, stem)
+                    details = dict(getattr(self.adapter, 'details', None) or {})
+                    # Quick checks now: a broken file is retried; an empty STEP is a warning.
+                    facts = checks.inline(paths, details.get('visible_solid_bodies'),
+                                          details.get('visible_solid_bodies_distinct'))
                     entry['files'] = [file_info(Path(path), self.root) for path in paths]
-                    entry.update(getattr(self.adapter, 'details', None) or {})
+                    entry.update(details)
+                    entry.update(facts)
                     entry.update(status='done', error=None)
                     break
                 except NonDesign as error:

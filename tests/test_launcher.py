@@ -84,6 +84,35 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('Stopped by itself (output_missing)', text)
         self.assertIn('10 bytes', text)
 
+    def test_check_command_runs_without_fusion(self):
+        out = self.root / 'out'
+        out.mkdir()
+        step = out / 'a v1.step'
+        step.write_bytes(b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('X'));\nENDSEC;\nDATA;\n" + b'/* x */\n' * 400
+                         + b'ENDSEC;\nEND-ISO-10303-21;\n')
+        import hashlib
+        import zipfile
+        with zipfile.ZipFile(out / 'a v1.f3d', 'w') as archive:
+            archive.writestr('Manifest.dat', 'x')
+            archive.writestr('FusionAssetName[Active]/x', 'x')
+        files = [dict(path=p.name, bytes=p.stat().st_size, sha256=hashlib.sha256(p.read_bytes()).hexdigest())
+                 for p in (out / 'a v1.f3d', step)]
+        (out / 'manifest.json').write_text(json.dumps(dict(entries=[
+            dict(name='Secret Design', status='done', files=files, visible_solid_bodies=2,
+                 warnings=['STEP has no bodies (Fusion showed 2)'])])))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            self.assertEqual(launcher.main(['check', str(out)]), 0)
+        text = stream.getvalue()
+        self.assertIn('Checked 1 finished item(s): 0 with a problem', text)
+        self.assertIn('design 1: NOTE STEP has no bodies (Fusion showed 2)', text)
+        self.assertNotIn('Secret', text)
+        self.assertIn('Warnings: 1 item(s) exported with a warning', '\n'.join(launcher.summary(out)))
+        step.write_bytes(b'ISO-10303-21;\n')  # damaged since
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(launcher.main(['check', str(out)]), 1)
+            self.assertEqual(launcher.main(['check', str(self.root / 'nothing')]), 1)
+
     def test_status_reads_results_of_earlier_versions(self):
         self.assertEqual(launcher.count_line(dict(done=1, failed=0, skipped=2)),
                          'Counts: {"done": 1, "failed": 0, "skipped": 2}')

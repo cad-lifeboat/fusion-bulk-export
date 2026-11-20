@@ -91,7 +91,7 @@ class VerifyTests(unittest.TestCase):
         status, text = self.run_check()
         self.assertEqual(status, 1)
         self.assertIn('truncated', text)
-        self.assertIn('NOTE STEP has 2 solids, Fusion reported 3', text)
+        self.assertIn('NOTE STEP has 2 solids, Fusion showed 3', text)
 
     def test_solid_mismatch_is_a_note_unless_strict(self):
         self.build(solids=3)
@@ -103,13 +103,60 @@ class VerifyTests(unittest.TestCase):
         self.assertIn('PROBLEM STEP has 2 solids', text)
 
 
-    def test_long_path_prefix_on_windows_only(self):
-        with unittest.mock.patch.object(verify.sys, 'platform', 'win32'), \
-                unittest.mock.patch.object(verify.os.path, 'isabs', lambda p: True):
-            self.assertEqual(verify.long_path('C:\\out\\a.step'), '\\\\?\\C:\\out\\a.step')
-            self.assertEqual(verify.long_path('\\\\srv\\s\\a'), '\\\\?\\UNC\\srv\\s\\a')
-        with unittest.mock.patch.object(verify.sys, 'platform', 'darwin'):
-            self.assertEqual(verify.long_path('/x/a.step'), '/x/a.step')
+class CheckFolderTests(unittest.TestCase):
+    """Check this folder on a real (synthetic) export: hashes, journal, no Fusion needed."""
+    def setUp(self):
+        import sys
+        from tests import fake_adsk as fake
+        fake.install()
+        from types import SimpleNamespace as NS
+        from fusion_bulk_export.core import Exporter
+        from fusion_bulk_export.fusion import FusionAdapter
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.fake = fake
+        self.exporter = Exporter(self.root, FusionAdapter(NS(documents=fake.Documents())))
+        empty = fake.File('Empty', 'empty')
+        empty.step_solids = 0
+        self.exporter.run(fake.data([fake.File('A', 'a'), empty]))
+        self.manifest = json.loads((self.root / 'manifest.json').read_text())
+
+    def test_clean_export_checks_out_and_reports_the_empty_step(self):
+        from fusion_bulk_export import checks
+        shown = []
+        totals = checks.check_folder(self.root, show=lambda *args: shown.append(args))
+        self.assertEqual(totals['failed_checks'], 0)
+        self.assertEqual((totals['done'], totals['designs'], totals['warnings']), (2, 2, 1))
+        self.assertEqual(totals['solids_differ'], 1)
+        notes = [n for args in shown for n in args[4]]
+        self.assertIn('STEP has no bodies (Fusion showed 1)', notes)
+        self.assertEqual(checks.check_folder(self.root, strict=True)['failed_checks'], 1)
+
+    def test_changed_and_missing_files_are_problems(self):
+        from fusion_bulk_export import checks
+        first, second = self.manifest['entries']
+        path = self.root / first['files'][1]['path']
+        data = path.read_bytes()
+        path.write_bytes(data.replace(b'synthetic padding', b'synthetic paddinG'))  # same size, other bytes
+        (self.root / second['files'][0]['path']).unlink()
+        totals = checks.check_folder(self.root)
+        self.assertEqual((totals['changed'], totals['missing'], totals['failed_checks']), (1, 1, 2))
+
+    def test_items_still_in_the_journal_are_checked(self):
+        from fusion_bulk_export import checks
+        entry = dict(self.manifest['entries'][0], key='["x"]', files=[dict(path='gone.step', bytes=1, sha256='0')])
+        (self.root / 'manifest.journal').write_text(json.dumps(dict(entry=entry)) + '\n')
+        self.assertEqual(checks.check_folder(self.root)['missing'], 1)
+
+    def test_verify_script_wraps_the_check(self):
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            status = verify.main([str(self.root)])
+        self.assertEqual(status, 0, stream.getvalue())
+        self.assertIn('NOTE STEP has no bodies', stream.getvalue())
+        self.assertNotIn('Empty', stream.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -270,6 +270,14 @@ class UItests(UIBase):
         self.assertIn('Synthetic export failure', page)
         self.assertEqual(self.opened, [])  # Cancel opens nothing
 
+    def test_empty_step_is_a_warning_in_the_summary(self):
+        self.file.step_solids = 0
+        self.open_dialog().execute.handlers[0].notify(None)
+        message = self.summaries[0][0]
+        self.assertIn('1 exported now', message)
+        self.assertIn('1 exported with a warning', message)
+        self.assertIn('- Part: STEP has no bodies (Fusion showed 1)', message)
+
     def test_trouble_asks_retry_or_stop(self):
         files = [fake.File('P%d' % n, 'f%d' % n) for n in range(7)]
         for file in files:

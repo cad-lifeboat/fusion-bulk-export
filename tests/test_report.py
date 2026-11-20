@@ -73,6 +73,22 @@ class ReportTests(unittest.TestCase):
         self.assertIn('Low disk space: 50 MB free.', text)
         self.assertNotIn('Run again to retry', text)
 
+    def test_warnings_in_report_csv_and_summary(self):
+        warned = entry('Hollow', 'done', files=['Hub/Proj/Hollow v2.f3d', 'Hub/Proj/Hollow v2.step'])
+        warned['warnings'] = ['STEP has no bodies (Fusion showed 1)']
+        self.manifest['entries'].append(warned)
+        page, table = self.write()
+        text = page.read_text(encoding='utf-8')
+        self.assertIn('Warning: STEP has no bodies (Fusion showed 1)', text)
+        self.assertIn('Exported, with a warning', text)
+        self.assertLess(text.index('Hollow'), text.index('Good &lt;b&gt;'))
+        rows = list(csv.DictReader(io.StringIO(table.read_text(encoding='utf-8-sig'))))
+        self.assertEqual([r['warnings'] for r in rows if r['design'] == 'Hollow'],
+                         ['STEP has no bodies (Fusion showed 1)'])
+        summary = report.summary_text(self.run_info['counts'], self.run_info, self.manifest, '/out')
+        self.assertIn('1 exported with a warning', summary)
+        self.assertIn('- Hollow: STEP has no bodies (Fusion showed 1)', summary)
+
     def test_empty_folder_report(self):
         self.manifest = dict(entries=[])
         self.run_info['discovery_errors'] = []

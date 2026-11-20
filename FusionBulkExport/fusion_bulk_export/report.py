@@ -15,8 +15,10 @@ from urllib.parse import quote
 
 from .names import long_path
 
-ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'done': 3}
+ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'warning': 3, 'done': 4}
 LABEL = {'failed': 'Failed', 'unreadable': 'Not read', 'skipped': 'Skipped', 'done': 'Exported'}
+WARNING_STEP = ('The .f3d archive is the complete copy; open the design in Fusion if you need the STEP '
+                'to hold every body.')
 
 
 def next_step(status, error):
@@ -43,18 +45,20 @@ def items(manifest, run_info=None):
     for entry in manifest.get('entries', []):
         status = entry.get('status')
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
+        warnings = [str(w) for w in entry.get('warnings') or []] if status == 'done' else []
         result.append(dict(status=status, hub=entry.get('hub') or '', project=entry.get('project') or '',
                            folder='/'.join(entry.get('path') or []), name=entry.get('name') or '',
                            version=entry.get('version'), files=files, reason=entry.get('error') or '',
-                           next_step=next_step(status, entry.get('error'))))
+                           next_step=WARNING_STEP if warnings else next_step(status, entry.get('error')),
+                           warnings=warnings))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', hub=where[0] if where else '',
                            project=where[1] if len(where) > 1 else '', folder='/'.join(where[2:]),
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
-                           next_step=next_step('unreadable', problem.get('error'))))
-    result.sort(key=lambda i: (ORDER.get(i['status'], 9), i['hub'].casefold(), i['project'].casefold(),
-                               i['folder'].casefold(), i['name'].casefold()))
+                           next_step=next_step('unreadable', problem.get('error')), warnings=[]))
+    result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
+                               i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
 
 
@@ -77,7 +81,7 @@ h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 24px 0 8p
 table { border-collapse: collapse; width: 100%; } th, td { text-align: left; vertical-align: top;
   padding: 6px 8px; border-bottom: 1px solid var(--line); } th { color: var(--muted); font-weight: 600; }
 .failed, .unreadable { color: var(--bad); font-weight: 600; } .skipped { color: var(--warn); }
-.done { color: var(--good); } .stop { border-left: 4px solid var(--bad); padding: 4px 12px; }
+.done { color: var(--good); } .warn { color: var(--warn); } .stop { border-left: 4px solid var(--bad); padding: 4px 12px; }
 '''
 
 
@@ -111,11 +115,14 @@ def render_html(manifest, run_info, counts):
                          for path in row['files'])
         name = row['name'] + (' v%s' % row['version'] if row['version'] is not None else '')
         why = esc(row['reason'])
+        for warning in row['warnings']:
+            why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(warning) + '</span>'
         if row['next_step']:
             why += ('<br>' if why else '') + '<span class="muted">' + esc(row['next_step']) + '</span>'
         out.append('<tr><td class="%s">%s</td><td>%s<div class="muted">%s</div></td><td>%s</td><td>%s</td>'
                    '<td>%s</td><td>%s</td></tr>'
-                   % (esc(row['status'] or ''), esc(LABEL.get(row['status'], row['status'] or '')),
+                   % (esc(row['status'] or ''), esc(LABEL.get(row['status'], row['status'] or '')
+                                                    + (', with a warning' if row['warnings'] else '')),
                       esc(row['project']), esc(row['hub']), esc(row['folder']), esc(name), files, why))
     if not rows:
         out.append('<tr><td colspan="6" class="muted">Nothing exported yet.</td></tr>')
@@ -127,13 +134,13 @@ def render_csv(manifest, run_info):
     stream = io.StringIO()
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
-                     'reason', 'next_step'])
+                     'reason', 'next_step', 'warnings'])
     for row in items(manifest, run_info):
         archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '')
         step = next((p for p in row['files'] if p.lower().endswith(('.step', '.stp'))), '')
         writer.writerow([row['status'], row['hub'], row['project'], row['folder'], row['name'],
                          '' if row['version'] is None else row['version'], archive, step, row['reason'],
-                         row['next_step']])
+                         row['next_step'], '; '.join(row['warnings'])])
     return stream.getvalue()
 
 
@@ -168,6 +175,12 @@ def failure_reasons(manifest, run_info=None, limit=3):
     return lines
 
 
+def warning_lines(manifest, limit=3):
+    """(number of items with a warning, up to limit "name: warning" lines)."""
+    rows = [row for row in items(manifest) if row['warnings']]
+    return len(rows), ['%s: %s' % (row['name'], '; '.join(row['warnings'])) for row in rows[:limit]]
+
+
 def summary_text(counts, run_info, manifest, output):
     """The end-of-run dialog text (without the question of what to open)."""
     if run_info.get('cancelled'):
@@ -183,6 +196,10 @@ def summary_text(counts, run_info, manifest, output):
     reasons = failure_reasons(manifest, run_info)
     if reasons:
         lines += ['', 'Failures:'] + ['- ' + line for line in reasons]
+    warned, lines_of_warnings = warning_lines(manifest)
+    if warned:
+        lines += ['', '%d exported with a warning (the .f3d is complete; see the report):' % warned]
+        lines += ['- ' + line for line in lines_of_warnings]
     unreadable = len(run_info.get('discovery_errors') or [])
     if unreadable:
         lines.append('%d folder(s) could not be read (listed in the report).' % unreadable)
