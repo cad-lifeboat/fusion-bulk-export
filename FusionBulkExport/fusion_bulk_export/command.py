@@ -152,7 +152,9 @@ def export(app, selection, output, show=None, other_files=True, drawings=None, l
     except OSError as error:
         exporter.log('could not write the report: ' + str(error))
         page = None
-    data = report.summary(counts, exporter.run_info, exporter.manifest, output, page)
+    # The folder as the export used it (absolute, never resolved), so "Folder:", "Report:" and
+    # Open folder name the same path however the remembered folder was written.
+    data = report.summary(counts, exporter.run_info, exporter.manifest, exporter.root, page)
     data['text'] = report.text_of(data)
     (show or (lambda summary: show_results(ui, summary)))(data)
     return counts

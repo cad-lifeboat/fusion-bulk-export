@@ -1,6 +1,7 @@
 """Synthetic command lifecycle and output-folder dialog checks."""
 import importlib
 import json
+import os
 import re
 from pathlib import Path
 import tempfile
@@ -389,6 +390,15 @@ class UItests(UIBase):
         self.assertIn('Could not open it (no viewer)', reply['error'])
         self.assertEqual(reply['path'], str(Path(self.temp.name) / 'index.html'))  # to copy
         self.assertEqual(self.errors, [])
+
+    def test_folder_and_report_lines_name_the_same_folder(self):
+        # A remembered folder written another way ("..", a trailing separator) is shown as the
+        # export used it: "Folder:" and "Report:" (and Open folder) agree, and neither is resolved.
+        self.settings.write_text(json.dumps(dict(output=str(Path(self.temp.name) / 'sub' / '..') + os.sep)))
+        self.export()
+        data = self.results()[1]
+        self.assertEqual(data['output'], self.temp.name)
+        self.assertEqual(data['report'], str(Path(self.temp.name) / 'index.html'))
 
     def assert_fallback(self, reason):
         """The summary went to a plain message box: OK only, with the folder and report paths,
