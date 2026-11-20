@@ -217,7 +217,7 @@ class FusionAdapter:
                 raise NotSaved('Fusion could not open the drawing: %s' % (error or type(error).__name__))
             drawing = drawing_product(document)
             if drawing is None:
-                raise NotSaved('%s (.f2d: no drawing found in the opened file)' % NATIVE_REASON)
+                raise NotSaved('%s (.f2d: the opened file holds no drawing)' % NATIVE_REASON)
             staging = self.stage()
             staged = staging.path('.pdf')
             # The first execute on a freshly opened drawing writes nothing (seen on real Fusion):

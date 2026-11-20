@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fusion Bulk Export results</title>
+<style>
+  :root { --text: #e3e6ea; --muted: #9aa4b1; --line: #4a515b; --tick: #2f9bd8; --bad: #ff8178; --warn: #e3b341;
+    --good: #56d364; --field: rgba(255, 255, 255, 0.05); --hover: rgba(255, 255, 255, 0.07); }
+  @media (prefers-color-scheme: light) {
+    :root { --text: #1f2328; --muted: #5d6670; --line: #c4ccd5; --tick: #0a6fc2; --bad: #b42318; --warn: #8a5a00;
+      --good: #1a7f37; --field: rgba(0, 0, 0, 0.04); --hover: rgba(0, 0, 0, 0.06); }
+  }
+  /* Reads well from about 420 px to 700 px wide (and narrower): never a horizontal scrollbar;
+     long names end in an ellipsis (the whole name is the tooltip); paths and reasons wrap. */
+  html, body { margin: 0; background: transparent; color: var(--text); overflow-x: hidden; max-width: 100%;
+    font: 12px/1.45 -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  * { box-sizing: border-box; }
+  #page { padding: 4px 6px 8px; outline: none; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 8px; overflow-wrap: anywhere; }
+  h1.finished { color: var(--good); }
+  h1.stopped { color: var(--bad); }
+  h1.cancelled { color: var(--warn); }
+  .counts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 18px; margin: 0 0 10px; }
+  .count { display: flex; justify-content: space-between; gap: 8px; min-width: 0; padding: 2px 0;
+    border-bottom: 1px solid var(--line); }
+  .count .label { color: var(--muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .count .value { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .count.failed .value { color: var(--bad); }
+  .count.warnings .value { color: var(--warn); }
+  ul { list-style: none; margin: 0 0 8px; padding: 0; }
+  .failure { display: flex; gap: 6px; min-width: 0; padding: 1px 0; }
+  .failure .name { flex: 0 1 auto; max-width: 45%; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .failure .reason { flex: 1 1 auto; min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+  .more { color: var(--muted); margin: 0 0 8px; }
+  .retry { margin: 0 0 8px; font-weight: 600; }
+  .notes li { color: var(--muted); margin: 0 0 3px; overflow-wrap: anywhere; }
+  .folder-label { color: var(--muted); margin: 4px 0 2px; }
+  .folder { user-select: text; cursor: text; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--field); overflow-wrap: anywhere; font: 11px ui-monospace, Menlo, Consolas, monospace; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid var(--line); border-radius: 4px; background: transparent;
+    color: var(--text); cursor: pointer; }
+  button:hover { background: var(--hover); }
+  button:focus-visible { outline: 2px solid var(--tick); outline-offset: 1px; }
+  .status { min-height: 18px; margin-top: 6px; color: var(--bad); overflow-wrap: anywhere; }
+  .waiting { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+  <div id="page" tabindex="-1"><div class="waiting">Loading the results…</div></div>
+  <script src="summary.js"></script>
+</body>
+</html>

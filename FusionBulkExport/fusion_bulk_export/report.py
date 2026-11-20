@@ -246,48 +246,10 @@ def write(exporter, counts=None):
     return page, table
 
 
-def failure_reasons(manifest, run_info=None, limit=3):
-    """Up to limit "name: reason" lines for the items that failed."""
-    lines = []
-    for row in items(manifest, run_info):
-        if row['status'] not in ('failed', 'unreadable'):
-            break
-        where = row['name'] if row['status'] == 'failed' else ' / '.join(
-            part for part in (row['project'], row['folder']) if part)
-        lines.append('%s: %s' % (where, row['reason'] or 'unknown reason'))
-        if len(lines) == limit:
-            break
-    return lines
-
-
-def count_sentence(counts):
-    """The run's counts in one line, designs and other files apart ("already up to date" is
-    designs; other files already up to date are named when there are any)."""
-    unchanged = counts.get('files_up_to_date', 0)
-    return ('%d exported now, %d already up to date, %d other file(s) saved%s, %d skipped, %d failed.'
-            % (counts.get('exported', 0), counts.get('up_to_date', 0), counts.get('files', 0),
-               ', %d other file(s) already up to date' % unchanged if unchanged else '',
-               counts.get('skipped', 0), counts.get('failed', 0)))
-
-
-def skipped_files(manifest):
-    """How many other files are recorded as not saved (with a reason), not counting those left
-    out because only designs were wanted."""
-    return sum(1 for entry in manifest.get('entries', []) if entry.get('kind') == 'file'
-               and entry.get('status') == 'skipped'
-               and not str(entry.get('error') or '').startswith(('Not a Fusion design', 'Drawing PDFs are off')))
-
-
 def drawings_off(manifest):
     """How many drawings were left out because drawing PDFs were not asked for."""
     return sum(1 for entry in manifest.get('entries', []) if entry.get('kind') == 'file'
                and entry.get('status') == 'skipped' and str(entry.get('error') or '').startswith('Drawing PDFs are off'))
-
-
-def warning_lines(manifest, limit=3):
-    """(number of items with a warning, up to limit "name: warning" lines)."""
-    rows = [row for row in items(manifest) if row['warnings']]
-    return len(rows), ['%s: %s' % (row['name'], '; '.join(row['warnings'])) for row in rows[:limit]]
 
 
 LONG_PATHS = ('%d item(s) have a path over 260 characters: they are saved, but Explorer and some programs '
@@ -310,53 +272,99 @@ def long_path_count(manifest):
     return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done' and entry.get('long_path'))
 
 
-def summary_text(counts, run_info, manifest, output):
-    """The end-of-run dialog text (without the question of what to open)."""
+FAILURES_SHOWN = 3  # failures named in the results dialog; the rest are in the report
+
+
+def failures(manifest, run_info=None):
+    """[{"name", "reason"}] for every failed design and unreadable folder, in report order."""
+    found = []
+    for row in items(manifest, run_info):
+        if row['status'] not in ('failed', 'unreadable'):
+            break
+        name = row['name'] if row['status'] == 'failed' else ' / '.join(
+            part for part in (row['project'], row['folder']) if part)
+        found.append(dict(name=name, reason=row['reason'] or 'unknown reason'))
+    return found
+
+
+def warned(manifest):
+    """How many exported items carry a warning (a thin STEP, links that could not be read)."""
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done'
+               and (entry.get('warnings') or entry.get('references_unreadable')))
+
+
+def summary(counts, run_info, manifest, output, page=None):
+    """What the results dialog shows at the end of a run, as data: a one-line headline, the
+    counts (zero rows left out, except "Exported now"), up to three failures by name with how
+    many more the report lists, the retry hint when something failed, short notes, the output
+    folder and, when it was written, the report."""
+    run_info = run_info or {}
     if run_info.get('cancelled'):
-        head = 'Export cancelled. Run it again to carry on.'
+        headline = 'Cancelled'
     elif run_info.get('stopped_reason'):
-        head = 'The export stopped: ' + run_info['stopped_reason']
+        headline = 'Stopped: ' + run_info['stopped_reason']
     else:
-        head = 'Export finished.'
-    lines = [head, '', count_sentence(counts)]
-    reasons = failure_reasons(manifest, run_info)
-    if reasons:
-        lines += ['', 'Failures:'] + ['- ' + line for line in reasons]
-    warned, lines_of_warnings = warning_lines(manifest)
-    if warned:
-        lines += ['', '%d exported with a warning (the .f3d is complete; see the report):' % warned]
-        lines += ['- ' + line for line in lines_of_warnings]
-    not_saved = skipped_files(manifest)
-    if not_saved:
-        lines.append('%d other file(s) could not be saved; the report says why.' % not_saved)
-    left_out = drawings_off(manifest)
-    if left_out:
-        lines.append('%d drawing(s) not exported: drawing PDFs are off (tick "Also export drawings as PDF" '
-                     'to include them; each can take minutes).' % left_out)
-    long_paths = long_path_count(manifest)
-    if long_paths:
-        lines.append(LONG_PATHS % long_paths)
-    unread = links_unreadable(manifest)
-    if unread:
-        lines.append('Warning: %d design(s): %s' % (unread, LINKS_UNREADABLE[0].lower() + LINKS_UNREADABLE[1:]))
-    stale = links_out_of_date(manifest)
-    if stale:
-        lines.append('Note: %d design(s) with out-of-date links (exported as they are; see the report).' % stale)
-    unreadable = len(run_info.get('discovery_errors') or [])
-    if unreadable:
-        lines.append('%d folder(s) could not be read (listed in the report).' % unreadable)
-    if counts.get('failed'):
-        lines += ['', 'Run again to retry the %d failed.' % counts['failed']]
+        headline = 'Finished'
+    rows = [['Exported now', counts.get('exported', 0)]]
+    for label, value in (('Already up to date', counts.get('up_to_date', 0)),
+                         ('Other files saved', counts.get('files', 0)),
+                         ('Other files up to date', counts.get('files_up_to_date', 0)),
+                         ('Skipped', counts.get('skipped', 0)),
+                         ('Failed', counts.get('failed', 0)),
+                         ('Warnings', warned(manifest))):
+        if value:
+            rows.append([label, value])
+    failed = failures(manifest, run_info)
+    notes = []
+    if run_info.get('cancelled'):
+        notes.append('Run again to carry on where it stopped.')
     if run_info.get('stopped_code'):
         from .errors import NEXT_STEP
-        step = NEXT_STEP.get(run_info['stopped_code'])
-        if step:
-            lines += ['', step]
+        if NEXT_STEP.get(run_info['stopped_code']):
+            notes.append(NEXT_STEP[run_info['stopped_code']])
     if run_info.get('low_space'):
         free = run_info.get('free_bytes')
-        lines += ['', 'Low disk space: %s free.' % ('%d MB' % (free >> 20) if free is not None else 'little')]
-    lines += ['', 'Saved in: ' + str(output)]
+        notes.append('Low disk space: %s free.' % ('%d MB' % (free >> 20) if free is not None else 'little'))
+    long_paths = long_path_count(manifest)
+    if long_paths:
+        notes.append(LONG_PATHS % long_paths)
+    left_out = drawings_off(manifest)
+    if left_out:
+        notes.append('%d drawing(s) left out: drawing PDFs are off.' % left_out)
+    stale = links_out_of_date(manifest)
+    if stale:
+        notes.append('%d design(s) use older versions of linked designs (a note, not a failure).' % stale)
+    unreadable = len(run_info.get('discovery_errors') or [])
+    if unreadable:
+        notes.append('%d folder(s) could not be read.' % unreadable)
+    return dict(headline=headline, rows=rows, failures=failed[:FAILURES_SHOWN],
+                more=max(len(failed) - FAILURES_SHOWN, 0),
+                retry=('Run again to retry the %d failed.' % counts['failed']) if counts.get('failed') else '',
+                notes=notes, output=str(output), report=str(page) if page else '')
+
+
+def text_of(data):
+    """The plain text of summary() data: the fallback dialog's text, and the log's."""
+    lines = [data['headline'], '']
+    width = max(len(label) for label, _ in data['rows'])
+    lines += ['%s  %d' % (label.ljust(width), value) for label, value in data['rows']]
+    if data['failures']:
+        lines += [''] + ['- %s: %s' % (item['name'], item['reason']) for item in data['failures']]
+        if data['more']:
+            lines.append('and %d more in the report.' % data['more'])
+    if data['retry']:
+        lines += ['', data['retry']]
+    if data['notes']:
+        lines += [''] + data['notes']
+    lines += ['', 'Folder: ' + data['output']]
+    if data['report']:
+        lines.append('Report: ' + data['report'])
     return '\n'.join(lines)
+
+
+def summary_text(counts, run_info, manifest, output, page=None):
+    """The end-of-run summary as plain text (see summary())."""
+    return text_of(summary(counts, run_info, manifest, output, page))
 
 
 def open_path(path, platform=None, run=None, startfile=None):

@@ -72,13 +72,10 @@ def bar(state):
     return projects * STEPS, min(value, projects * STEPS)
 
 
-OPEN_CHOICES = ('\n\nYes: open the report (index.html).  No: open the folder.  Cancel: close.')
-
-
 def ask(ui, text, buttons, icon):
-    """messageBox with buttons (a MessageBoxButtonTypes member every Fusion has: OKCancel,
-    YesNo, YesNoCancel) and, where this Fusion offers it, an icon. Only the basic buttons and
-    their results (DialogOK, DialogCancel, DialogYes, DialogNo) are relied on."""
+    """messageBox with buttons (a MessageBoxButtonTypes member: OKCancel, YesNo, YesNoCancel) and,
+    where this Fusion offers it, an icon. Only results that exist (DialogOK, DialogCancel,
+    DialogYes, DialogNo) are relied on."""
     core = adsk.core
     shown = getattr(getattr(core, 'MessageBoxIconTypes', None), icon, None)
     kind = getattr(core.MessageBoxButtonTypes, buttons)
@@ -87,35 +84,28 @@ def ask(ui, text, buttons, icon):
     return ui.messageBox(text, 'Fusion Bulk Export', kind, shown)
 
 
-def ask_trouble(ui, reason, last_error):
-    """The run cannot go on (disk full, folder gone, designs failing in a row): carry on or stop.
-    OK / Cancel, not Retry / Cancel: the result of a Retry button is not a documented member."""
-    text = ('The export has paused: %s\n\nLast error: %s\n\nOK tries again and carries on. Cancel stops the '
-            'export: everything exported so far is kept, and running it again carries on from there.'
+def trouble_text(reason, last_error):
+    return ('The export has paused: %s\nLast error: %s\n\nEverything exported so far is kept. Try again now?'
             % (reason, last_error or 'none'))
-    answer = ask(ui, text, 'OKCancelButtonType', 'WarningIconType')
+
+
+def ask_trouble(ui, reason, last_error):
+    """The run cannot go on (disk full, folder gone, designs failing in a row): try again or stop.
+    Asked during the export, so only a message box will do. OK / Cancel under a question, not
+    Retry / Cancel: Fusion's DialogResults has no Retry result to compare with."""
+    answer = ask(ui, trouble_text(reason, last_error), 'OKCancelButtonType', 'WarningIconType')
     return 'retry' if answer == adsk.core.DialogResults.DialogOK else 'stop'
 
 
-def show_summary(ui, text, output, page, opener):
-    """The end-of-run dialog; Yes opens the report, No the folder."""
-    core = adsk.core
-    if page is None:
-        errors.message_box(ui, text, warning=False)
-        return None
-    answer = ask(ui, text + OPEN_CHOICES, 'YesNoCancelButtonType', 'InformationIconType')
-    target = page if answer == core.DialogResults.DialogYes else (
-        output if answer == core.DialogResults.DialogNo else None)
-    if target is not None:
-        try:
-            opener(target)
-        except Exception as error:
-            errors.message_box(ui, 'Could not open %s (%s). Open it from your file browser.' % (target, error))
-    return target
+def show_results(ui, data):
+    """Without a results dialog (a caller that passes none): the summary in a message box."""
+    from . import results
+    results.fallback(ui, data)
 
 
-def export(app, selection, output, opener=None, other_files=True, drawings=False):
-    """Export into output with progress, then write the report and show the summary.
+def export(app, selection, output, show=None, other_files=True, drawings=False):
+    """Export into output with progress, then write the report and hand the summary to show
+    (report.summary() data plus its plain "text"; the add-in shows it in the results dialog).
     other_files: also save the files that are not designs (the dialog's checkbox); drawings:
     also save drawings as PDFs (the other checkbox, off by default: each can take minutes)."""
     ui = app.userInterface
@@ -157,6 +147,7 @@ def export(app, selection, output, opener=None, other_files=True, drawings=False
     except OSError as error:
         exporter.log('could not write the report: ' + str(error))
         page = None
-    text = report.summary_text(counts, exporter.run_info, exporter.manifest, output)
-    show_summary(ui, text, output, page, opener or report.open_path)
+    data = report.summary(counts, exporter.run_info, exporter.manifest, output, page)
+    data['text'] = report.text_of(data)
+    (show or (lambda summary: show_results(ui, summary)))(data)
     return counts

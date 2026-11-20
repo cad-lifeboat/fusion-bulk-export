@@ -346,9 +346,9 @@ def install():
     adsk.core.HTMLEventHandler = object
     adsk.core.DropDownStyles = NS(TextListDropDownStyle=1)
     # Documented enums of messageBox and the dialogs (values here are arbitrary but distinct).
-    # Only members known to exist in every Fusion are defined, so a test cannot pass on a member
-    # the real API may lack (a Retry button and its DialogRetry result are left out on purpose).
-    adsk.core.MessageBoxButtonTypes = NS(OKButtonType=0, OKCancelButtonType=1,
+    # Only members a real Fusion was seen to have are defined, so a test cannot pass on a member
+    # the real API lacks: DialogResults has no DialogRetry, so a Retry button's answer is unknown.
+    adsk.core.MessageBoxButtonTypes = NS(OKButtonType=0, OKCancelButtonType=1, RetryCancelButtonType=2,
                                          YesNoButtonType=3, YesNoCancelButtonType=4)
     adsk.core.MessageBoxIconTypes = NS(NoIconIconType=0, QuestionIconType=1, InformationIconType=2,
                                        WarningIconType=3, CriticalIconType=4)
@@ -446,3 +446,116 @@ class OldInputs(Inputs):
         if name == 'addBrowserCommandInput':
             raise AttributeError(name)
         return super().__getattribute__(name)
+
+
+class Event:
+    """A Fusion event: handlers added with add() are notified by the test (or the fake)."""
+    def __init__(self):
+        self.handlers = []
+
+    def add(self, handler):
+        self.handlers.append(handler)
+        return True
+
+    def notify(self, args):
+        for handler in list(self.handlers):
+            handler.notify(args)
+
+
+class Command:
+    """A command as its commandCreated handler gets it: dialog inputs, events, button texts and
+    sizes. Command.isOKButtonVisible, okButtonText and cancelButtonText exist on real Fusion
+    (probe); doExecute(terminate) ends the command (recorded here); isAutoExecute set during
+    commandCreated ends it without showing the dialog."""
+    def __init__(self, inputs=None):
+        self.commandInputs = inputs if inputs is not None else Inputs()
+        self.execute, self.inputChanged, self.validateInputs = Event(), Event(), Event()
+        self.incomingFromHTML, self.destroy = Event(), Event()
+        self.okButtonText, self.cancelButtonText = 'OK', 'Cancel'
+        self.isOKButtonVisible, self.isAutoExecute, self.isRepeatable = True, False, True
+        self.sizes, self.executed = {}, []
+
+    def setDialogInitialSize(self, width, height):
+        self.sizes['initial'] = (width, height)
+
+    def setDialogMinimumSize(self, width, height):
+        self.sizes['minimum'] = (width, height)
+
+    def doExecute(self, terminate):
+        self.executed.append(terminate)
+        self.execute.notify(NS())
+        if terminate:
+            self.destroy.notify(NS())
+        return True
+
+
+class OldCommand(Command):
+    """A command of a Fusion without isOKButtonVisible (setting it raises)."""
+    def __setattr__(self, name, value):
+        if name == 'isOKButtonVisible' and value is False:
+            raise AttributeError(name)
+        super().__setattr__(name, value)
+
+
+class CommandDefinition:
+    """A button definition. execute() starts the command: commandCreated is notified with a new
+    Command (made by make_command, so a test can choose an older one)."""
+    def __init__(self, identity, name='', make_command=Command):
+        self.id, self.name = identity, name
+        self.commandCreated = Event()
+        self.make_command = make_command
+        self.commands = []
+        self.deleted = False
+
+    def execute(self, inputs=None):
+        command = self.make_command()
+        self.commands.append(command)
+        self.commandCreated.notify(NS(command=command))
+        return True
+
+    def deleteMe(self):
+        self.deleted = True
+        return True
+
+
+class CommandDefinitions:
+    """UserInterface.commandDefinitions: addButtonDefinition and itemById."""
+    def __init__(self):
+        self.items = {}
+
+    def addButtonDefinition(self, identity, name, tooltip='', resources=''):
+        if identity in self.items and not self.items[identity].deleted:
+            raise RuntimeError('3 : a command definition with this id already exists')
+        self.items[identity] = CommandDefinition(identity, name)
+        return self.items[identity]
+
+    def itemById(self, identity):
+        found = self.items.get(identity)
+        return found if found is not None and not found.deleted else None
+
+
+class CustomEvents:
+    """Application.registerCustomEvent / fireCustomEvent / unregisterCustomEvent. As in Fusion,
+    a fired event is not handled at once but later, when Fusion is idle: here when the test
+    calls pump()."""
+    def __init__(self):
+        self.events, self.queue = {}, []
+
+    def register(self, name):
+        return self.events.setdefault(name, Event())
+
+    def unregister(self, name):
+        self.events.pop(name, None)
+        return True
+
+    def fire(self, name, info=''):
+        if name not in self.events:
+            return False
+        self.queue.append((name, info))
+        return True
+
+    def pump(self):
+        while self.queue:
+            name, info = self.queue.pop(0)
+            if name in self.events:
+                self.events[name].notify(NS(additionalInfo=info))

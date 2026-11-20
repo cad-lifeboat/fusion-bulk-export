@@ -346,7 +346,7 @@ if (typeof document !== 'undefined') {
     message('Loading your hubs…');
     ask('hubs').then(function (reply) {
       if (!reply || !Array.isArray(reply.hubs)) throw new Error((reply && reply.error) || 'No answer from Fusion.');
-      if (!reply.hubs.length) { message('Fusion shows no hubs. Sign in to Fusion, then close and reopen this dialog.'); return; }
+      if (!reply.hubs.length) { message('Fusion shows no hubs: sign in to Fusion, then start Fusion Bulk Export again.'); return; }
       roots = build(reply.hubs);
       roots.forEach(function (h) { h.open = true; });
       render();

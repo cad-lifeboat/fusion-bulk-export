@@ -39,23 +39,23 @@ class UIBase(unittest.TestCase):
         self.addCleanup(environment.stop)
         self.progress = NS(isCancelButtonShown=False, wasCancelled=False,
                            show=lambda *args: None, hide=lambda: None)
-        self.summaries, self.errors, self.details, self.troubles, self.opened = [], [], [], [], []
-        self.answer = adsk.core.DialogResults.DialogCancel  # to the end-of-run dialog
-        self.trouble_answer = adsk.core.DialogResults.DialogCancel  # to carry on (OK) / stop
+        self.errors, self.details, self.troubles, self.opened, self.plain = [], [], [], [], []
+        self.trouble_answer = adsk.core.DialogResults.DialogCancel  # to try again (OK) / stop
         buttons = adsk.core.MessageBoxButtonTypes
+        icons = adsk.core.MessageBoxIconTypes
 
         def message_box(*args):
-            if len(args) > 2 and args[2] == buttons.YesNoCancelButtonType:
-                self.summaries.append(args)
-                return self.answer
             if len(args) > 2 and args[2] == buttons.OKCancelButtonType:
                 self.troubles.append(args)
                 return self.trouble_answer
+            if len(args) > 3 and args[2] == buttons.OKButtonType and args[3] == icons.InformationIconType:
+                self.plain.append(args)  # the results as a message box (the fallback)
+                return adsk.core.DialogResults.DialogOK
             self.errors.append(args)
             return adsk.core.DialogResults.DialogOK
-        self.definition = NS(commandCreated=Event(), deleteMe=lambda: None)
         self.control = NS(deleteMe=lambda: None)
-        self.definitions = NS(addButtonDefinition=lambda *args: self.definition)
+        self.definitions = fake.CommandDefinitions()
+        self.custom = fake.CustomEvents()
         self.ui = NS(createFolderDialog=lambda: self.folder,
                      createProgressDialog=lambda: self.progress,
                      inputBox=lambda *args: self.details.append(args),
@@ -63,11 +63,9 @@ class UIBase(unittest.TestCase):
                      commandDefinitions=self.definitions,
                      allToolbarPanels=NS(itemById=lambda name: NS(controls=NS(addCommand=lambda definition: self.control))))
         self.file = fake.File()
-        self.events = {}
         self.app = NS(userInterface=self.ui, documents=fake.Documents(), data=fake.data([self.file]),
-                      registerCustomEvent=lambda name: self.events.setdefault(name, Event()),
-                      unregisterCustomEvent=lambda name: self.events.pop(name, None),
-                      fireCustomEvent=lambda name, info: None)
+                      registerCustomEvent=self.custom.register, unregisterCustomEvent=self.custom.unregister,
+                      fireCustomEvent=self.custom.fire)
         adsk.core.Application = NS(get=lambda: self.app)
         adsk.doEvents = lambda: None
         self.module = importlib.import_module('FusionBulkExport')
@@ -84,15 +82,30 @@ class UIBase(unittest.TestCase):
         opener.start()
         self.addCleanup(opener.stop)
 
+    @property
+    def definition(self):
+        return self.definitions.itemById('FusionBulkExport')
+
     def open_dialog(self):
-        self.module.run(None) if not self.definition.commandCreated.handlers else None
-        command = NS(execute=Event(), inputChanged=Event(), validateInputs=Event(), incomingFromHTML=Event(),
-                     commandInputs=fake.Inputs(), sizes={})
-        command.setDialogInitialSize = lambda w, h: command.sizes.update(initial=(w, h))
-        command.setDialogMinimumSize = lambda w, h: command.sizes.update(minimum=(w, h))
+        if self.definition is None:
+            self.module.run(None)
+        command = fake.Command()
         self.definition.commandCreated.handlers[-1].notify(NS(command=command))
         self.assertEqual(self.errors, [])
         return command
+
+    def export(self):
+        """Open the dialog and press Export."""
+        self.open_dialog().execute.handlers[0].notify(None)
+
+    def results(self):
+        """Fusion goes idle after the export command: the custom event starts the results
+        dialog. Returns (its command, the data its page shows, the summary's plain text)."""
+        self.custom.pump()
+        command = self.definitions.itemById('FusionBulkExportResults').commands[-1]
+        data = self.page(command, 'summary')
+        self.page(command, 'shown')
+        return command, data, self.module._results['last']['text']
 
     def change(self, command, control):
         command.inputChanged.handlers[0].notify(NS(input=control))
@@ -252,56 +265,177 @@ class UItests(UIBase):
         self.module.run(None)
         self.assertEqual(self.errors, [])
         command = self.open_dialog()
-        self.answer = self.adsk.core.DialogResults.DialogYes
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.errors, [])
         self.assertIsNone(self.module._busy['by'])  # free for command-line jobs again
-        self.assertEqual(len(self.summaries), 1)
-        message, title = self.summaries[0][:2]
-        self.assertIn('1 exported now, 0 already up to date, 0 other file(s) saved, 0 skipped, 0 failed.', message)
-        self.assertIn(self.temp.name, message)
-        self.assertNotIn('Run again', message)
-        self.assertEqual(title, 'Fusion Bulk Export')
+        # The results dialog is not started inside the export's execute handler: Fusion starts
+        # it from the custom event once the export command has finished.
+        results = self.definitions.itemById('FusionBulkExportResults')
+        from fusion_bulk_export.results import TITLE
+        self.assertEqual(results.name, TITLE)
+        self.assertEqual(results.commands, [])
+        self.assertEqual(len(self.custom.queue), 1)
+        dialog, data, text = self.results()
+        self.assertEqual(self.plain, [])
+        self.assertEqual(data['headline'], 'Finished')
+        self.assertEqual(data['rows'], [['Exported now', 1]])
+        self.assertEqual(data['output'], self.temp.name)
+        self.assertTrue(data['has_report'])
+        self.assertNotIn('report', data)  # the page gets no paths but the folder's
+        self.assertEqual(data['retry'], '')
+        # One button, Close: OK hidden, Cancel renamed; the page across the whole dialog.
+        self.assertFalse(dialog.isOKButtonVisible)
+        self.assertEqual(dialog.cancelButtonText, 'Close')
+        page = dialog.commandInputs.find('fbx_results')
+        self.assertTrue(page.htmlFileURL.endswith('/ui/summary.html'))
+        self.assertTrue(page.isFullWidth)
+        self.assertEqual(page.name, '')
+        self.assertNotIn(self.temp.name, page.htmlFileURL)
         folder = Path(self.temp.name)
         self.assertTrue((folder / 'manifest.json').exists())
-        self.assertEqual(self.opened, [folder.resolve() / 'index.html'])
         self.assertTrue((folder / 'index.csv').exists())
-        # A second run: nothing new, all up to date; No opens the folder.
-        self.answer = self.adsk.core.DialogResults.DialogNo
-        self.open_dialog().execute.handlers[0].notify(None)
-        self.assertIn('0 exported now, 1 already up to date', self.summaries[1][0])
+        self.assertEqual(self.page(dialog, 'open', {'what': 'report'}), {'ok': True})
+        self.assertEqual([str(path) for path in self.opened], [str(folder.resolve() / 'index.html')])
+        self.assertEqual(self.page(dialog, 'open', {'what': 'folder'}), {'ok': True})
         self.assertEqual(str(self.opened[1]), self.temp.name)
+        # Enter or Escape on the page ends the command.
+        self.assertEqual(self.page(dialog, 'close'), {'ok': True})
+        self.assertEqual(dialog.executed, [True])
+        self.assertIsNone(self.module._results['view'])
+        self.assertEqual(self.plain, [])
+        # A second run: nothing new, all up to date.
+        self.export()
+        data = self.results()[1]
+        self.assertEqual(data['rows'], [['Exported now', 0], ['Already up to date', 1]])
+
+    def test_open_failure_is_said_on_the_page(self):
+        self.export()
+        dialog = self.results()[0]
+        with patch('fusion_bulk_export.report.open_path', side_effect=OSError('no viewer')):
+            reply = self.page(dialog, 'open', {'what': 'report'})
+        self.assertIn('Could not open it (no viewer)', reply['error'])
+        self.assertEqual(self.errors, [])
+
+    def assert_fallback(self):
+        """The summary went to a plain message box: OK only, with the folder and report paths."""
+        self.assertEqual(len(self.plain), 1, self.plain)
+        text, title, buttons = self.plain[0][:3]
+        self.assertEqual(buttons, self.adsk.core.MessageBoxButtonTypes.OKButtonType)
+        self.assertEqual(title, 'Fusion Bulk Export')
+        self.assertTrue(text.startswith('Finished\n'), text)
+        self.assertIn('Exported now  1', text)
+        self.assertIn('Folder: ' + self.temp.name, text)
+        self.assertIn('Report: ' + str(Path(self.temp.name).resolve() / 'index.html'), text)
+        self.assertNotIn('Traceback', text)
+        self.assertEqual(self.errors, [])
+        self.assertEqual(self.details, [])
+
+    def test_fallback_without_html_inputs(self):
+        self.module.run(None)
+        self.definitions.itemById('FusionBulkExportResults').make_command = lambda: fake.Command(fake.OldInputs())
+        self.export()
+        self.custom.pump()
+        self.assert_fallback()
+        command = self.definitions.itemById('FusionBulkExportResults').commands[-1]
+        self.assertTrue(command.isAutoExecute)  # the empty dialog is not shown
+
+    def test_fallback_when_the_event_cannot_be_fired(self):
+        self.module.run(None)
+        self.app.fireCustomEvent = lambda name, info: False
+        self.export()
+        self.assert_fallback()
+
+    def test_fallback_when_the_command_cannot_start(self):
+        self.module.run(None)
+        self.definitions.itemById('FusionBulkExportResults').execute = lambda: {}['no such command']
+        self.export()
+        self.custom.pump()
+        self.assert_fallback()
+
+    def test_fallback_without_the_results_command(self):
+        self.definitions.addButtonDefinition('FusionBulkExportResults', 'left over')  # a stale one is replaced
+        self.module.run(None)
+        self.assertIsNotNone(self.module._results['definition'])
+        self.module.remove_results()
+        self.export()
+        self.assert_fallback()
+
+    def test_fallback_when_the_page_never_showed_the_results(self):
+        self.export()
+        self.custom.pump()
+        command = self.definitions.itemById('FusionBulkExportResults').commands[-1]
+        self.assertEqual(self.plain, [])
+        command.destroy.notify(NS())  # closed without the page saying it showed them
+        self.assert_fallback()
+
+    def test_closing_after_the_page_showed_them_shows_nothing_more(self):
+        self.export()
+        command = self.results()[0]
+        command.destroy.notify(NS())
+        self.assertEqual(self.plain, [])
+
+    def test_older_fusion_names_the_ok_button_close(self):
+        self.module.run(None)
+        self.definitions.itemById('FusionBulkExportResults').make_command = fake.OldCommand
+        self.export()
+        command = self.results()[0]
+        self.assertTrue(command.isOKButtonVisible)
+        self.assertEqual(command.okButtonText, 'Close')
+        self.assertEqual(self.plain, [])
+
+    def test_results_command_started_again_shows_the_last_results(self):
+        self.module.run(None)
+        results = self.definitions.itemById('FusionBulkExportResults')
+        results.execute()
+        self.assertTrue(results.commands[-1].isAutoExecute)  # nothing to show yet
+        self.export()
+        self.results()
+        results.execute()
+        self.assertEqual(self.page(results.commands[-1], 'summary')['headline'], 'Finished')
+
+    def test_names_reach_the_page_as_data_only(self):
+        odd = fake.File('<b>Bad</b> & "x"', 'odd')
+        odd.failures = 2
+        self.app.data = fake.data([odd])
+        self.export()
+        command, data, _ = self.results()
+        self.assertEqual(data['failures'][0]['name'], '<b>Bad</b> & "x"')
+        self.assertNotIn('Bad', command.commandInputs.find('fbx_results').htmlFileURL)
 
     def test_failure_reasons_and_retry_hint(self):
         self.file.failures = 2  # both attempts fail
-        self.open_dialog().execute.handlers[0].notify(None)
-        message = self.summaries[0][0]
-        self.assertIn('0 exported now, 0 already up to date, 0 other file(s) saved, 0 skipped, 1 failed.', message)
-        self.assertIn('- Part: Synthetic export failure', message)
-        self.assertIn('Run again to retry the 1 failed.', message)
+        self.export()
+        _, data, text = self.results()
+        self.assertEqual(data['rows'], [['Exported now', 0], ['Failed', 1]])
+        self.assertEqual(data['failures'], [{'name': 'Part', 'reason': 'Synthetic export failure'}])
+        self.assertEqual(data['more'], 0)
+        self.assertEqual(data['retry'], 'Run again to retry the 1 failed.')
+        self.assertIn('- Part: Synthetic export failure', text)
         page = (Path(self.temp.name) / 'index.html').read_text()
         self.assertIn('Synthetic export failure', page)
-        self.assertEqual(self.opened, [])  # Cancel opens nothing
+        self.assertEqual(self.opened, [])
 
     def test_empty_step_is_a_warning_in_the_summary(self):
         self.file.step_solids = 0
-        self.open_dialog().execute.handlers[0].notify(None)
-        message = self.summaries[0][0]
-        self.assertIn('1 exported now', message)
-        self.assertIn('1 exported with a warning', message)
-        self.assertIn('- Part: STEP has no bodies (Fusion showed 1)', message)
+        self.export()
+        data = self.results()[1]
+        self.assertEqual(data['rows'], [['Exported now', 1], ['Warnings', 1]])
 
-    def test_trouble_asks_retry_or_stop(self):
+    def test_trouble_asks_try_again_or_stop(self):
         files = [fake.File('P%d' % n, 'f%d' % n) for n in range(7)]
         for file in files:
             file.failures = 2
         self.app.data = fake.data(files)
-        self.open_dialog().execute.handlers[0].notify(None)
+        self.export()
         self.assertEqual(len(self.troubles), 1)
-        self.assertIn('in a row failed', self.troubles[0][0])
-        message = self.summaries[0][0]
-        self.assertIn('The export stopped: 5 designs in a row failed', message)
-        self.assertIn('signed in', message)
+        question = self.troubles[0][0]
+        self.assertIn('in a row failed', question)
+        self.assertIn('Last error: Synthetic export failure', question)
+        self.assertTrue(question.endswith('Try again now?'), question)
+        data = self.results()[1]
+        self.assertTrue(data['headline'].startswith('Stopped: 5 designs in a row failed'), data['headline'])
+        self.assertIn('signed in', ' '.join(data['notes']))
+        self.assertEqual(data['more'], 2)  # five failed: three named, two more in the report
         self.assertEqual(sum(file.calls for file in files), 10)
 
     def test_trouble_retry_carries_on(self):
@@ -310,29 +444,31 @@ class UItests(UIBase):
             file.failures = 2
         self.app.data = fake.data(files)
         self.trouble_answer = self.adsk.core.DialogResults.DialogOK
-        self.open_dialog().execute.handlers[0].notify(None)
+        self.export()
         self.assertEqual(len(self.troubles), 1)
-        self.assertIn('2 exported now', self.summaries[0][0])
-        self.assertIn('Run again to retry the 5 failed.', self.summaries[0][0])
+        _, data, text = self.results()
+        self.assertEqual(data['rows'][0], ['Exported now', 2])
+        self.assertEqual(data['retry'], 'Run again to retry the 5 failed.')
+        self.assertIn('and 2 more in the report.', text)
 
     def test_dialogs_work_without_optional_enum_members(self):
-        # Icons are optional, and no Retry button or DialogRetry result is used.
+        # Icons are optional; the pause asks OK / Cancel, since there is no DialogRetry result.
         self.assertFalse(hasattr(self.adsk.core.DialogResults, 'DialogRetry'))
-        self.assertFalse(hasattr(self.adsk.core.MessageBoxButtonTypes, 'RetryCancelButtonType'))
         files = [fake.File('P%d' % n, 'f%d' % n) for n in range(7)]
         for file in files[:5]:
             file.failures = 2
         self.app.data = fake.data(files)
         self.trouble_answer = self.adsk.core.DialogResults.DialogOK
         with patch.object(self.adsk.core, 'MessageBoxIconTypes', NS()):
-            self.open_dialog().execute.handlers[0].notify(None)
-        self.assertEqual([len(args) for args in self.troubles + self.summaries], [3, 3])
-        self.assertIn('2 exported now', self.summaries[0][0])
+            self.export()
+        self.assertEqual([len(args) for args in self.troubles], [3])
+        self.assertEqual(self.troubles[0][2], self.adsk.core.MessageBoxButtonTypes.OKCancelButtonType)
+        self.assertEqual(self.results()[1]['rows'][0], ['Exported now', 2])
 
     def test_low_space_is_reported(self):
         with patch('fusion_bulk_export.core.free_bytes', return_value=200 << 20):
-            self.open_dialog().execute.handlers[0].notify(None)
-        self.assertIn('Low disk space: 200 MB free.', self.summaries[0][0])
+            self.export()
+        self.assertIn('Low disk space: 200 MB free.', self.results()[1]['notes'])
 
     def test_browse_cancel_keeps_folder_and_tree(self):
         self.picker_data()
@@ -386,7 +522,7 @@ class UItests(UIBase):
         self.assertEqual(box.name, 'Also save other files (PDFs, uploads)')
         self.assertTrue(box.value)
         command.execute.handlers[0].notify(None)
-        self.assertIn('1 exported now, 0 already up to date, 1 other file(s) saved', self.summaries[0][0])
+        self.assertEqual(self.results()[1]['rows'], [['Exported now', 1], ['Other files saved', 1]])
         self.assertTrue((Path(self.temp.name) / 'Hub' / 'Project' / 'Spec.pdf').is_file())
         command = self.open_dialog()
         command.commandInputs.find('fbx_files').value = False
@@ -394,7 +530,7 @@ class UItests(UIBase):
         command.execute.handlers[0].notify(None)
         self.assertEqual(json.loads(self.settings.read_text())['other_files'], False)
         self.assertEqual(len(spec.downloads), 1)  # not saved with the box off
-        self.assertIn('1 already up to date, 0 other file(s) saved, 1 skipped', self.summaries[1][0])
+        self.assertEqual(self.results()[1]['rows'], [['Exported now', 0], ['Already up to date', 1], ['Skipped', 1]])
         self.assertFalse(self.open_dialog().commandInputs.find('fbx_files').value)
 
     def test_drawings_checkbox_is_off_by_default_and_remembered(self):
@@ -416,7 +552,7 @@ class UItests(UIBase):
         self.assertFalse(note.isVisible)
         command.execute.handlers[0].notify(None)
         self.assertEqual(drawing.calls, 0)  # not opened
-        self.assertIn('1 drawing(s) not exported: drawing PDFs are off', self.summaries[0][0])
+        self.assertIn('1 drawing(s) left out: drawing PDFs are off.', self.results()[1]['notes'])
         command = self.open_dialog()
         command.commandInputs.find('fbx_drawings').value = True
         with patch('fusion_bulk_export.fusion.time.sleep'):
@@ -448,7 +584,9 @@ class UItests(UIBase):
         self.progress.wasCancelled = True
         self.open_dialog().execute.handlers[0].notify(None)
         self.assertEqual(self.file.calls, 0)
-        self.assertIn('Export cancelled', self.summaries[0][0])
+        data = self.results()[1]
+        self.assertEqual(data['headline'], 'Cancelled')
+        self.assertIn('Run again to carry on where it stopped.', data['notes'])
         self.assertTrue((Path(self.temp.name) / 'manifest.json').exists())
 
 
@@ -479,7 +617,8 @@ class FriendlyErrorTests(UIBase):
         text = self.export()
         self.assertTrue(text.startswith('This folder cannot be used for the export: '), text)
         self.assertIn('Choose a folder', text)
-        self.assertEqual(self.summaries, [])
+        self.assertEqual(self.custom.queue, [])
+        self.assertEqual(self.plain, [])
 
     def test_damaged_manifest(self):
         (Path(self.temp.name) / 'manifest.json').write_text('{not json')
@@ -507,6 +646,7 @@ class FriendlyErrorTests(UIBase):
         log = self.log / 'errors.log'
         self.assertIn(str(log), prompt)
         self.assertIn('nothing is sent anywhere', prompt)
+        self.assertLessEqual(prompt.count('. '), 2)
         self.assertIn('KeyError: <...>', details)  # a key can be a name: left out
         self.assertIn('at FusionBulkExport.py:', details)
         self.assertNotIn('\n', details)

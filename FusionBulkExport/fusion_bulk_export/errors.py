@@ -51,7 +51,7 @@ def trouble(code, reason):
 
 
 def no_hubs():
-    return UserError('Fusion shows no hubs, so there is nothing to export. You may be signed out.', SIGN_IN)
+    return UserError('Fusion shows no hubs: you may be signed out.', SIGN_IN)
 
 
 def output_folder(error, folder):
@@ -61,8 +61,7 @@ def output_folder(error, folder):
         return error
     if isinstance(error, json.JSONDecodeError):
         return UserError('The manifest.json in %s cannot be read; it may be damaged.' % where,
-                         'Choose another folder. To start this one afresh, move its manifest.json away '
-                         '(the files already there are then exported again).')
+                         'Choose another folder, or move its manifest.json away to start this one afresh.')
     text = str(error)
     if 'Unsupported manifest schema' in text:
         return UserError('The folder %s was written by a newer version of Fusion Bulk Export.' % where,
@@ -85,8 +84,8 @@ def friendly(error):
     if isinstance(error, Trouble):
         return trouble(error.code, error.reason)
     if isinstance(error, FolderBusy):
-        return UserError('Another export is using this folder (in another Fusion window, or a job from the '
-                         'command line).', 'Wait for it to finish, or choose another folder.')
+        return UserError('Another export is using this folder (another Fusion window, or a command-line job).',
+                         'Wait for it to finish, or choose another folder.')
     if isinstance(error, OSError) and disk_full(error):
         return trouble('disk_full', 'The disk is full.')
     if isinstance(error, TimeoutError) and 'hubs' in str(error):
@@ -172,10 +171,9 @@ def show(ui, title, error, log_dir):
         return 'user'
     detail = describe(error)
     path = log_unexpected(log_dir, title, detail)
-    where = ('The details are saved in %s.' % path) if path else 'The details could not be saved to errors.log.'
-    prompt = ('Something unexpected went wrong. %s\n\nTo report it, copy the text below into a new issue. '
-              'It names no files, folders, projects or designs, and nothing is sent anywhere: it stays on this '
-              'computer unless you paste it somewhere.' % where)
+    where = ('details in %s' % path) if path else 'the details could not be saved to errors.log'
+    prompt = ('Something unexpected went wrong (%s).\n\nTo report it, copy the text below into a new issue: '
+              'it names no files, projects or designs, and nothing is sent anywhere.' % where)
     # A one-line box, so the whole text can be selected and copied.
     ui.inputBox(prompt, title, ' | '.join(line.rstrip() for line in detail.strip().splitlines()))
     return 'unexpected'

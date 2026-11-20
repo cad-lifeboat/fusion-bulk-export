@@ -90,3 +90,45 @@ class TreePageLayoutTests(unittest.TestCase):
         hint = re.search(r'<div class="hint">(.*?)</div>', self.page, re.S).group(1)
         words = ' '.join(re.sub(r'<[^>]+>', '', hint).split())
         self.assertLessEqual(len(words), 130)  # two lines at the dialog's usual width
+
+
+SUMMARY = ROOT / 'FusionBulkExport' / 'ui' / 'summary.html'
+
+
+@unittest.skipUnless(shutil.which('node'), 'node is not installed')
+class SummaryLogicTests(unittest.TestCase):
+    def test_summary_logic_and_page(self):
+        result = subprocess.run(['node', str(ROOT / 'tests' / 'summary_logic_test.js')],
+                                capture_output=True, text=True, cwd=ROOT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for part in ('summary logic ok', 'summary keys ok', 'summary page ok'):
+            self.assertIn(part, result.stdout)
+
+
+class SummaryPageLayoutTests(unittest.TestCase):
+    """The results page: the tree page's colours, light and dark, no sideways scrolling, names
+    that end in an ellipsis, a folder path that can be selected, nothing loaded from outside."""
+    def setUp(self):
+        self.page = SUMMARY.read_text(encoding='utf-8')
+        self.css = rules(re.search(r'<style>(.*?)</style>', self.page, re.S).group(1))
+
+    def test_light_and_dark_with_the_tree_pages_colours(self):
+        tree = rules(re.search(r'<style>(.*?)</style>', PAGE.read_text(encoding='utf-8'), re.S).group(1))
+        light = '(prefers-color-scheme: light)'
+        for media in ('', light):
+            for name in ('--text', '--muted', '--line', '--tick', '--bad', '--good'):
+                self.assertEqual(self.css[(media, ':root')][name], tree[(media, ':root')][name], (media, name))
+
+    def test_never_a_horizontal_scrollbar(self):
+        self.assertEqual(self.css[('', 'html')]['overflow-x'], 'hidden')
+        self.assertIn('ellipsis', self.css[('', '.failure .name')]['text-overflow'])
+        self.assertEqual(self.css[('', '.folder')]['overflow-wrap'], 'anywhere')
+        self.assertIn('minmax(170px', self.css[('', '.counts')]['grid-template-columns'])
+
+    def test_folder_can_be_selected_and_nothing_external(self):
+        self.assertEqual(self.css[('', '.folder')]['user-select'], 'text')
+        self.assertNotIn('http', self.page)
+        self.assertIn('<script src="summary.js"></script>', self.page)
+        script = (ROOT / 'FusionBulkExport' / 'ui' / 'summary.js').read_text(encoding='utf-8')
+        self.assertNotIn('innerHTML', script)
+        self.assertNotIn('insertAdjacentHTML', script)

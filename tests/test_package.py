@@ -70,7 +70,8 @@ class PackageTests(unittest.TestCase):
         for required in ('README.txt', 'Install (macOS).command', 'Install (Windows).bat'):
             self.assertIn(self.top + required, names)
         for required in ('FusionBulkExport.py', 'FusionBulkExport.manifest', 'LICENSE', 'resources/32x32.png',
-                         'fusion_bulk_export/core.py', 'fusion_bulk_export/autorun.py', 'ui/tree.js'):
+                         'fusion_bulk_export/core.py', 'fusion_bulk_export/autorun.py', 'ui/tree.js',
+                         'ui/tree.html', 'ui/summary.html', 'ui/summary.js', 'fusion_bulk_export/results.py'):
             self.assertIn(self.top + 'FusionBulkExport/' + required, names)
         top_level = {name[len(self.top):].split('/')[0] for name in names}
         self.assertEqual(top_level, {'README.txt', 'Install (macOS).command', 'Install (Windows).bat',

@@ -314,8 +314,8 @@ class CountTests(Base):
         self.run_export(data)
         _, counts = self.run_export(data)
         self.assertEqual((counts['up_to_date'], counts['files_up_to_date']), (1, 1))
-        self.assertIn('1 already up to date, 0 other file(s) saved, 1 other file(s) already up to date',
-                      report.count_sentence(counts))
+        rows = report.summary(counts, {}, dict(entries=[]), '/o')['rows']
+        self.assertEqual(rows, [['Exported now', 0], ['Already up to date', 1], ['Other files up to date', 1]])
 
 
 class FusionTimingTests(Base):

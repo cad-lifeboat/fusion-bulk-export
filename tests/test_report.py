@@ -59,19 +59,68 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(rows[-1]['folder'], 'Größen')
 
     def test_summary_text(self):
-        text = report.summary_text(self.run_info['counts'], self.run_info, self.manifest, '/out')
-        self.assertTrue(text.startswith('Export finished.'))
-        self.assertIn('1 exported now, 0 already up to date, 0 other file(s) saved, 1 skipped, 2 failed.', text)
+        text = report.summary_text(self.run_info['counts'], self.run_info, self.manifest, '/out', '/out/index.html')
+        self.assertTrue(text.startswith('Finished\n'))
+        self.assertIn('Exported now  1\nSkipped       1\nFailed        2\n', text)
         self.assertEqual(text.count('\n- '), 3)
         self.assertIn('Run again to retry the 2 failed.', text)
         self.assertIn('1 folder(s) could not be read', text)
+        self.assertTrue(text.endswith('Folder: /out\nReport: /out/index.html'))
         info = dict(self.run_info, stopped_reason='The disk is full.', stopped_code='disk_full',
-                    low_space=True, free_bytes=50 << 20)
+                    low_space=True, free_bytes=50 << 20, discovery_errors=[])
         text = report.summary_text(dict(exported=0, up_to_date=0, files=0, skipped=0, failed=0), info, dict(entries=[]), '/o')
-        self.assertTrue(text.startswith('The export stopped: The disk is full.'))
+        self.assertTrue(text.startswith('Stopped: The disk is full.\n'))
         self.assertIn('Free some disk space', text)
         self.assertIn('Low disk space: 50 MB free.', text)
         self.assertNotIn('Run again to retry', text)
+        self.assertNotIn('Report:', text)  # not written
+
+    def test_summary_rows_leave_out_zeros_except_exported_now(self):
+        zero = dict(exported=0, up_to_date=0, files=0, files_up_to_date=0, skipped=0, failed=0)
+        self.assertEqual(report.summary(zero, {}, dict(entries=[]), '/o')['rows'], [['Exported now', 0]])
+        every = dict(exported=1, up_to_date=2, files=3, files_up_to_date=4, skipped=5, failed=6)
+        warned = entry('Thin', 'done')
+        warned['warnings'] = ['STEP has no bodies']
+        rows = report.summary(every, {}, dict(entries=[warned]), '/o')['rows']
+        self.assertEqual(rows, [['Exported now', 1], ['Already up to date', 2], ['Other files saved', 3],
+                                ['Other files up to date', 4], ['Skipped', 5], ['Failed', 6], ['Warnings', 1]])
+
+    def test_summary_names_three_failures_then_counts_the_rest(self):
+        manifest = dict(entries=[entry('D%d' % n, 'failed', 'reason %d' % n) for n in range(7)])
+        counts = dict(exported=0, failed=7)
+        data = report.summary(counts, {}, manifest, '/o')
+        self.assertEqual([f['name'] for f in data['failures']], ['D0', 'D1', 'D2'])
+        self.assertEqual(data['more'], 4)
+        self.assertEqual(data['retry'], 'Run again to retry the 7 failed.')
+        self.assertIn('\nand 4 more in the report.\n', report.text_of(data))
+        exactly = report.summary(dict(exported=0, failed=3), {}, dict(entries=manifest['entries'][:3]), '/o')
+        self.assertEqual((len(exactly['failures']), exactly['more']), (3, 0))
+        self.assertNotIn('more in the report', report.text_of(exactly))
+
+    def test_retry_hint_only_with_failures(self):
+        none = report.summary(dict(exported=3, failed=0), {}, dict(entries=[]), '/o')
+        self.assertEqual(none['retry'], '')
+        self.assertNotIn('Run again to retry', report.text_of(none))
+        self.assertEqual(report.summary(dict(exported=3, failed=1), {}, dict(entries=[]), '/o')['retry'],
+                         'Run again to retry the 1 failed.')
+
+    def test_summary_headlines(self):
+        counts = dict(exported=0)
+        self.assertEqual(report.summary(counts, {}, dict(entries=[]), '/o')['headline'], 'Finished')
+        cancelled = report.summary(counts, dict(cancelled=True), dict(entries=[]), '/o')
+        self.assertEqual(cancelled['headline'], 'Cancelled')
+        self.assertIn('Run again to carry on where it stopped.', cancelled['notes'])
+        stopped = report.summary(counts, dict(stopped_reason='The output folder is gone.'), dict(entries=[]), '/o')
+        self.assertEqual(stopped['headline'], 'Stopped: The output folder is gone.')
+
+    def test_summary_notes_long_paths_and_low_disk(self):
+        long = entry('Deep', 'done')
+        long['long_path'] = True
+        data = report.summary(dict(exported=1), dict(low_space=True, free_bytes=300 << 20), dict(entries=[long]), '/o')
+        self.assertIn('Low disk space: 300 MB free.', data['notes'])
+        self.assertIn(report.LONG_PATHS % 1, data['notes'])
+        plain = report.summary(dict(exported=1), {}, dict(entries=[entry('Short', 'done')]), '/o')
+        self.assertEqual(plain['notes'], [])
 
     def test_warnings_in_report_csv_and_summary(self):
         warned = entry('Hollow', 'done', files=['Hub/Proj/Hollow v2.f3d', 'Hub/Proj/Hollow v2.step'])
@@ -85,9 +134,8 @@ class ReportTests(unittest.TestCase):
         rows = list(csv.DictReader(io.StringIO(table.read_text(encoding='utf-8-sig'))))
         self.assertEqual([r['warnings'] for r in rows if r['design'] == 'Hollow'],
                          ['STEP has no bodies (Fusion showed 1)'])
-        summary = report.summary_text(self.run_info['counts'], self.run_info, self.manifest, '/out')
-        self.assertIn('1 exported with a warning', summary)
-        self.assertIn('- Hollow: STEP has no bodies (Fusion showed 1)', summary)
+        rows = report.summary(self.run_info['counts'], self.run_info, self.manifest, '/out')['rows']
+        self.assertIn(['Warnings', 1], rows)
 
     def test_thumbnail_shown_and_listed(self):
         self.manifest['entries'][0]['thumbnail'] = dict(path='Hub/Proj/Größen/Good _b_ v2.png')
@@ -118,9 +166,8 @@ class ReportTests(unittest.TestCase):
         spec = next(r for r in rows if r['design'] == 'Spec')
         self.assertEqual((spec['kind'], spec['file'], spec['archive']), ('file', 'Hub/Proj/Spec.pdf', ''))
         self.assertEqual(next(r for r in rows if r['design'] == 'Bad')['kind'], 'design')
-        summary = report.summary_text(self.run_info['counts'], self.run_info, self.manifest, '/out')
-        self.assertIn('1 exported now, 0 already up to date, 1 other file(s) saved, 2 skipped, 2 failed.', summary)
-        self.assertIn('1 other file(s) could not be saved; the report says why.', summary)
+        rows = report.summary(self.run_info['counts'], self.run_info, self.manifest, '/out')['rows']
+        self.assertEqual(rows, [['Exported now', 1], ['Other files saved', 1], ['Skipped', 2], ['Failed', 2]])
 
     def test_designs_only_skip_says_how_to_save_it(self):
         self.assertIn('Also save other files', report.next_step('skipped', 'Not a Fusion design: pdf'))
@@ -165,7 +212,7 @@ class LinkReportTests(unittest.TestCase):
         text = report.summary_text(counts, self.run_info, self.manifest, '/out')
         self.assertIn('- Assembly: A linked design is missing or cannot be opened (2 links).', text)
         self.assertNotIn('not resolved', text)  # Fusion's own text is in the report, not the summary
-        self.assertIn('Note: 1 design(s) with out-of-date links', text)
+        self.assertIn('1 design(s) use older versions of linked designs (a note, not a failure).', text)
         page = report.render_html(self.manifest, self.run_info, counts)
         self.assertIn('Fusion said: 5 : not resolved', page)
         self.assertIn('fix its links', page)

@@ -48,6 +48,11 @@ _EVENT = 'FusionBulkExportAutorun'
 _HERE = Path(__file__).parent
 _watcher = None
 _custom_event = None
+# The results dialog: a second command, started through its own custom event once the export
+# command has finished (a command cannot be started reliably from another one's execute).
+_RESULTS_ID = 'FusionBulkExportResults'
+_RESULTS_EVENT = 'FusionBulkExportShowResults'
+_results = {'definition': None, 'event': None, 'data': None, 'view': None, 'last': None}
 
 
 class AutorunEvent(adsk.core.CustomEventHandler):
@@ -184,8 +189,8 @@ class Execute(adsk.core.CommandEventHandler):
             _picker.remember()
             _busy['by'] = 'button'
             try:
-                _code['export'](app, selection, _picker.output, other_files=_picker.other_files,
-                                drawings=_picker.drawings)
+                _code['export'](app, selection, _picker.output, show=show_results,
+                                other_files=_picker.other_files, drawings=_picker.drawings)
             finally:
                 _busy['by'] = None
         except Exception:
@@ -215,6 +220,148 @@ class Created(adsk.core.CommandCreatedEventHandler):
             command.isRepeatable = False
         except Exception:
             report('Fusion Bulk Export command error')
+
+
+def results_fallback(data):
+    """The summary in a plain message box (OK only): when the results dialog cannot be shown."""
+    _results['data'] = None
+    ui = adsk.core.Application.get().userInterface
+    try:
+        from fusion_bulk_export import results
+        results.fallback(ui, data)
+    except Exception:
+        ui.messageBox(data.get('text') or '', 'Fusion Bulk Export')
+
+
+def show_results(data):
+    """At the end of the button's export: keep the summary and ask Fusion, through a custom
+    event, to open the results dialog once the export command has finished."""
+    trace('results')
+    if _results['definition'] is None or _results['event'] is None:
+        results_fallback(data)
+        return
+    _results['data'] = data
+    try:
+        fired = adsk.core.Application.get().fireCustomEvent(_RESULTS_EVENT, '')
+    except Exception as error:
+        trace('fireCustomEvent: %s' % error)
+        fired = False
+    if fired is False:
+        results_fallback(data)
+
+
+class ResultsEvent(adsk.core.CustomEventHandler):
+    """Starts the results command (the export command has finished by now)."""
+    def notify(self, args):
+        data = _results['data']
+        if data is None:
+            return
+        try:
+            _results['definition'].execute()
+        except Exception as error:
+            trace('results execute: %s' % error)
+            results_fallback(data)
+
+
+class ResultsPage(adsk.core.HTMLEventHandler):
+    """Requests from the results page: its data, Open report, Open folder, Close."""
+    def notify(self, args):
+        try:
+            if _results['view']:
+                args.returnData = _results['view'].incoming(args.action, args.data)
+        except Exception:
+            report('Fusion Bulk Export error')
+
+
+class ResultsClosed(adsk.core.CommandEventHandler):
+    """The results dialog closed; if its page never showed the results, a message box does."""
+    def notify(self, args):
+        view, _results['view'] = _results['view'], None
+        try:
+            from fusion_bulk_export import results
+            results.closed(adsk.core.Application.get().userInterface, view)
+        except Exception as error:
+            trace('results closed: %s' % error)
+
+
+class ResultsCreated(adsk.core.CommandCreatedEventHandler):
+    """Builds the results dialog; when that fails, the summary goes to a plain message box and
+    the empty command ends without showing a dialog."""
+    def notify(self, args):
+        # Started some other way (Fusion's command search finds it too): the last results.
+        data = _results['data'] or _results['last']
+        _results['data'] = None
+        command = args.command
+        if data is None:
+            try:
+                command.isAutoExecute = True  # nothing to show: end without a dialog
+            except Exception as error:
+                trace('isAutoExecute: %s' % error)
+            return
+        _results['last'] = data
+        try:
+            from fusion_bulk_export.results import Results
+            _results['view'] = Results(command, data, trace=trace)
+            page = ResultsPage()
+            command.incomingFromHTML.add(page)
+            _handlers.append(page)
+        except Exception as error:
+            trace('results dialog: %s' % error)
+            _results['view'] = None
+            try:
+                command.isAutoExecute = True
+            except Exception:
+                pass
+            results_fallback(data)
+            return
+        try:
+            closed = ResultsClosed()
+            command.destroy.add(closed)
+            _handlers.append(closed)
+        except Exception as error:
+            trace('results destroy: %s' % error)
+
+
+def add_results():
+    """The results command (not on any toolbar) and the custom event that starts it. Without
+    them the end-of-run summary is a plain message box."""
+    app = adsk.core.Application.get()
+    try:
+        definitions = app.userInterface.commandDefinitions
+        try:
+            # Our own command left over by a run that did not stop cleanly.
+            definition = definitions.itemById(_RESULTS_ID)
+            if definition:
+                definition.deleteMe()
+        except Exception as error:
+            trace('itemById: %s' % error)
+        definition = definitions.addButtonDefinition(
+            _RESULTS_ID, 'Fusion Bulk Export results', 'The result of the last export',
+            str(Path(__file__).parent / 'resources'))
+        created = ResultsCreated()
+        definition.commandCreated.add(created)
+        _handlers.append(created)
+        _results['definition'] = definition
+        event = app.registerCustomEvent(_RESULTS_EVENT)
+        handler = ResultsEvent()
+        event.add(handler)
+        _handlers.append(handler)
+        _results['event'] = event
+    except Exception as error:
+        trace('results command: %s' % error)
+
+
+def remove_results():
+    app = adsk.core.Application.get()
+    try:
+        if _results['event'] is not None:
+            app.unregisterCustomEvent(_RESULTS_EVENT)
+        definition = _results['definition']
+        if definition is not None:
+            definition.deleteMe()
+    except Exception as error:
+        trace('remove results: %s' % error)
+    _results.update(definition=None, event=None, data=None, view=None, last=None)
 
 
 def startup_error(unattended):
@@ -247,6 +394,7 @@ def run(context):
         _control.isPromotedByDefault = True
     except Exception:
         startup_error(unattended)
+    add_results()
     try:
         start_watching()
     except Exception:
@@ -265,6 +413,7 @@ def stop(context):
     if _custom_event:
         adsk.core.Application.get().unregisterCustomEvent(_EVENT)
         _custom_event = None
+    remove_results()
     try:
         if _control:
             _control.deleteMe()

@@ -942,8 +942,7 @@ class ExportTests(unittest.TestCase):
         self.assertNotIn('references_unreadable', next(e for e in self.manifest['entries'] if e['id'] == 'plain'))
         from fusion_bulk_export import report
         text = report.summary_text(counts, exporter.run_info, self.manifest, self.root)
-        self.assertIn('Warning: 1 design(s): links to other designs could not be read; the design itself was exported.',
-                      text)
+        self.assertIn('Warnings      1', text)
         page = report.render_html(self.manifest, exporter.run_info, counts)
         self.assertIn('Warning: Links to other designs could not be read; the design itself was exported.', page)
         self.assertIn('1 whose links could not be read', page)

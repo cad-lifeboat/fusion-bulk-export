@@ -8,7 +8,7 @@ from tests import fake_adsk as fake
 
 fake.install()
 
-from fusion_bulk_export import command, picker  # noqa: E402
+from fusion_bulk_export import command, picker, results  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('screens', ROOT / 'docs' / 'screens.py')
@@ -26,7 +26,11 @@ class ScreensTests(unittest.TestCase):
         hint = re.search(r'<div class="hint">(.*?)</div>', page, re.S).group(1)
         self.assertEqual(screens.TREE_HINT, " ".join(re.sub(r"<[^>]+>", "", hint).split()))
         self.assertIn('placeholder="%s"' % screens.FILTER, page)
-        self.assertEqual(screens.OPEN_CHOICES, command.OPEN_CHOICES.strip())
+        self.assertEqual(screens.RESULTS_TITLE, results.TITLE)
+        self.assertEqual(screens.CLOSE, results.CLOSE)
+        script = (ROOT / 'FusionBulkExport' / 'ui' / 'summary.js').read_text(encoding='utf-8')
+        for label in screens.PAGE_BUTTONS + (screens.SAVED_IN,):
+            self.assertIn("'%s'" % label, script)
 
     def test_progress_text_is_what_the_add_in_writes(self):
         self.assertEqual(command.describe(screens.PROGRESS_STATE).replace('%%', '%'), screens.PROGRESS_TEXT)
@@ -36,7 +40,12 @@ class ScreensTests(unittest.TestCase):
             svg = draw()
             self.assertTrue(svg.startswith('<svg'))
             self.assertIn('Fusion Bulk Export', svg)
-        self.assertIn('Run again to retry the 1 failed.', screens.summary_lines())
+        data = screens.summary_data()
+        self.assertEqual(data['retry'], 'Run again to retry the 1 failed.')
+        self.assertIn(data['headline'], screens.progress_svg())
+        for label in screens.PAGE_BUTTONS + (screens.CLOSE,):
+            self.assertIn('>%s</text>' % label, screens.progress_svg())
+        self.assertNotIn('>Yes</text>', screens.progress_svg())
 
 
 if __name__ == '__main__':
