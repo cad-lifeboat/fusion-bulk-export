@@ -6,13 +6,17 @@ import os
 from pathlib import Path
 import re
 import shutil
+import time
 from datetime import datetime, timezone
 
+from .journal import Journal, replay
 from .power import keep_awake
 
 LOW_SPACE_BYTES = 1 << 30   # warn before a run below this much free space
 FULL_BYTES = 100 << 20      # after a failed write, below this the disk counts as full
 FAILURES_IN_A_ROW = 5       # this many designs failing one after another means something is wrong
+SAVE_EVERY_ITEMS = 50       # rewrite manifest.json after this many finished items...
+SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journal has each one)
 
 
 def now():
@@ -216,8 +220,8 @@ class Trouble(Exception):
 def atomic_write(path, value):
     temporary = path.with_suffix('.json.tmp')
     with temporary.open('w', encoding='utf-8') as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.write('\n')
+        # One write: json.dump would call write() for every small piece of a large manifest.
+        stream.write(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
@@ -238,11 +242,30 @@ class Exporter:
             self.manifest = json.loads(self.manifest_path.read_text(encoding='utf-8'))
             if self.manifest.get('schema') != 1:
                 raise ValueError('Unsupported manifest schema')
+        # Items finished after the last full save (the previous run stopped without one).
+        self.journal = Journal(self.root / 'manifest.journal')
+        self.replayed = replay(self.manifest, self.journal.read())
+        self.saves = 0          # full manifest.json writes, for checking the cost
+        self.unsaved = 0        # finished items only in the journal so far
+        self.saved_at = time.monotonic()
+        self.clock = time.monotonic
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
         self.manifest['runs'].append(self.run_info)
 
     def save(self):
+        """Rewrite manifest.json in full, then empty the journal it now contains."""
         atomic_write(self.manifest_path, self.manifest)
+        self.journal.clear()
+        self.saves += 1
+        self.unsaved = 0
+        self.saved_at = self.clock()
+
+    def record(self, entry):
+        """A finished item: one journal line now, a full save only every so often."""
+        self.journal.append(entry)
+        self.unsaved += 1
+        if self.unsaved >= SAVE_EVERY_ITEMS or self.clock() - self.saved_at >= SAVE_EVERY_SECONDS:
+            self.save()
 
     def log(self, message):
         try:
@@ -319,7 +342,8 @@ class Exporter:
         self.run_info['selection'] = selection.describe()
         if not selection.everything:
             data = select_projects(data, selection.keeps_project)
-        self.run_info.update(discovery_errors=[], stopped_reason=None, stopped_code=None)
+        self.run_info.update(discovery_errors=[], stopped_reason=None, stopped_code=None,
+                             journal_replayed=self.replayed)
         free = free_bytes(self.root)
         self.run_info.update(free_bytes=free, low_space=free is not None and free < LOW_SPACE_BYTES)
         if self.run_info['low_space']:
@@ -419,8 +443,7 @@ class Exporter:
         entry = entries.get(key)
         if entry and self.valid(entry):
             counts['skipped'] += 1
-            self.log('verified ' + key)
-            self.save()
+            self.log('verified ' + key)  # nothing changed: nothing to save
             return 'verified'
         entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': folders,
                  'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
@@ -460,12 +483,11 @@ class Exporter:
                     trouble = self.trouble(error)
                     if trouble is not None:
                         break  # a second attempt cannot succeed either
-                    self.save()
         counts[entry['status']] += 1
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
-            raise trouble
-        self.save()
+            raise trouble  # the run's final save keeps this entry if the disk still allows
+        self.record(entry)
         return entry['status']
 
 

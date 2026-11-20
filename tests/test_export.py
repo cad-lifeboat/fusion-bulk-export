@@ -460,6 +460,64 @@ class ExportTests(unittest.TestCase):
         with power.keep_awake(platform='linux', active=True):
             pass
 
+    def test_crash_mid_run_recovers_finished_items_from_the_journal(self):
+        files = [fake.File(identity='file-%d' % n) for n in range(6)]
+        files[5].failures = 2
+        exporter = Exporter(self.root, self.adapter)
+        real_save = Exporter.save
+        with patch.object(Exporter, 'save', lambda self: None if self.saves else real_save(self)):
+            exporter.run(fake.data(files))  # only the start-of-run save reaches disk
+        manifest = json.loads((self.root / 'manifest.json').read_text())
+        self.assertEqual(manifest['entries'], [])
+        journal = (self.root / 'manifest.journal').read_text().splitlines()
+        self.assertEqual(len(journal), 6)
+        with (self.root / 'manifest.journal').open('a') as stream:
+            stream.write('{"entry": {"key": "cut sh')  # the line being written when it crashed
+        exporter, counts = self.run_export(fake.data(files))
+        self.assertEqual(exporter.run_info['journal_replayed'], 6)
+        self.assertEqual(counts, dict(done=1, failed=0, skipped=5))
+        self.assertEqual([f.calls for f in files], [1] * 5 + [3])
+        self.assertEqual(len(self.manifest['entries']), 6)
+        self.assertFalse((self.root / 'manifest.journal').exists())
+
+    def test_journal_replay_replaces_entries_with_the_same_key(self):
+        file = fake.File()
+        file.failures = 2
+        self.run_export(fake.data([file]))
+        with (self.root / 'manifest.journal').open('w') as stream:
+            stream.write(json.dumps(dict(entry=dict(self.manifest['entries'][0], status='done', note=1))) + '\n')
+            stream.write(json.dumps(dict(entry=dict(self.manifest['entries'][0], status='done', note=2))) + '\n')
+        exporter = Exporter(self.root, self.adapter)
+        self.assertEqual([e['note'] for e in exporter.manifest['entries']], [2])
+
+    def test_manifest_written_in_full_only_now_and_then(self):
+        files = [fake.File(identity='file-%d' % n) for n in range(5000)]
+        exporter = Exporter(self.root, self.adapter)
+        with patch('fusion_bulk_export.journal.os.fsync'):  # speed only: 5,000 syncs are slow on some disks
+            exporter.run(fake.data(files))
+        self.assertEqual(exporter.run_info['counts']['done'], 5000)
+        self.assertLess(exporter.saves, 150)
+        self.assertEqual(exporter.saves, 1 + 5000 // 50 + 1)
+        manifest = json.loads((self.root / 'manifest.json').read_text())
+        self.assertEqual(len(manifest['entries']), 5000)
+        self.assertFalse((self.root / 'manifest.journal').exists())
+
+    def test_manifest_saved_after_thirty_seconds_and_not_on_verified_skips(self):
+        files = [fake.File(identity='file-%d' % n) for n in range(3)]
+        exporter = Exporter(self.root, self.adapter)
+        ticks = iter([0, 0, 10, 31, 31, 40, 40, 50, 50])
+        exporter.clock = lambda: next(ticks, 60)
+        exporter.saved_at = 0
+        exporter.run(fake.data(files))
+        self.assertEqual(exporter.saves, 3)  # start, the item at 31 s, end
+        exporter = Exporter(self.root, self.adapter)
+        writes = []
+        with patch.object(core, 'atomic_write', side_effect=lambda *a: writes.append(a)):
+            counts = exporter.run(fake.data(files))
+        self.assertEqual(counts['skipped'], 3)
+        self.assertEqual(len(writes), 2)  # start and end only
+        self.assertFalse((self.root / 'manifest.journal').exists())
+
     def test_data_discovery_error_persisted(self):
         exporter = Exporter(self.root, self.adapter)
         with self.assertRaises(AttributeError):
