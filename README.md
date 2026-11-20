@@ -42,6 +42,12 @@ If **FusionBulkExport** is not in the list, or you would rather not run the inst
 
 **Fusion can't be used while it exports.** Leave it open and signed in until the last dialog appears; the computer is kept awake meanwhile. **Cancel** is safe: what is finished stays finished. Run it again on the same folder to continue, to retry failures, or to pick up designs added later.
 
+*The pictures below are illustrations drawn from made-up names, not screenshots of a real account.*
+
+![The export dialog with the project tree (illustration)](docs/dialog.png)
+
+![Progress and end-of-run dialogs (illustration)](docs/progress.png)
+
 ### The dialog
 
 - The first line shows the version that is running.
@@ -173,7 +179,7 @@ python3 scripts/autorun.py stop ~/FusionExport                           # pause
 - Tests: `python3 -m unittest discover -s tests` (a simulated Fusion API; no Fusion needed) and `node tests/tree_logic_test.js`. CI runs them on macOS, Windows and Linux.
 - Install a checkout into Fusion: `python3 scripts/install.py` (`--uninstall` removes it).
 - Release zip: `python3 scripts/package.py` writes `dist/FusionBulkExport-<version>.zip`. `python3 scripts/release.py prepare X.Y.Z` sets the version, moves the changelog's Unreleased section, runs the tests and builds the zip; it prints the publishing commands without running them.
-- Pictures: `python3 docs/cards.py` regenerates the banner and social preview (it needs `cairosvg` for PNGs).
+- Pictures: `python3 docs/cards.py` regenerates the banner and social preview, `python3 docs/screens.py` the dialog illustrations (both need `cairosvg` for PNGs; without it they write SVG only).
 
 MIT licensed; see [LICENSE](LICENSE). See also [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
