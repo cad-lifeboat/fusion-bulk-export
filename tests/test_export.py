@@ -534,14 +534,15 @@ class ExportTests(unittest.TestCase):
         drawing = fake.File('Sheet A', 'drawing', extension='f2d', references=2)
         drawing.products_flaky = 1  # the first read right after opening fails, as seen on real Fusion
         with patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([drawing]))
+            _, counts = self.run_export(fake.data([drawing]), drawings=True)
         entry = self.manifest['entries'][0]
         self.assertEqual((counts['files'], entry['kind'], entry['status']), (1, 'file', 'done'))
         self.assertEqual(entry['files'][0]['path'], 'Hub/Project/Sheet A.pdf')
         self.assertTrue((self.root / 'Hub/Project/Sheet A.pdf').read_bytes().startswith(b'%PDF'))
         self.assertEqual(self.app.documents.items, [])  # the drawing and what it pulled in are closed
         self.assertEqual(drawing.downloads, [])
-        _, counts = self.run_export(fake.data([drawing]))
+        self.assertEqual(drawing.documents[0]._products.item(0).exportManager.executes, 2)  # the first wrote nothing
+        _, counts = self.run_export(fake.data([drawing]), drawings=True)
         self.assertEqual((counts['up_to_date'], counts['files_up_to_date']), (0, 1))
 
     def test_a_drawing_pdf_written_late_is_waited_for(self):
@@ -549,7 +550,7 @@ class ExportTests(unittest.TestCase):
         drawing.pdf_mode = 'later'
         with patch('fusion_bulk_export.fusion.adsk.doEvents', fake.do_events, create=True), \
                 patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([drawing]))
+            _, counts = self.run_export(fake.data([drawing]), drawings=True)
         self.assertEqual(counts['files'], 1)
 
     def test_a_drawing_pdf_that_never_appears_is_a_skip_and_not_retried_this_run(self):
@@ -558,14 +559,14 @@ class ExportTests(unittest.TestCase):
         refused = fake.File('Three', 'three', extension='f2d')
         first.pdf_mode = second.pdf_mode = 'never'
         with patch.object(fusion, 'PDF_WAIT_SECONDS', 0.05), patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([first, second]))
+            _, counts = self.run_export(fake.data([first, second]), drawings=True)
         self.assertEqual(counts['skipped'], 2)
         self.assertEqual([e['error'] for e in self.manifest['entries']], ['Fusion did not write the drawing PDF'] * 2)
         self.assertEqual((first.calls, second.calls), (1, 0))  # the second was not opened: no wait
         self.assertEqual(self.app.documents.items, [])
         refused.pdf_mode = 'false'
         self.adapter.pdf_broken = None
-        self.run_export(fake.data([refused]))
+        self.run_export(fake.data([refused]), drawings=True)
         self.assertIn('Fusion cannot export this file type through its API (.f2d',
                       self.manifest['entries'][-1]['error'])
 

@@ -29,7 +29,8 @@ FIELD, TICK, GOOD, ACCENT, BOX = '#ffffff', '#0a6fc2', '#1a7f37', '#f08a24', '#6
 VERSION = 'Fusion Bulk Export 0.3.0'
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
-OTHER_FILES = 'Also save other files (PDFs, drawings, uploads)'
+OTHER_FILES = 'Also save other files (PDFs, uploads)'
+DRAWINGS = 'Also export drawings as PDF (slow: each drawing can take minutes)'
 EXPORT_LABEL = 'Export'
 CHOOSE = 'Choose projects or folders'
 TREE_HINT = ('Tick what to export. Ticking a folder includes everything inside it. '
@@ -197,11 +198,12 @@ def dialog_svg():
     row += 34
     parts.append(text(cx, row + 12, folder_note(), 12, MUTED))
     row += 26
-    other = wrap(OTHER_FILES, label_w - 6, 12)
-    for index, line in enumerate(other):
-        parts.append(text(x + 16, row + 12 + index * 16, line, 12, MUTED))
-    parts.append(checkbox(cx, row + 2, 1))
-    row += len(other) * 16 + 12
+    for label, ticked in ((OTHER_FILES, 1), (DRAWINGS, 0)):
+        lines = wrap(label, label_w - 6, 12)
+        for index, line in enumerate(lines):
+            parts.append(text(x + 16, row + 12 + index * 16, line, 12, MUTED))
+        parts.append(checkbox(cx, row + 2, ticked))
+        row += len(lines) * 16 + 12
     parts.append(text(x + 16, row + 17, EXPORT_LABEL, 12, MUTED))
     parts.append(f'<rect x="{cx}" y="{row}" width="{cw}" height="26" rx="3" fill="{FIELD}" stroke="{LINE}"/>')
     parts.append(text(cx + 8, row + 17, CHOOSE, 12))

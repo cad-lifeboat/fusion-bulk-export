@@ -24,7 +24,7 @@ class AutorunTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.output = self.root / 'out'
         self.config = self.root / 'autorun.json'
-        self.files = [fake.File('A', 'a'), fake.File('B', 'b'), fake.File('Drawing', 'd', extension='f2d')]
+        self.files = [fake.File('A', 'a'), fake.File('B', 'b'), fake.File('Sheet.pdf', 'd', extension='pdf')]
         self.data = fake.data(self.files[:2], [fake.folder('Sub', files=self.files[2:])])
         other = fake.File('C', 'c')
         hub = self.data.dataHubs.item(0)
@@ -117,7 +117,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with(folders={'project-1': ['Sub']})
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['selection'], '0 whole project(s), 1 folder(s)')
-        self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, files=1, files_up_to_date=0, skipped=0, failed=0))  # Sub holds only a drawing
+        self.assertEqual(result['counts'], dict(exported=0, up_to_date=0, files=1, files_up_to_date=0, skipped=0, failed=0))  # Sub holds only an uploaded PDF
         self.assertEqual(self.files[0].calls + self.files[1].calls + self.files[3].calls, 0)
 
     def test_folder_selection_by_id_even_with_a_slash_in_its_name(self):
@@ -164,6 +164,23 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(result['counts']['exported'], 1)
         manifest = json.loads((self.output / 'manifest.json').read_text())
         self.assertEqual([e['id'] for e in manifest['entries']], ['two'])
+
+    def test_drawings_only_when_asked_for(self):
+        drawing = fake.File('Drawing', 'drawing', extension='f2d')
+        self.data.dataHubs.item(0).dataProjects.item(1).rootFolder.dataFiles.items.append(drawing)
+        result = self.run_with()
+        self.assertFalse(result['drawings'])
+        self.assertEqual((result['counts']['skipped'], drawing.calls), (1, 0))  # not even opened
+        manifest = json.loads((self.output / 'manifest.json').read_text())
+        entry = next(e for e in manifest['entries'] if e['id'] == 'drawing')
+        self.assertEqual(entry['error'], "Drawing PDFs are off (tick 'Also export drawings as PDF' to include them)")
+        self.assertIn('Also export drawings as PDF', (self.output / 'index.html').read_text())
+        with patch('fusion_bulk_export.fusion.time.sleep'):
+            result = self.run_with(drawings=True, designs_only=True)  # independent of other files
+        self.assertTrue(result['drawings'])
+        self.assertEqual((result['counts']['files'], drawing.calls), (1, 1))
+        result = self.run_with(drawings='yes')
+        self.assertIn('drawings must be true or false', result['errors'][0]['error'])
 
     def test_designs_only(self):
         result = self.run_with(designs_only=True)

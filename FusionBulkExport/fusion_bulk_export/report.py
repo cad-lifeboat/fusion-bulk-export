@@ -30,6 +30,9 @@ def next_step(status, error):
     if status == 'done':
         return ''
     if status == 'skipped':
+        if 'drawing pdfs are off' in text:
+            return ('Tick "Also export drawings as PDF" (command line: --drawings) and export again to include '
+                    'it; each drawing can take minutes.')
         if 'not a fusion design' in text:
             return 'Not saved: only designs were exported. Tick "Also save other files" to save it.'
         if 'no fusion design' in text or 'not a fusion document' in text:
@@ -263,7 +266,13 @@ def skipped_files(manifest):
     out because only designs were wanted."""
     return sum(1 for entry in manifest.get('entries', []) if entry.get('kind') == 'file'
                and entry.get('status') == 'skipped'
-               and not str(entry.get('error') or '').startswith('Not a Fusion design'))
+               and not str(entry.get('error') or '').startswith(('Not a Fusion design', 'Drawing PDFs are off')))
+
+
+def drawings_off(manifest):
+    """How many drawings were left out because drawing PDFs were not asked for."""
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('kind') == 'file'
+               and entry.get('status') == 'skipped' and str(entry.get('error') or '').startswith('Drawing PDFs are off'))
 
 
 def warning_lines(manifest, limit=3):
@@ -305,6 +314,10 @@ def summary_text(counts, run_info, manifest, output):
     not_saved = skipped_files(manifest)
     if not_saved:
         lines.append('%d other file(s) could not be saved; the report says why.' % not_saved)
+    left_out = drawings_off(manifest)
+    if left_out:
+        lines.append('%d drawing(s) not exported: drawing PDFs are off (tick "Also export drawings as PDF" '
+                     'to include them; each can take minutes).' % left_out)
     long_paths = long_path_count(manifest)
     if long_paths:
         lines.append(LONG_PATHS % long_paths)

@@ -11,7 +11,8 @@ from .core import Selection, collection
 
 EVERYTHING = 'Everything'
 CHOOSE = 'Choose projects or folders'
-OTHER_FILES = 'Also save other files (PDFs, drawings, uploads)'
+OTHER_FILES = 'Also save other files (PDFs, uploads)'
+DRAWINGS = 'Also export drawings as PDF (slow: each drawing can take minutes)'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
 TREE_HTML = Path(__file__).resolve().parent.parent / 'ui' / 'tree.html'
@@ -65,6 +66,9 @@ class Picker:
         # On unless the user switched it off last time.
         self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
                                               remembered.get('other_files') is not False)
+        # Off unless the user switched it on last time: opening a drawing can take Fusion minutes.
+        self.drawing_box = inputs.addBoolValueInput('fbx_drawings', DRAWINGS, True, '',
+                                                    remembered.get('drawings') is True)
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
@@ -96,6 +100,11 @@ class Picker:
     def other_files(self):
         """Whether files that are not designs are saved too (the checkbox)."""
         return bool(self.files.value)
+
+    @property
+    def drawings(self):
+        """Whether drawings are saved as PDFs too (the second checkbox)."""
+        return bool(self.drawing_box.value)
 
     @property
     def choosing(self):
@@ -147,7 +156,7 @@ class Picker:
 
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
-                            else EVERYTHING, other_files=self.other_files))
+                            else EVERYTHING, other_files=self.other_files, drawings=self.drawings))
 
     def incoming(self, action, data):
         """Answer the page; the returned string is handed back to its JavaScript. A request that

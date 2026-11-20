@@ -248,6 +248,14 @@ def sanitize(value, limit=42):
 
 # Other files that are saved in another format: a drawing is saved as its PDF.
 SAVED_AS = {'f2d': 'pdf'}
+DRAWING = 'f2d'
+# Opening a drawing can block Fusion for minutes (about 10 seen on real Fusion), so drawings are
+# exported only when asked for.
+DRAWINGS_OFF = "Drawing PDFs are off (tick 'Also export drawings as PDF' to include them)"
+
+
+def is_drawing(file):
+    return str(getattr(file, 'fileExtension', '') or '').lower().strip('.') == DRAWING
 EXTENSION = re.compile(r'(?=.*[A-Za-z])[A-Za-z0-9]{1,8}')
 
 
@@ -425,6 +433,7 @@ class Exporter:
         self.clock = time.monotonic
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.other_files = True
+        self.drawings = False
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
         self.manifest['runs'].append(self.run_info)
 
@@ -652,7 +661,7 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True):
+            on_trouble=None, other_files=True, drawings=False):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
@@ -661,7 +670,8 @@ class Exporter:
         progress(state) is called while listing and before each item, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
         project_name, path (folder names), design (items found so far: designs and other files),
-        name and kind ('design', or 'file' for another file); also
+        name and kind ('design'; 'drawing' for a drawing about to be opened, which can take
+        minutes; 'file' for another file); also
         folder_files (the current folder's file count, or None when not known), folder_item
         (position of this design in that folder), counts (a copy of the run's counts so far),
         elapsed (seconds since the run started) and seconds_per_design (average time of the
@@ -673,8 +683,12 @@ class Exporter:
         asked: 'retry' carries on (designs failed so far are retried on the next run), anything
         else stops. Without on_trouble it stops. run_info['stopped_reason'] then says why.
 
-        other_files: also save the files that are not designs (PDFs, drawings, uploads) as
-        Fusion hands them out; when false they are skipped as "Not a Fusion design".
+        other_files: also save the files that are not designs (PDFs, uploads) as Fusion hands
+        them out; when false they are skipped as "Not a Fusion design".
+
+        drawings: also save each drawing as a PDF (opening one can take Fusion minutes); when
+        false drawings are skipped with DRAWINGS_OFF, without asking Fusion. Independent of
+        other_files.
 
         The output folder is locked (export.lock) for the run: FolderBusy is raised when another
         export is using it.
@@ -682,13 +696,14 @@ class Exporter:
         lock = FolderLock(self.root)
         lock.acquire()
         try:
-            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files)
+            return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, drawings)
         finally:
             lock.release()
 
-    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files):
+    def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, drawings):
         self.other_files = bool(other_files)
-        self.run_info['other_files'] = self.other_files
+        self.drawings = bool(drawings)
+        self.run_info.update(other_files=self.other_files, drawings=self.drawings)
         counts = new_counts()
         selection = selection or Selection()
         self.run_info['selection'] = selection.describe()
@@ -757,7 +772,7 @@ class Exporter:
                     found += 1
                     place(hub, project, folders)
                     state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1,
-                                 kind='design' if str(file.fileExtension).lower() == 'f3d' else 'file')
+                                 kind=self.item_kind(file))
                     report('design')
                     if cancelled():
                         self.run_info['cancelled'] = True
@@ -810,6 +825,13 @@ class Exporter:
             self.log('run finished ' + json.dumps(counts))
         return counts
 
+    def item_kind(self, file):
+        """What the progress text calls an item: 'design', 'drawing' (one that will be opened)
+        or 'file'."""
+        if str(file.fileExtension).lower() == 'f3d':
+            return 'design'
+        return 'drawing' if is_drawing(file) and self.drawings else 'file'
+
     @staticmethod
     def item_key(hub, project, file):
         return json.dumps([str(hub.id), str(project.id), str(file.id), int(file.versionNumber)])
@@ -850,7 +872,10 @@ class Exporter:
         entries[key] = entry
         trouble = None
         if kind == 'file':
-            if self.other_files and hasattr(self.adapter, 'download'):
+            drawing = is_drawing(file)
+            if not (self.drawings if drawing else self.other_files):
+                entry['error'] = DRAWINGS_OFF if drawing else 'Not a Fusion design: ' + file.fileExtension
+            elif hasattr(self.adapter, 'download'):
                 trouble = self.save_file(hub, project, folders, file, entry, entries, owned)
             else:
                 entry['error'] = 'Not a Fusion design: ' + file.fileExtension

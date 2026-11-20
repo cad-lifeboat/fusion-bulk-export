@@ -46,6 +46,9 @@ class File:
         # after execute returns, as seen on real Fusion), 'never' (True but no file), 'false',
         # 'partial' (a PDF that stops before its end).
         self.pdf_mode = 'now'
+        # Seen on real Fusion: the first execute() on a freshly opened drawing returns True and
+        # writes nothing; the next one writes the PDF.
+        self.first_pdf_empty = True
         self.products_flaky = 0
         # Seen with old or linked designs: Fusion marks a document modified as it opens it
         # (a recompute, an updated reference), although nobody edited it.
@@ -138,9 +141,10 @@ def do_events():
 
 
 class DrawingManager:
-    """DrawingExportManager of a synthetic drawing."""
+    """DrawingExportManager of a synthetic drawing (one per opened document)."""
     def __init__(self, file):
         self.file = file
+        self.executes = 0
 
     def createPDFExportOptions(self, path):
         return NS(filename=path, openPDF=True, sheetRange=0, sheetsToExport=0, useLineWeights=True)
@@ -152,6 +156,9 @@ class DrawingManager:
         mode = self.file.pdf_mode
         if mode == 'false':
             return False
+        self.executes += 1
+        if self.executes == 1 and self.file.first_pdf_empty:
+            return True  # as on real Fusion: True, and no file
 
         def write():
             Path(path).write_bytes(PDF if mode != 'partial' else PDF[:20])
@@ -160,6 +167,19 @@ class DrawingManager:
         elif mode == 'later':
             PENDING.extend([lambda: None, lambda: None, write])
         return True
+
+
+class Drawing:
+    """The product of an opened drawing: class name Drawing. Reading productType raises, as on
+    real Fusion."""
+    objectType = 'adsk::drawing::Drawing'
+
+    def __init__(self, file):
+        self.exportManager = DrawingManager(file)
+
+    @property
+    def productType(self):
+        raise RuntimeError('2 : InternalValidationError : adapter')
 
 
 PDF = b'%PDF-1.4\n% synthetic drawing, no real content\ntrailer\n<<>>\n%%EOF\n'
@@ -203,6 +223,8 @@ class Document:
     def __init__(self, file, owner=None, visible=True):
         self.dataFile = file
         self.closed = False
+        self.isValid = True
+        self.pulled = []  # linked documents Fusion opened with this one (and closes with it)
         self.owner = owner  # the Documents collection it is listed in, once opened there
         self.documentReferences = Collection(*([NS()] if file.references else []))
         self.isModified = False
@@ -224,8 +246,7 @@ class Document:
             allComponents=Collection(*components)) if file.design else None)
         if str(file.fileExtension).lower() == 'f2d':
             # A drawing: its products hold one Drawing with a DrawingExportManager.
-            self._products = Collection(NS(objectType='adsk::drawing::Drawing',
-                                           exportManager=DrawingManager(file)))
+            self._products = Collection(Drawing(file))
 
     @property
     def products(self):
@@ -237,11 +258,19 @@ class Document:
 
     def close(self, save):
         assert save is False
+        if not self.isValid:
+            raise RuntimeError('3 : the document is no longer valid')
         if self.dataFile.close_result is False:
             return False
-        self.closed = True
+        self.closed, self.isValid = True, False
         if self.owner is not None and self in self.owner.items:
             self.owner.items.remove(self)
+        # As on real Fusion: closing a design also closes the linked designs it pulled in.
+        for linked in self.pulled:
+            if linked.isValid:
+                linked.closed, linked.isValid = True, False
+                if linked.owner is not None and linked in linked.owner.items:
+                    linked.owner.items.remove(linked)
         return True
 
 
@@ -265,7 +294,7 @@ class Documents(Collection):
             links = []  # a file whose links cannot be listed through DataFile still opens
         for linked in links:
             if not any(open_.dataFile is not None and open_.dataFile.id == linked.id for open_ in self.items):
-                self.opened(linked)
+                document.pulled.append(self.opened(linked))
         return document
 
     def opened(self, file):

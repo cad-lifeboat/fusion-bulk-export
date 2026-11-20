@@ -46,8 +46,11 @@ def describe(state):
     if state['phase'] == 'listing':
         text = '%s, listing: %s\n%d item(s) so far' % (head, where, state['design'])
     else:
-        what = 'file' if state.get('kind') == 'file' else 'design'
+        what = state.get('kind') if state.get('kind') in ('file', 'drawing') else 'design'
         text = '%s, %s %d: %s\n%s' % (head, what, state['design'], state['name'], where)
+        if what == 'drawing':
+            text += '\nOpening the drawing: this can take minutes.'
+
     facts = [duration(state.get('elapsed'))]
     if state.get('seconds_per_design') is not None:
         facts.append('%.1f s/design' % state['seconds_per_design'])
@@ -111,9 +114,10 @@ def show_summary(ui, text, output, page, opener):
     return target
 
 
-def export(app, selection, output, opener=None, other_files=True):
+def export(app, selection, output, opener=None, other_files=True, drawings=False):
     """Export into output with progress, then write the report and show the summary.
-    other_files: also save the files that are not designs (the dialog's checkbox)."""
+    other_files: also save the files that are not designs (the dialog's checkbox); drawings:
+    also save drawings as PDFs (the other checkbox, off by default: each can take minutes)."""
     ui = app.userInterface
     if not has_hubs(app):
         raise errors.no_hubs()
@@ -140,7 +144,7 @@ def export(app, selection, output, opener=None, other_files=True):
 
         try:
             counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
-                                  other_files=other_files)
+                                  other_files=other_files, drawings=drawings)
         except Exception as error:
             known = errors.friendly(error)
             if known is None:

@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace as NS
+from unittest.mock import patch
 
 from tests import fake_adsk as fake
 from fusion_bulk_export import names
@@ -122,10 +123,73 @@ class OpenDocumentTests(Base):
         self.app.documents.items.append(document)
         return document
 
+    def untitled(self):
+        """A new, unsaved document, as Fusion always has one: dataFile is None (no raise), and
+        its creationId changes between reads on real Fusion, so it must never be told apart by it."""
+        closes = []
+        counter = iter(range(1000))
+
+        class Untitled:
+            dataFile, isModified, isVisible, isValid = None, False, False, True
+
+            @property
+            def creationId(self):
+                return 'creation-%d' % next(counter)
+
+            def close(self, save):
+                closes.append(save)
+                return True
+        document = Untitled()
+        self.app.documents.items.append(document)
+        return document, closes
+
+    def test_an_unsaved_untitled_document_is_never_closed(self):
+        untitled, closes = self.untitled()
+        assembly = fake.File('Assembly', 'assembly', references=1)
+        broken = fake.File('Broken', 'broken', references=1)
+        broken.failures = 2
+        _, counts = self.run_export(fake.data([assembly, broken]))
+        self.assertEqual((counts['exported'], counts['failed']), (1, 1))
+        self.assertEqual(closes, [])
+        self.assertEqual(self.app.documents.items, [untitled])
+
+    def test_linked_document_closed_with_its_design_is_neither_an_error_nor_left_open(self):
+        assembly = fake.File('Assembly', 'assembly', references=2)
+        _, counts = self.run_export(fake.data([assembly]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual(entry['status'], 'done')
+        self.assertNotIn('documents_left_open', entry)
+        self.assertEqual(self.app.documents.items, [])
+        self.assertEqual(fusion.LEFT_OPEN, set())
+        linked = assembly.childReferences.item(0).documents[0]
+        self.assertFalse(linked.isValid)
+        self.assertTrue(self.adapter.close(linked))  # closing a gone document again: fine, no raise
+        self.assertEqual(fusion.LEFT_OPEN, set())
+
+    def test_a_document_whose_close_raises_once_gone_counts_as_closed(self):
+        part = fake.File('Part', 'part')
+        document = fake.Document(part, self.app.documents, visible=False)
+
+        def gone(save):
+            document.isValid = False
+            raise RuntimeError('3 : invalid')
+        document.close = gone
+        self.assertTrue(self.adapter.close(document))
+        self.assertNotIn('part', fusion.LEFT_OPEN)
+
+    def test_drawing_product_is_found_without_reading_product_type(self):
+        drawing = fake.File('Sheet', 'sheet', extension='f2d')
+        document = fake.Document(drawing)
+        found = fusion.drawing_product(document)
+        self.assertEqual(type(found).__name__, 'Drawing')
+        with self.assertRaises(RuntimeError):
+            found.productType  # as on real Fusion: never read by the add-in
+
     def test_an_open_drawing_is_exported_from_and_left_open(self):
         drawing = fake.File('Sheet', 'sheet', extension='f2d')
         mine = self.user_has_open(drawing)
-        _, counts = self.run_export(fake.data([drawing]))
+        with patch('fusion_bulk_export.fusion.time.sleep'):
+            _, counts = self.run_export(fake.data([drawing]), drawings=True)
         self.assertEqual(counts['files'], 1)
         self.assertFalse(mine.closed)
         self.assertEqual(drawing.calls, 0)
@@ -135,7 +199,8 @@ class OpenDocumentTests(Base):
         drawing = fake.File('Sheet', 'sheet', extension='f2d')
         later = fake.File('Other sheet', 'other', extension='f2d')
         mine = self.user_has_open(drawing, modified=True)
-        _, counts = self.run_export(fake.data([drawing, later]))
+        with patch('fusion_bulk_export.fusion.time.sleep'):
+            _, counts = self.run_export(fake.data([drawing, later]), drawings=True)
         self.assertFalse(mine.closed)
         self.assertTrue(mine.isModified)
         entry = self.manifest['entries'][0]
@@ -148,7 +213,7 @@ class OpenDocumentTests(Base):
         drawing = fake.File('Sheet', 'sheet', extension='f2d')
         mine = self.user_has_open(drawing)
         mine.dataFile = NS(id='sheet', versionNumber=2)
-        self.run_export(fake.data([drawing]))
+        self.run_export(fake.data([drawing]), drawings=True)
         self.assertFalse(mine.closed)
         self.assertIn('Another version', self.manifest['entries'][0]['error'])
 
@@ -259,7 +324,7 @@ class FusionTimingTests(Base):
         partial, whole = fake.File('Half', 'half', extension='f2d'), fake.File('Whole', 'whole', extension='f2d')
         partial.pdf_mode = 'partial'
         with patch.object(fusion, 'PDF_WAIT_SECONDS', 2), patch('fusion_bulk_export.fusion.time.sleep'):
-            _, counts = self.run_export(fake.data([partial, whole]))
+            _, counts = self.run_export(fake.data([partial, whole]), drawings=True)
         entries = {e['id']: e for e in self.manifest['entries']}
         self.assertEqual(entries['half']['status'], 'skipped')
         self.assertIn('incomplete drawing PDF', entries['half']['error'])
