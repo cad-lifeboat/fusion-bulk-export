@@ -151,10 +151,10 @@ class FromPage(adsk.core.HTMLEventHandler):
 
 
 class Validate(adsk.core.ValidateInputsEventHandler):
-    """Export… stays greyed out until Everything is chosen or something is ticked."""
+    """Export stays greyed out until there is a folder and Everything or something ticked."""
     def notify(self, args):
         try:
-            args.areInputsValid = _picker is None or _picker.selection() is not None
+            args.areInputsValid = _picker is None or _picker.ready()
         except Exception:
             report('Fusion Bulk Export error')
 
@@ -163,10 +163,15 @@ class Execute(adsk.core.CommandEventHandler):
     def notify(self, args):
         app = adsk.core.Application.get()
         try:
-            selection = _picker.selection() if _picker else None
-            if _picker and selection is None:
+            if _picker is None:
+                return
+            selection = _picker.selection()
+            if selection is None:
                 app.userInterface.messageBox('Tick at least one project or folder, or choose Everything.',
                                              'Fusion Bulk Export')
+                return
+            if not _picker.output:
+                app.userInterface.messageBox('Choose where to save the export (Browse…).', 'Fusion Bulk Export')
                 return
             if _busy['by'] is not None:
                 app.userInterface.messageBox(
@@ -174,9 +179,10 @@ class Execute(adsk.core.CommandEventHandler):
                     'Wait for it to finish (or stop it with "autorun.py stop"), then export again.',
                     'Fusion Bulk Export')
                 return
+            _picker.remember()
             _busy['by'] = 'button'
             try:
-                _code['export_with_dialogs'](app, selection)
+                _code['export'](app, selection, _picker.output)
             finally:
                 _busy['by'] = None
         except Exception:
@@ -189,11 +195,11 @@ class Created(adsk.core.CommandCreatedEventHandler):
         try:
             # Each dialog uses the add-in code as currently installed, without a restart.
             forget_package()
-            from fusion_bulk_export.command import export_with_dialogs
+            from fusion_bulk_export.command import export
             from fusion_bulk_export.picker import Picker
-            _code.update(export_with_dialogs=export_with_dialogs)
+            _code.update(export=export)
             command = args.command
-            command.okButtonText = 'Export…'
+            command.okButtonText = 'Export'
             # Wide enough for project and folder names (Fusion's default cuts labels off).
             command.setDialogInitialSize(460, 520)
             command.setDialogMinimumSize(380, 160)

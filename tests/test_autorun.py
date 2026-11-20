@@ -238,8 +238,13 @@ class AutorunTests(unittest.TestCase):
         module, events = self.start_add_in()
         module._busy['by'] = 'job'
         self.addCleanup(module._busy.update, by=None)
-        module._picker = None
-        module._code['export_with_dialogs'] = lambda *args: self.fail('must not start')
+        picker = patch.object(module, '_picker', NS(selection=lambda: 'everything', output=str(self.output),
+                                                    remember=lambda: None))
+        picker.start()
+        self.addCleanup(picker.stop)
+        code = patch.dict(module._code, export=lambda *args: self.fail('must not start'))
+        code.start()
+        self.addCleanup(code.stop)
         module.Execute().notify(None)
         self.assertIn('command line is running', self.dialogs[0][0])
         self.assertEqual(module._busy['by'], 'job')

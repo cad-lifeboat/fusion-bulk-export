@@ -29,6 +29,14 @@ class UIBase(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
         self.addCleanup(self.temp.cleanup)
         self.folder = NS(title='', folder=self.temp.name, showDialog=lambda: adsk.core.DialogResults.DialogOK)
+        # Remembered settings live in a temporary file here; the last folder is the test's folder.
+        home = tempfile.TemporaryDirectory(prefix='home-')
+        self.addCleanup(home.cleanup)
+        self.settings = Path(home.name) / 'settings.json'
+        self.settings.write_text(json.dumps(dict(output=self.temp.name)))
+        environment = patch.dict('os.environ', FUSION_BULK_EXPORT_SETTINGS=str(self.settings))
+        environment.start()
+        self.addCleanup(environment.stop)
         self.progress = NS(isCancelButtonShown=False, wasCancelled=False,
                            show=lambda *args: None, hide=lambda: None)
         self.summaries, self.errors, self.details, self.troubles, self.opened = [], [], [], [], []
@@ -244,16 +252,71 @@ class UItests(UIBase):
             self.open_dialog().execute.handlers[0].notify(None)
         self.assertIn('Low disk space: 200 MB free.', self.summaries[0][0])
 
-    def test_folder_selection_cancel_does_not_open(self):
+    def test_browse_cancel_keeps_folder_and_tree(self):
+        self.picker_data()
+        command = self.open_dialog()
+        inputs = self.choose(command)
+        self.page(command, 'hubs')
+        self.page(command, 'selection', {'project-2': None})
         self.folder.showDialog = lambda: self.adsk.core.DialogResults.DialogCancel
-        self.module.Execute().notify(None)
+        self.change(command, inputs.find('fbx_browse'))
+        self.assertEqual(inputs.find('fbx_folder').text, self.temp.name)
+        self.assertTrue(self.valid(command))
         self.assertEqual(self.file.calls, 0)
-        self.assertEqual(self.summaries, [])
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+
+    def test_browse_sets_folder_and_says_it_continues(self):
+        other = Path(self.temp.name) / 'other'
+        other.mkdir()
+        (other / 'manifest.json').write_text(json.dumps(dict(schema=2, runs=[], entries=[
+            dict(key=json.dumps(['hub-1', 'project-1', 'x', 1]), status='done'),
+            dict(key=json.dumps(['hub-1', 'project-1', 'y', 1]), status='failed')])))
+        (other / 'manifest.journal').write_text(json.dumps(dict(entry=dict(
+            key=json.dumps(['hub-1', 'project-2', 'z', 1]), status='done'))) + '\n')
+        command = self.open_dialog()
+        inputs = command.commandInputs
+        self.assertEqual(inputs.find('fbx_note').text, 'A new export into this folder.')
+        self.folder.folder = other.as_posix()
+        self.change(command, inputs.find('fbx_browse'))
+        self.assertEqual(inputs.find('fbx_folder').text, str(other))
+        self.assertEqual(inputs.find('fbx_note').text, 'Continues the export in this folder (2 done).')
+        self.assertFalse(inputs.find('fbx_browse').value)
+
+    def test_folder_and_mode_are_remembered(self):
+        self.picker_data()
+        command = self.open_dialog()
+        self.choose(command)
+        self.page(command, 'hubs')
+        self.page(command, 'selection', {'project-2': None})
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(json.loads(self.settings.read_text()),
+                         dict(output=self.temp.name, mode='Choose projects or folders'))
+        inputs = self.open_dialog().commandInputs
+        self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
+        self.assertTrue(inputs.find('fbx_tree').isVisible)
+        self.assertEqual(inputs.find('fbx_folder').text, self.temp.name)
+
+    def test_first_use_suggests_documents_folder(self):
+        self.settings.unlink()
+        with patch('fusion_bulk_export.settings.Path.home', return_value=Path(self.temp.name) / 'home'):
+            command = self.open_dialog()
+        inputs = command.commandInputs
+        suggested = Path(self.temp.name) / 'home' / 'Documents' / 'FusionExport'
+        self.assertEqual(inputs.find('fbx_folder').text, str(suggested))
+        self.assertIn('created when the export starts', inputs.find('fbx_note').text)
+        self.assertFalse(suggested.exists())
+        self.assertTrue(self.valid(command))
+        command.execute.handlers[0].notify(None)
+        self.assertTrue((suggested / 'manifest.json').is_file())
+
+    def test_no_folder_disables_export(self):
+        command = self.open_dialog()
+        self.module._picker.output = ''
+        self.assertFalse(self.valid(command))
 
     def test_progress_cancel_keeps_manifest(self):
         self.progress.wasCancelled = True
-        self.module.Execute().notify(None)
+        self.open_dialog().execute.handlers[0].notify(None)
         self.assertEqual(self.file.calls, 0)
         self.assertIn('Export cancelled', self.summaries[0][0])
         self.assertTrue((Path(self.temp.name) / 'manifest.json').exists())
@@ -282,7 +345,7 @@ class FriendlyErrorTests(UIBase):
     def test_unusable_folder_is_one_plain_sentence(self):
         target = Path(self.temp.name) / 'a file'
         target.write_text('')
-        self.folder.folder = str(target)
+        self.settings.write_text(json.dumps(dict(output=str(target))))
         text = self.export()
         self.assertTrue(text.startswith('This folder cannot be used for the export: '), text)
         self.assertIn('Choose a folder', text)
@@ -307,7 +370,7 @@ class FriendlyErrorTests(UIBase):
 
     def test_unexpected_error_is_logged_with_copyable_details(self):
         command = self.open_dialog()
-        self.module._code['export_with_dialogs'] = lambda *args: {}['boom']
+        self.module._code['export'] = lambda *args: {}['boom']
         command.execute.handlers[0].notify(None)
         self.assertEqual(self.errors, [])
         prompt, title, details = self.details[-1]

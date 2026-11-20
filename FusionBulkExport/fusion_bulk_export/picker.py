@@ -1,10 +1,12 @@
 """The command dialog's choice of what to export: everything, or a tree of hubs, projects and
 folders shown in an HTML browser input (ui/tree.html) with tri-state checkboxes."""
 import json
+import os
 from pathlib import Path
 
 import adsk.core
 
+from . import settings
 from .core import Selection, collection
 
 EVERYTHING = 'Everything'
@@ -26,6 +28,14 @@ class Picker:
         self.trace = trace
         self.projects = {}
         self.chosen = {}
+        remembered = settings.load()
+        # Output folder: remembered, else the first-use suggestion (created when the export starts).
+        self.output = remembered.get('output') or settings.default_output()
+        self.folder = inputs.addTextBoxCommandInput('fbx_folder', 'Save to', self.output, 2, True)
+        self.browse = inputs.addBoolValueInput('fbx_browse', 'Browse…', False, '', False)
+        self.note = inputs.addTextBoxCommandInput('fbx_note', '', '', 1, True)
+        self.facts = None
+        self.refresh_folder()
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
@@ -47,17 +57,56 @@ class Picker:
             self.tree.isVisible = False
             self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
             self.summary.isVisible = False
+            if remembered.get('mode') == CHOOSE:
+                for item in self.mode.listItems:
+                    item.isSelected = item.name == CHOOSE
+                self.show_mode()
         trace('picker built')
 
     @property
     def choosing(self):
         return self.mode.selectedItem is not None and self.mode.selectedItem.name == CHOOSE
 
+    def show_mode(self):
+        self.tree.isVisible = self.summary.isVisible = self.choosing
+        self.tip.isVisible = not self.choosing
+
+    def refresh_folder(self):
+        self.folder.text = self.output or ''
+        self.facts = settings.folder_facts(self.output)
+        self.note.text = settings.folder_note(self.facts) if self.output else 'Choose where to save the export.'
+
+    def choose_folder(self):
+        """Browse…: the system folder dialog, starting at the current folder."""
+        dialog = self.app.userInterface.createFolderDialog()
+        dialog.title = 'Fusion Bulk Export output folder'
+        try:
+            start = self.output if self.output and os.path.isdir(self.output) else ''
+            if start:
+                dialog.initialDirectory = start
+        except Exception as error:
+            self.trace('initialDirectory: %s' % error)
+        if dialog.showDialog() != adsk.core.DialogResults.DialogOK:
+            return False
+        self.output = os.path.normpath(dialog.folder)  # Fusion returns C:/x on Windows; show C:\x
+        self.refresh_folder()
+        return True
+
     def changed(self, changed_input):
-        if changed_input.id == self.mode.id and self.tree is not None:
-            self.tree.isVisible = self.summary.isVisible = self.choosing
-            self.tip.isVisible = not self.choosing
+        if changed_input.id == self.browse.id:
+            self.browse.value = False  # a button: it holds no state
+            self.choose_folder()
+        elif changed_input.id == self.mode.id and self.tree is not None:
+            self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)
+
+    def ready(self):
+        """Whether Export can be pressed: a folder is set and something is chosen."""
+        return bool(self.output) and self.selection() is not None
+
+    def remember(self):
+        settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
+                            else EVERYTHING))
 
     def incoming(self, action, data):
         """Answer the page; the returned string is handed back to its JavaScript."""

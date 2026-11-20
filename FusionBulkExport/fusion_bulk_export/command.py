@@ -1,6 +1,5 @@
-"""The button's export: folder dialog, progress dialog, summary. Lives in the package (not the
+"""The button's export: progress dialog, report, summary. Lives in the package (not the
 entry file) so a reinstall takes effect at the next dialog without restarting the add-in."""
-import os
 
 import adsk
 import adsk.core
@@ -75,16 +74,6 @@ def show_summary(ui, text, output, page, opener):
 def bar(state):
     """(maximum, value) of the progress bar: projects, as in earlier versions."""
     return max(state['projects'], 1), max(state['project'] - 1, 0)
-
-
-def export_with_dialogs(app, selection, opener=None):
-    ui = app.userInterface
-    dialog = ui.createFolderDialog()
-    dialog.title = 'Fusion Bulk Export output folder'
-    if dialog.showDialog() != adsk.core.DialogResults.DialogOK:
-        return None
-    output = os.path.normpath(dialog.folder)  # Fusion returns C:/x on Windows; show C:\x
-    return export(app, selection, output, opener)
 
 
 def export(app, selection, output, opener=None):
