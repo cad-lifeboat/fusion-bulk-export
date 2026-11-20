@@ -348,18 +348,25 @@ def design_time(value, now=None):
     return seconds if EARLIEST_DATE <= seconds <= latest else None
 
 
-def reference_facts(file):
+LINKS_UNREADABLE = 'Links to other designs could not be read; the design itself was exported.'
+
+
+def reference_facts(file, problems=None):
     """has_references and references_out_of_date of a cloud file: DataFile properties
     (hasChildReferences, hasOutofDateChildReferences), read where they are, without listing
-    anything. A property this Fusion lacks, or one that cannot be read, is None (unknown)."""
+    anything. A property this Fusion lacks, or one that cannot be read, is None (unknown).
+    Reading them can raise on real Fusion ("2 : InternalValidationError : status.isOk() &&
+    relationships"); the error text is added to problems (a list) when given, never raised."""
     facts = {}
     for key, member in (('has_references', 'hasChildReferences'),
                         ('references_out_of_date', 'hasOutofDateChildReferences')):
         try:
             value = getattr(file, member, None)
             facts[key] = None if value is None else bool(value)
-        except Exception:
+        except Exception as error:
             facts[key] = None
+            if problems is not None:
+                problems.append(str(error) or type(error).__name__)
     return facts
 
 
@@ -891,16 +898,22 @@ class Exporter:
     def links(self, file, entry):
         """Record a design's links on its entry: references (the linked designs, by id and name),
         has_references and references_out_of_date. Read from the cloud file in hand, never by
-        opening anything; reading them never stops an export (unknown is None)."""
-        entry.update(reference_facts(file))
+        opening anything; reading them never stops, fails or skips an export (unknown is None).
+        When Fusion raises on reading them, references_unreadable is true and
+        references_error holds the first error's text; the design is exported all the same."""
+        problems = []
+        entry.update(reference_facts(file, problems))
         if hasattr(self.adapter, 'references'):
             try:
                 entry['references'] = self.adapter.references(file)
             except Exception as error:
                 entry['references'] = None
-                self.log('could not list the links of ' + entry['key'] + ': ' + type(error).__name__)
+                problems.append(str(error) or type(error).__name__)
         if entry.get('references') and entry.get('has_references') is None:
             entry['has_references'] = True
+        if problems:
+            entry.update(references_unreadable=True, references_error=problems[0])
+            self.log('could not read the links of ' + entry['key'] + ': ' + problems[0])
 
     def export_design(self, hub, project, folders, file, entry, key, owned=()):
         """Write a design's .f3d and STEP (two attempts); the Trouble that stops the run, or None.

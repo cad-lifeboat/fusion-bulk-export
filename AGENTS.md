@@ -109,6 +109,8 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
   link to a design that was deleted, moved or cannot be read. The person fixes the links in
   Fusion, then reruns. **"N design(s) with out-of-date links"** is a note, not a failure.
   `inventory.json` has `has_references` and `references_out_of_date` per design.
+  **"Links to other designs could not be read"** is a warning: Fusion raised on reading
+  them, and the design was exported anyway; report the count.
 - **Windows paths over 260 characters**: the result says how many items have one; they are
   saved, but Explorer may not open them. A shorter OUT (such as `C:\FusionExport`) avoids it.
 - **Warnings** (a STEP with no bodies, or a solid count that differs from Fusion's): the

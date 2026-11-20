@@ -80,6 +80,27 @@ class File:
         return True
 
 
+RELATIONSHIPS = '2 : InternalValidationError : status.isOk() && relationships'
+
+
+class UnreadableLinks(File):
+    """A cloud file whose reference properties raise, as seen on real Fusion: reading
+    childReferences, hasChildReferences, hasOutofDateChildReferences or parentReferences
+    raises RELATIONSHIPS. The design itself opens and exports."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __getattribute__(self, name):
+        if name in ('childReferences', 'hasChildReferences', 'hasOutofDateChildReferences', 'parentReferences'):
+            raise RuntimeError(RELATIONSHIPS)
+        return super().__getattribute__(name)
+
+    def __setattr__(self, name, value):
+        if name in ('childReferences', 'hasChildReferences', 'hasOutofDateChildReferences', 'parentReferences'):
+            return  # set by File.__init__; reading them raises
+        super().__setattr__(name, value)
+
+
 def folder(name='Root', files=(), folders=(), identity=None):
     """A DataFolder; with identity it has an .id like the real one (most tests go without)."""
     result = NS(name=name, dataFiles=Collection(*files), dataFolders=Collection(*folders))

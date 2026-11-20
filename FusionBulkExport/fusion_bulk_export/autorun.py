@@ -20,7 +20,8 @@ Configuration (all paths absolute):
 members and text commands this build offers) for bug reports; it reads no designs.
 "inventory" writes inventory.json (every hub, project and design with ids and
 versions; for designs also has_references and references_out_of_date, true, false or null when
-Fusion does not say) without opening anything. An export also writes index.html and index.csv (the
+Fusion does not say, and references_unreadable with the error when Fusion raised on reading
+them) without opening anything. An export also writes index.html and index.csv (the
 human-readable report) into the output folder; counts in autorun-result.json are exported,
 up_to_date (designs), files (other files saved), files_up_to_date, skipped and failed. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
@@ -219,6 +220,7 @@ def inventory(data, log, stop=lambda: False, output=None):
                     counts=dict(hubs=len(hubs), projects=len(projects), files=len(files),
                                 designs=sum(1 for f in files if f['extension'].lower() == 'f3d'),
                                 links_out_of_date=sum(1 for f in files if f.get('references_out_of_date')),
+                                links_unreadable=sum(1 for f in files if f.get('references_unreadable')),
                                 unreadable=len(errors)))
 
     hub_list = list(collection(data.dataHubs))
@@ -240,7 +242,10 @@ def inventory(data, log, stop=lambda: False, output=None):
                 item = dict(id=str(file.id), name=file.name, path=path, folder_ids=path.ids,
                             extension=file.fileExtension, version=int(file.versionNumber))
                 if str(file.fileExtension).lower() == 'f3d':
-                    item.update(reference_facts(file))  # properties of the file in hand: nothing is listed
+                    problems = []
+                    item.update(reference_facts(file, problems))  # properties of the file in hand: nothing is listed
+                    if problems:
+                        item.update(references_unreadable=True, references_error=problems[0])
                 p['files'].append(item)
             log.write('inventory hub %d/%d project %d/%d: %d files'
                       % (hub_number, len(hub_list), project_number, len(projects), len(p['files'])))

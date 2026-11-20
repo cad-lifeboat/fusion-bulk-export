@@ -59,7 +59,7 @@ class AutorunTests(unittest.TestCase):
     def test_inventory_opens_nothing(self):
         result = self.run_with(mode='inventory')
         self.assertEqual(result['counts'], dict(hubs=1, projects=2, files=4, designs=3, links_out_of_date=0,
-                                                unreadable=0))
+                                                links_unreadable=0, unreadable=0))
         listing = json.loads((self.output / 'inventory.json').read_text())
         files = listing['hubs']['hub-1']['projects']['project-1']['files']
         self.assertEqual(len(files), 3)
@@ -76,6 +76,15 @@ class AutorunTests(unittest.TestCase):
         files = json.loads((self.output / 'inventory.json').read_text())['hubs']['hub-1']['projects']['project-2']['files']
         self.assertEqual((files[1]['has_references'], files[1]['references_out_of_date']), (True, True))
         self.assertEqual(linked.calls, 0)
+
+    def test_inventory_records_links_fusion_cannot_read(self):
+        odd = fake.UnreadableLinks('Odd', 'odd')
+        self.data.dataHubs.item(0).dataProjects.item(1).rootFolder.dataFiles.items.append(odd)
+        result = self.run_with(mode='inventory')
+        self.assertEqual((result['counts']['links_unreadable'], result['counts']['files']), (1, 5))
+        files = json.loads((self.output / 'inventory.json').read_text())['hubs']['hub-1']['projects']['project-2']['files']
+        self.assertEqual((files[1]['references_unreadable'], files[1]['references_error'], files[1]['has_references']),
+                         (True, fake.RELATIONSHIPS, None))
 
     def test_inventory_logs_each_project_saves_as_it_goes_and_stops(self):
         result = self.run_with(mode='inventory')

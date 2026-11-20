@@ -926,6 +926,32 @@ class ExportTests(unittest.TestCase):
         self.run_export(fake.data([odd]))
         self.assertEqual(self.manifest['entries'][0]['error'], 'Synthetic open failure')
 
+    def test_unreadable_links_still_export_with_a_warning(self):
+        # Seen on real Fusion: reading a DataFile's references raised at once on both attempts,
+        # before the design was opened, and failed the whole design.
+        odd, plain = fake.UnreadableLinks('Odd', 'odd'), fake.File('Plain', 'plain')
+        with self.assertRaises(RuntimeError):
+            odd.hasChildReferences
+        exporter, counts = self.run_export(fake.data([odd, plain]))
+        self.assertEqual((counts['exported'], counts['failed'], counts['skipped']), (2, 0, 0))
+        entry = next(e for e in self.manifest['entries'] if e['id'] == 'odd')
+        self.assertEqual((entry['status'], entry['attempts'], odd.calls), ('done', 1, 1))
+        self.assertTrue(entry['references_unreadable'])
+        self.assertEqual(entry['references_error'], fake.RELATIONSHIPS)
+        self.assertEqual((entry['has_references'], entry['references']), (None, None))
+        self.assertNotIn('references_unreadable', next(e for e in self.manifest['entries'] if e['id'] == 'plain'))
+        from fusion_bulk_export import report
+        text = report.summary_text(counts, exporter.run_info, self.manifest, self.root)
+        self.assertIn('Warning: 1 design(s): links to other designs could not be read; the design itself was exported.',
+                      text)
+        page = report.render_html(self.manifest, exporter.run_info, counts)
+        self.assertIn('Warning: Links to other designs could not be read; the design itself was exported.', page)
+        self.assertIn('1 whose links could not be read', page)
+        import csv
+        import io
+        rows = {r['design']: r for r in csv.DictReader(io.StringIO(report.render_csv(self.manifest, exporter.run_info)))}
+        self.assertEqual((rows['Odd']['links_unreadable'], rows['Plain']['links_unreadable']), ('yes', ''))
+
     def test_link_reason_counts(self):
         self.assertEqual(core.link_reason(1), 'A linked design is missing or cannot be opened (1 link).')
         self.assertEqual(core.link_reason(0), 'A linked design is missing or cannot be opened.')

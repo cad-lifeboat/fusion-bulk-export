@@ -222,6 +222,10 @@ def summary(output):
         if broken:
             lines.append('Links: %d design(s) failed with a linked design missing or not opening (see the report)'
                          % broken)
+        unread = sum(1 for e in designs if e.get('status') == 'done' and e.get('references_unreadable'))
+        if unread:
+            lines.append('Warning: %d design(s): links to other designs could not be read; the design itself '
+                         'was exported' % unread)
         stale = sum(1 for e in designs if e.get('references_out_of_date'))
         if stale:
             lines.append('Note: %d design(s) with out-of-date links (exported as they are, not a failure)' % stale)

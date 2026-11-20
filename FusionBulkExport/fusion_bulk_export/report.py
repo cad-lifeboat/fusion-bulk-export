@@ -13,6 +13,7 @@ import subprocess
 import sys
 from urllib.parse import quote
 
+from .core import LINKS_UNREADABLE
 from .names import long_path
 
 ORDER = {'failed': 0, 'unreadable': 1, 'skipped': 2, 'warning': 3, 'done': 4}
@@ -75,6 +76,7 @@ def items(manifest, run_info=None):
                            warnings=warnings, thumbnail=picture or '',
                            has_links=entry.get('has_references'), links=len(links) if links else 0,
                            links_out_of_date=bool(entry.get('references_out_of_date')),
+                           links_unreadable=bool(entry.get('references_unreadable')),
                            fusion_error=entry.get('fusion_error') or ''))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
@@ -82,7 +84,8 @@ def items(manifest, run_info=None):
                            project=where[1] if len(where) > 1 else '', folder='/'.join(where[2:]),
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
                            next_step=next_step('unreadable', problem.get('error')), warnings=[],
-                           thumbnail='', has_links=None, links=0, links_out_of_date=False, fusion_error=''))
+                           thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
+                           fusion_error=''))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
@@ -140,6 +143,9 @@ def table_html(rows, heading, column):
             why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(warning) + '</span>'
         if row['fusion_error']:
             why += ('<br>' if why else '') + '<span class="muted">Fusion said: ' + esc(row['fusion_error']) + '</span>'
+        if row['links_unreadable']:
+            text = LINKS_UNREADABLE if row['status'] == 'done' else 'Links to other designs could not be read.'
+            why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(text) + '</span>'
         if row['links_out_of_date']:
             why += ('<br>' if why else '') + '<span class="muted">Note: ' + esc(LINKS_OUT_OF_DATE) + '</span>'
         if row['next_step']:
@@ -185,6 +191,9 @@ def render_html(manifest, run_info, counts):
     stale = links_out_of_date(manifest)
     if stale:
         line += '; %d with out-of-date links (a note, not a failure)' % stale
+    unread = links_unreadable(manifest)
+    if unread:
+        line += '; %d whose links could not be read (exported all the same)' % unread
     out.append('<div class="muted">%s.</div>' % esc(line))
     long_paths = long_path_count(manifest)
     if long_paths:
@@ -201,7 +210,7 @@ def render_csv(manifest, run_info):
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
-                     'links_out_of_date', 'fusion_error'])
+                     'links_out_of_date', 'fusion_error', 'links_unreadable'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         archive = next((p for p in row['files'] if p.lower().endswith('.f3d')), '') if design else ''
@@ -211,7 +220,7 @@ def render_csv(manifest, run_info):
                          row['next_step'], '; '.join(row['warnings']), row['thumbnail'], row['kind'],
                          '' if design else (row['files'][0] if row['files'] else ''),
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
-                         row['fusion_error']])
+                         row['fusion_error'], 'yes' if row['links_unreadable'] else ''])
     return stream.getvalue()
 
 
@@ -291,6 +300,12 @@ def links_out_of_date(manifest):
                and entry.get('references_out_of_date'))
 
 
+def links_unreadable(manifest):
+    """How many designs were exported although their links could not be read (a warning)."""
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('kind', 'design') == 'design'
+               and entry.get('status') == 'done' and entry.get('references_unreadable'))
+
+
 def long_path_count(manifest):
     return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done' and entry.get('long_path'))
 
@@ -321,6 +336,9 @@ def summary_text(counts, run_info, manifest, output):
     long_paths = long_path_count(manifest)
     if long_paths:
         lines.append(LONG_PATHS % long_paths)
+    unread = links_unreadable(manifest)
+    if unread:
+        lines.append('Warning: %d design(s): %s' % (unread, LINKS_UNREADABLE[0].lower() + LINKS_UNREADABLE[1:]))
     stale = links_out_of_date(manifest)
     if stale:
         lines.append('Note: %d design(s) with out-of-date links (exported as they are; see the report).' % stale)

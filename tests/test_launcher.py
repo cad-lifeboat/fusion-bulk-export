@@ -91,10 +91,13 @@ class LauncherTests(unittest.TestCase):
             dict(name='Secret Assembly', status='failed', files=[], has_references=True,
                  error='A linked design is missing or cannot be opened (1 link).', fusion_error='Secret link'),
             dict(name='Secret Older', status='done', files=[], references_out_of_date=True),
-            dict(name='Secret Fine', status='done', files=[], references_out_of_date=False)])))
+            dict(name='Secret Fine', status='done', files=[], references_out_of_date=False),
+            dict(name='Secret Odd', status='done', files=[], references_unreadable=True, references_error='Secret')])))
         text = '\n'.join(launcher.summary(out))
         self.assertIn('Links: 1 design(s) failed with a linked design missing or not opening', text)
         self.assertIn('Note: 1 design(s) with out-of-date links', text)
+        self.assertIn('Warning: 1 design(s): links to other designs could not be read; the design itself was exported',
+                      text)
         self.assertNotIn('Secret', text)
 
     def test_check_command_runs_without_fusion(self):
