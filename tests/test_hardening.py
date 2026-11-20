@@ -29,7 +29,7 @@ class Base(unittest.TestCase):
     def run_export(self, data, **kwargs):
         exporter = Exporter(self.root, self.adapter)
         counts = exporter.run(data, **kwargs)
-        self.manifest = json.loads((self.root / 'manifest.json').read_text())
+        self.manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         return exporter, counts
 
     def paths(self):
@@ -351,7 +351,7 @@ class WindowsPathTests(Base):
         exporter = Exporter(self.root, self.adapter)
         exporter.platform = platform
         exporter.run(data)
-        self.manifest = json.loads((self.root / 'manifest.json').read_text())
+        self.manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         return exporter
 
     def test_names_are_capped_on_windows_and_long_paths_are_reported(self):

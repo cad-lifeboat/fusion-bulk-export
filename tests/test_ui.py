@@ -147,6 +147,13 @@ class UIBase(unittest.TestCase):
         from urllib.request import url2pathname
         return Path(url2pathname(urlparse(command.commandInputs.find('fbx_results').htmlFileURL).path))
 
+    def assertFolderShown(self, inputs, path):
+        """The dialog shows the output folder whole, or with its middle cut when long (the full
+        path is its tooltip): temporary folders on macOS and Windows are long enough to be cut."""
+        from fusion_bulk_export.picker import shown_path
+        folder = inputs.find('fbx_folder')
+        self.assertEqual((folder.text, folder.tooltip), (shown_path(str(path)), str(path)))
+
     def fallback_log(self):
         path = self.addin / 'results-fallback.log'
         return path.read_text(encoding='utf-8').splitlines() if path.exists() else []
@@ -165,7 +172,7 @@ class UIBase(unittest.TestCase):
             NS(id='project-2', name='Two', rootFolder=fake.folder(files=[self.files['second']])))
 
     def exported(self):
-        manifest = json.loads((Path(self.temp.name) / 'manifest.json').read_text())
+        manifest = json.loads((Path(self.temp.name) / 'manifest.json').read_text(encoding='utf-8'))
         return sorted(e['id'] for e in manifest['entries'] if e['status'] == 'done')
 
     def page(self, command, action, data=None):
@@ -201,7 +208,7 @@ class UItests(UIBase):
 
     def test_dialog_shows_the_version(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'FusionBulkExport' /
-                               'FusionBulkExport.manifest').read_text())
+                               'FusionBulkExport.manifest').read_text(encoding='utf-8'))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_version').text, 'Fusion Bulk Export ' + manifest['version'])
         from fusion_bulk_export.picker import version
@@ -336,7 +343,7 @@ class UItests(UIBase):
         # The page is this run's file in the app-data folder (beside settings.json), not in the
         # export folder or the add-in's, with the summary already in it: no message needed.
         shown = self.page_file(dialog)
-        self.assertEqual(shown.parent, self.settings.parent)
+        self.assertEqual(shown.parent, self.settings.parent.resolve())  # the page's URL is of the resolved path
         self.assertNotIn(self.temp.name, page.htmlFileURL)
         html = shown.read_text(encoding='utf-8')
         self.assertIn('<h1 class="finished">Finished</h1>', html)
@@ -582,7 +589,7 @@ class UItests(UIBase):
         self.assertEqual(data['more'], 0)
         self.assertEqual(data['retry'], 'Run again to retry the 1 failed.')
         self.assertIn('- Part: Synthetic export failure', text)
-        page = (Path(self.temp.name) / 'index.html').read_text()
+        page = (Path(self.temp.name) / 'index.html').read_text(encoding='utf-8')
         self.assertIn('Synthetic export failure', page)
         self.assertEqual(self.opened, [])
 
@@ -649,7 +656,7 @@ class UItests(UIBase):
         self.page(command, 'selection', {'project-2': None})
         self.folder.showDialog = lambda: self.adsk.core.DialogResults.DialogCancel
         self.change(command, inputs.find('fbx_browse'))
-        self.assertEqual(inputs.find('fbx_folder').text, self.temp.name)
+        self.assertFolderShown(inputs, self.temp.name)
         self.assertTrue(self.valid(command))
         self.assertEqual(self.file.calls, 0)
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
@@ -667,7 +674,7 @@ class UItests(UIBase):
         self.assertEqual(inputs.find('fbx_note').text, 'A new export into this folder.')
         self.folder.folder = other.as_posix()
         self.change(command, inputs.find('fbx_browse'))
-        self.assertEqual(inputs.find('fbx_folder').text, str(other))
+        self.assertFolderShown(inputs, other)
         self.assertEqual(inputs.find('fbx_note').text, 'Continues the export in this folder (2 done).')
 
     def test_folder_and_mode_are_remembered(self):
@@ -677,12 +684,12 @@ class UItests(UIBase):
         self.page(command, 'hubs')
         self.page(command, 'selection', {'project-2': None})
         command.execute.handlers[0].notify(None)
-        self.assertEqual(json.loads(self.settings.read_text()),
+        self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8')),
                          dict(output=self.temp.name, mode='Choose projects or folders', other_files=True))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
         self.assertTrue(inputs.find('fbx_tree').isVisible)
-        self.assertEqual(inputs.find('fbx_folder').text, self.temp.name)
+        self.assertFolderShown(inputs, self.temp.name)
 
     def test_other_files_checkbox_is_on_by_default_and_remembered(self):
         spec = fake.File('Spec', 'spec', extension='pdf')
@@ -698,7 +705,7 @@ class UItests(UIBase):
         command.commandInputs.find('fbx_files').value = False
         spec.versionNumber = 4
         command.execute.handlers[0].notify(None)
-        self.assertEqual(json.loads(self.settings.read_text())['other_files'], False)
+        self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8'))['other_files'], False)
         self.assertEqual(len(spec.downloads), 1)  # not saved with the box off
         self.assertEqual(self.results()[1]['rows'], [['Exported now', 0], ['Already up to date', 1], ['Skipped', 1]])
         self.assertFalse(self.open_dialog().commandInputs.find('fbx_files').value)
@@ -717,7 +724,7 @@ class UItests(UIBase):
         self.assertIn("1 not supported by Fusion's export (electronics, drawings); not failures, the report lists them.",
                       data['notes'])
         self.assertNotIn('Failed', [label for label, _ in data['rows']])
-        self.assertNotIn('drawings', json.loads(self.settings.read_text()))  # the old setting is dropped
+        self.assertNotIn('drawings', json.loads(self.settings.read_text(encoding='utf-8')))  # the old setting is dropped
 
     def test_an_entry_file_loaded_before_the_update_still_exports(self):
         # Fusion keeps the entry file it loaded until the add-in restarts; it still passes drawings=.
@@ -735,7 +742,7 @@ class UItests(UIBase):
             command = self.open_dialog()
         inputs = command.commandInputs
         suggested = Path(self.temp.name) / 'home' / 'Documents' / 'FusionExport'
-        self.assertEqual(inputs.find('fbx_folder').text, str(suggested))
+        self.assertFolderShown(inputs, suggested)
         self.assertIn('created when the export starts', inputs.find('fbx_note').text)
         self.assertFalse(suggested.exists())
         self.assertTrue(self.valid(command))
@@ -817,7 +824,7 @@ class FriendlyErrorTests(UIBase):
         self.assertIn('KeyError: <...>', details)  # a key can be a name: left out
         self.assertIn('at FusionBulkExport.py:', details)
         self.assertNotIn('\n', details)
-        self.assertIn('KeyError: <...>', log.read_text())
+        self.assertIn('KeyError: <...>', log.read_text(encoding='utf-8'))
 
     def test_unexpected_error_details_hold_no_names(self):
         import errno
@@ -832,7 +839,7 @@ class FriendlyErrorTests(UIBase):
         self.module._code['export'] = failing
         command.execute.handlers[0].notify(None)
         prompt, title, details = self.details[-1]
-        logged = (self.log / 'errors.log').read_text()
+        logged = (self.log / 'errors.log').read_text(encoding='utf-8')
         for text in (details, logged):
             self.assertNotIn('Secret', text)
             self.assertNotIn('someone', text)
@@ -1176,13 +1183,13 @@ class HeartbeatTests(UIBase):
     def test_the_heartbeat_says_whether_an_export_runs(self):
         watcher = self.module.Watcher()
         watcher.poll()
-        self.assertIsNone(json.loads((self.addin / 'autorun.alive').read_text())['busy'])
+        self.assertIsNone(json.loads((self.addin / 'autorun.alive').read_text(encoding='utf-8'))['busy'])
         self.module._busy['by'] = 'button'
         try:
             watcher.poll()
         finally:
             self.module._busy['by'] = None
-        beat = json.loads((self.addin / 'autorun.alive').read_text())
+        beat = json.loads((self.addin / 'autorun.alive').read_text(encoding='utf-8'))
         self.assertEqual(beat['busy'], 'button')
         self.assertGreater(beat['time'], 0)
 

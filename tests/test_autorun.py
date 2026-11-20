@@ -40,7 +40,7 @@ class AutorunTests(unittest.TestCase):
         settings.setdefault('output', str(self.output))
         self.config.write_text(json.dumps(settings))
         result = run_autorun(self.app, self.config)
-        self.assertEqual(result, json.loads((Path(settings['output']) / 'autorun-result.json').read_text()))
+        self.assertEqual(result, json.loads((Path(settings['output']) / 'autorun-result.json').read_text(encoding='utf-8')))
         return result
 
     def test_export_everything_and_consume_config(self):
@@ -51,8 +51,8 @@ class AutorunTests(unittest.TestCase):
         self.assertGreater(result['bytes'], 0)
         self.assertFalse(self.config.exists())
         self.assertTrue((self.root / 'autorun.json.last').exists())
-        self.assertIn('project 2/2 design 4', (self.output / 'autorun.log').read_text())
-        self.assertIn('Other files', (self.output / 'index.html').read_text())
+        self.assertIn('project 2/2 design 4', (self.output / 'autorun.log').read_text(encoding='utf-8'))
+        self.assertIn('Other files', (self.output / 'index.html').read_text(encoding='utf-8'))
         self.assertTrue((self.output / 'index.csv').is_file())
         self.assertIsNone(result['stopped_reason'])
 
@@ -60,7 +60,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with(mode='inventory')
         self.assertEqual(result['counts'], dict(hubs=1, projects=2, files=4, designs=3, links_out_of_date=0,
                                                 links_unreadable=0, unreadable=0))
-        listing = json.loads((self.output / 'inventory.json').read_text())
+        listing = json.loads((self.output / 'inventory.json').read_text(encoding='utf-8'))
         files = listing['hubs']['hub-1']['projects']['project-1']['files']
         self.assertEqual(len(files), 3)
         self.assertEqual((files[0]['has_references'], files[0]['references_out_of_date']), (False, False))
@@ -73,7 +73,7 @@ class AutorunTests(unittest.TestCase):
         self.data.dataHubs.item(0).dataProjects.item(1).rootFolder.dataFiles.items.append(linked)
         result = self.run_with(mode='inventory')
         self.assertEqual(result['counts']['links_out_of_date'], 1)
-        files = json.loads((self.output / 'inventory.json').read_text())['hubs']['hub-1']['projects']['project-2']['files']
+        files = json.loads((self.output / 'inventory.json').read_text(encoding='utf-8'))['hubs']['hub-1']['projects']['project-2']['files']
         self.assertEqual((files[1]['has_references'], files[1]['references_out_of_date']), (True, True))
         self.assertEqual(linked.calls, 0)
 
@@ -82,21 +82,21 @@ class AutorunTests(unittest.TestCase):
         self.data.dataHubs.item(0).dataProjects.item(1).rootFolder.dataFiles.items.append(odd)
         result = self.run_with(mode='inventory')
         self.assertEqual((result['counts']['links_unreadable'], result['counts']['files']), (1, 5))
-        files = json.loads((self.output / 'inventory.json').read_text())['hubs']['hub-1']['projects']['project-2']['files']
+        files = json.loads((self.output / 'inventory.json').read_text(encoding='utf-8'))['hubs']['hub-1']['projects']['project-2']['files']
         self.assertEqual((files[1]['references_unreadable'], files[1]['references_error'], files[1]['has_references']),
                          (True, fake.RELATIONSHIPS, None))
 
     def test_inventory_logs_each_project_saves_as_it_goes_and_stops(self):
         result = self.run_with(mode='inventory')
-        log = (self.output / 'autorun.log').read_text()
+        log = (self.output / 'autorun.log').read_text(encoding='utf-8')
         self.assertIn('inventory hub 1/1 project 1/2: 3 files', log)
         self.assertIn('inventory hub 1/1 project 2/2: 1 files', log)
         self.assertFalse(result.get('stopped'))
         (self.output / 'STOP').write_text('')
         self.run_with(mode='inventory')
-        listing = json.loads((self.output / 'inventory.json').read_text())
+        listing = json.loads((self.output / 'inventory.json').read_text(encoding='utf-8'))
         self.assertTrue(listing['stopped'])
-        self.assertIn('inventory stopped', (self.output / 'autorun.log').read_text())
+        self.assertIn('inventory stopped', (self.output / 'autorun.log').read_text(encoding='utf-8'))
 
     def test_limit_stops_listing_early(self):
         files = self.data.dataHubs.item(0).dataProjects.item(1).rootFolder
@@ -117,7 +117,7 @@ class AutorunTests(unittest.TestCase):
         self.app.executeTextCommand = lambda command: 'Fusion.ExportArchive  Archive things\nOther.Thing  x'
         result = self.run_with(mode='diagnostics')
         self.assertEqual(result['errors'], [])
-        report = json.loads((self.output / 'diagnostics.json').read_text())
+        report = json.loads((self.output / 'diagnostics.json').read_text(encoding='utf-8'))
         self.assertIn('createFusionArchiveExportOptions', report['classes']['ExportManager'])
         self.assertEqual(report['text_commands'], ['Fusion.ExportArchive  Archive things'])
         self.assertTrue(all(file.calls == 0 for file in self.files))
@@ -139,7 +139,7 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(result['counts']['exported'], 1)
         self.assertEqual(sum(f.calls for f in self.files), 0)
         listing = self.run_with(mode='inventory', output=str(self.root / 'inv'))
-        files = json.loads((self.root / 'inv' / 'inventory.json').read_text())['hubs']['hub-1']['projects']['project-1']['files']
+        files = json.loads((self.root / 'inv' / 'inventory.json').read_text(encoding='utf-8'))['hubs']['hub-1']['projects']['project-1']['files']
         odd_entry = next(f for f in files if f['id'] == 'odd')
         self.assertEqual((odd_entry['path'], odd_entry['folder_ids']), (['Sub', 'A/B'], [None, 'folder-odd']))
         self.assertEqual(listing['errors'], [])
@@ -171,7 +171,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with(folders={'project-1': [{'id': 'twin-2'}]})
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['counts']['exported'], 1)
-        manifest = json.loads((self.output / 'manifest.json').read_text())
+        manifest = json.loads((self.output / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual([e['id'] for e in manifest['entries']], ['two'])
 
     def test_drawings_are_never_opened_even_when_a_job_asks(self):
@@ -182,10 +182,10 @@ class AutorunTests(unittest.TestCase):
             self.assertEqual(result['errors'], [])
             self.assertNotIn('drawings', result)
             self.assertEqual((result['counts']['unsupported'], result['counts']['skipped'], drawing.calls), (1, 0, 0))
-        manifest = json.loads((self.output / 'manifest.json').read_text())
+        manifest = json.loads((self.output / 'manifest.json').read_text(encoding='utf-8'))
         entry = next(e for e in manifest['entries'] if e['id'] == 'drawing')
         self.assertEqual(entry['status'], 'unsupported')
-        page = (self.output / 'index.html').read_text()
+        page = (self.output / 'index.html').read_text(encoding='utf-8')
         self.assertIn('use File &gt; Export in Fusion', page)
         self.assertNotIn('Also export drawings', page)
 
@@ -235,7 +235,7 @@ class AutorunTests(unittest.TestCase):
         result = self.run_with()
         self.assertEqual(result['counts']['exported'], 3)
         self.assertEqual(result['discovery_errors'], 1)
-        self.assertIn('No access', (self.output / 'export.log').read_text())
+        self.assertIn('No access', (self.output / 'export.log').read_text(encoding='utf-8'))
 
     def test_no_hubs_times_out(self):
         self.data.dataHubs.items.clear()
@@ -279,7 +279,7 @@ class AutorunTests(unittest.TestCase):
     def test_startup_runs_pending_job_then_watches_for_more(self):
         self.config.write_text(json.dumps(dict(output=str(self.output))))
         module, events = self.start_add_in()
-        self.assertEqual(json.loads((self.output / 'autorun-result.json').read_text())['counts']['exported'], 3)
+        self.assertEqual(json.loads((self.output / 'autorun-result.json').read_text(encoding='utf-8'))['counts']['exported'], 3)
         self.assertEqual(len(events['FusionBulkExportAutorun'].handlers), 1)
         # A later job in the same Fusion session: the poll fires the event, the handler runs it.
         module._watcher.poll()
@@ -290,7 +290,7 @@ class AutorunTests(unittest.TestCase):
         module._watcher.poll()
         self.assertEqual(self.fired, ['FusionBulkExportAutorun'])
         events['FusionBulkExportAutorun'].handlers[0].notify(None)
-        self.assertEqual(json.loads((second / 'autorun-result.json').read_text())['mode'], 'inventory')
+        self.assertEqual(json.loads((second / 'autorun-result.json').read_text(encoding='utf-8'))['mode'], 'inventory')
         self.assertFalse(self.config.exists())
 
     def test_button_and_watching_together(self):
@@ -321,13 +321,13 @@ class AutorunTests(unittest.TestCase):
         before = sorted(p.name for p in self.output.iterdir())
         events['FusionBulkExportAutorun'].handlers[0].notify(None)
         # Answered beside the job file, never in its output folder (it may be the running export's).
-        result = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text())
+        result = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text(encoding='utf-8'))
         self.assertTrue(result['busy'])
         self.assertIn('toolbar button', result['errors'][0]['error'])
         self.assertEqual(sorted(p.name for p in self.output.iterdir()), before)
         self.assertFalse(self.config.exists())
         self.assertTrue(all(file.calls == 0 for file in self.files))
-        self.assertIn('autorun busy', (self.root / 'autorun-output' / 'autorun.log').read_text())
+        self.assertIn('autorun busy', (self.root / 'autorun-output' / 'autorun.log').read_text(encoding='utf-8'))
 
     def test_package_is_never_reloaded_during_an_export(self):
         import adsk
@@ -355,7 +355,7 @@ class AutorunTests(unittest.TestCase):
         self.addCleanup(module._busy.update, by=None)
         self.config.write_text('{bad')
         events['FusionBulkExportAutorun'].handlers[0].notify(None)
-        result = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text())
+        result = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text(encoding='utf-8'))
         self.assertTrue(result['busy'])
 
     def test_button_export_during_job_is_refused(self):
@@ -386,7 +386,7 @@ class AutorunTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module.run(None)
         self.addCleanup(module.stop, None)
-        self.assertIn('no events', (self.root / 'startup-error.txt').read_text())
+        self.assertIn('no events', (self.root / 'startup-error.txt').read_text(encoding='utf-8'))
         self.assertEqual(self.dialogs, [])
 
 

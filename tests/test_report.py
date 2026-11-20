@@ -213,7 +213,7 @@ class ReportTests(unittest.TestCase):
         self.manifest = dict(entries=[])
         self.run_info['discovery_errors'] = []
         page, _ = self.write()
-        self.assertIn('Nothing exported yet', page.read_text())
+        self.assertIn('Nothing exported yet', page.read_text(encoding='utf-8'))
 
     def test_open_path_per_platform(self):
         calls = []

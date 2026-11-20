@@ -24,14 +24,16 @@ class ExportTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Resolved like the Exporter's own root: on macOS the temporary folder is a symlink
+        # (/var -> /private/var) and on Windows it may be an 8.3 short name (RUNNER~1).
+        self.root = Path(self.temp.name).resolve()
         self.app = NS(documents=fake.Documents())
         self.adapter = FusionAdapter(self.app)
 
     def run_export(self, data, **kwargs):
         exporter = Exporter(self.root, self.adapter)
         result = exporter.run(data, **kwargs)
-        self.manifest = json.loads((self.root / 'manifest.json').read_text())
+        self.manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         return exporter, result
 
     def test_walk_every_hub_project_and_nested_folder(self):
@@ -101,7 +103,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(a.calls, 0)
         self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         # Own files only, mixed with a name below an id; by name alone both twins match.
         self.run_export(data, selection=Selection({'project-1': [[{'id': 't2'}, '']]}))
         self.assertEqual(self.exported(), ['b'])
@@ -201,7 +203,7 @@ class ExportTests(unittest.TestCase):
             with self.subTest(broken=broken):
                 self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
                 self.addCleanup(self.temp.cleanup)
-                self.root = Path(self.temp.name)
+                self.root = Path(self.temp.name).resolve()
                 file = fake.File()
                 original = fake.Manager.execute
 
@@ -313,7 +315,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(file.calls, 3)
         self.assertEqual(len(self.manifest['entries']), 1)
         self.assertEqual(len(self.manifest['runs']), 4)
-        self.assertIn('verified', (self.root / 'export.log').read_text())
+        self.assertIn('verified', (self.root / 'export.log').read_text(encoding='utf-8'))
 
     def test_resume_checks_size_and_time_without_hashing(self):
         from fusion_bulk_export import checks
@@ -349,7 +351,7 @@ class ExportTests(unittest.TestCase):
         file = fake.File()
         data = fake.data([file])
         self.run_export(data)
-        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         for info in manifest['entries'][0]['files']:
             del info['mtime_ns']  # as written by earlier versions
         (self.root / 'manifest.json').write_text(json.dumps(manifest))
@@ -616,7 +618,7 @@ class ExportTests(unittest.TestCase):
                          [(4, 'Hub/Project/Spec.pdf')])
         self.assertEqual((self.root / 'Hub/Project/Spec.pdf').read_bytes(), b'version four')
         # Both versions in the manifest (a run that stopped before saving it): the older one goes.
-        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         older = dict(manifest['entries'][0], version=3, key='["old"]')
         manifest['entries'].insert(0, older)
         (self.root / 'manifest.json').write_text(json.dumps(manifest))
@@ -646,7 +648,7 @@ class ExportTests(unittest.TestCase):
         with patch('fusion_bulk_export.core.os.replace', side_effect=OSError('Synthetic replacement failure')):
             with self.assertRaises(OSError):
                 atomic_write(target, {'after': True})
-        self.assertEqual(json.loads(target.read_text()), {'before': True})
+        self.assertEqual(json.loads(target.read_text(encoding='utf-8')), {'before': True})
         atomic_write(target, {'after': True})
         self.assertFalse(target.with_suffix('.json.tmp').exists())
 
@@ -716,7 +718,7 @@ class ExportTests(unittest.TestCase):
 
     def test_deep_long_paths_keep_full_names(self):
         folders = [fake.folder('x' * 100, files=[fake.File('y' * 100)])]
-        for _ in range(3):
+        for _ in range(4):  # deep enough with Windows' 64-character names too
             folders = [fake.folder('z' * 100, folders=folders)]
         self.run_export(fake.data(folders=folders))
         entry = self.manifest['entries'][0]
@@ -731,7 +733,7 @@ class ExportTests(unittest.TestCase):
         exporter = Exporter(self.root, self.adapter)
         exporter.platform = 'darwin'  # 1,023 bytes at most
         exporter.run(fake.data(folders=folders))
-        entry = json.loads((self.root / 'manifest.json').read_text())['entries'][0]
+        entry = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))['entries'][0]
         self.assertEqual((entry['status'], entry['shortened']), ('done', True))
         self.assertIsNone(entry['location'])
         self.assertIn('folders~', entry['files'][0]['path'])
@@ -752,7 +754,8 @@ class ExportTests(unittest.TestCase):
     def test_fusion_writes_to_short_staging_paths_then_files_move(self):
         file = fake.File('y' * 100)
         folders = [fake.folder('x' * 100, files=[file])]
-        folders = [fake.folder('z' * 100, folders=folders)]
+        for _ in range(3):  # deep enough with Windows' 64-character names too
+            folders = [fake.folder('z' * 100, folders=folders)]
         given = []
         original = fake.Manager.execute
         with patch.object(fake.Manager, 'execute', lambda m, path: given.append(path) or original(m, path)):
@@ -774,13 +777,17 @@ class ExportTests(unittest.TestCase):
 
     def test_deep_output_folder_stages_in_the_temporary_folder(self):
         from fusion_bulk_export import staging
-        deep = self.root / ('d' * 120) / ('e' * 120)
+        # Deep enough that "<deep>/.staging" is over staging.MAX_FOLDER characters, yet within
+        # Windows' 200-character limit for the output folder itself.
+        deep = self.root / 'd' / ('e' * (names.OUTPUT_ROOT_LIMIT - 3 - len(str(self.root))))
+        self.assertGreater(len(str(deep / staging.NAME)), staging.MAX_FOLDER)
+        self.assertIsNone(names.output_root_problem(deep, 'win32'))
         temporary = self.root / 'tmp'
         with patch.object(staging.tempfile, 'gettempdir', return_value=str(temporary)):
             exporter = Exporter(deep, self.adapter)
             self.assertEqual(exporter.staging.folder.parent, temporary)
             exporter.run(fake.data([fake.File()]))
-        manifest = json.loads((deep / 'manifest.json').read_text())
+        manifest = json.loads((deep / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(manifest['entries'][0]['status'], 'done')
         self.assertFalse(exporter.staging.folder.exists())
 
@@ -863,7 +870,7 @@ class ExportTests(unittest.TestCase):
         self.assertIsNone(names.output_root_problem('C:\\' + 'z' * 197, 'win32'))
 
     def test_output_folder_rules(self):
-        deep = self.root / ('o' * 150)
+        deep = self.root / ('o' * 120)  # within Windows' 200 characters for the output folder
         exporter = Exporter(deep, self.adapter)  # no 100-character cap any more
         self.assertEqual(exporter.root, deep.resolve())
         blocker = self.root / 'a-file'
@@ -1034,7 +1041,7 @@ class ExportTests(unittest.TestCase):
                                 (dict(dataFile=NS(id='file-1', versionNumber=2)), 'Another version')]:
             with self.subTest(message=message):
                 self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
-                self.root = Path(self.temp.name)
+                self.root = Path(self.temp.name).resolve()
                 file = fake.File()
                 document = fake.Document(file)
                 for key, value in change.items():
@@ -1189,9 +1196,9 @@ class ExportTests(unittest.TestCase):
         real_save = Exporter.save
         with patch.object(Exporter, 'save', lambda self: None if self.saves else real_save(self)):
             exporter.run(fake.data(files))  # only the start-of-run save reaches disk
-        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(manifest['entries'], [])
-        journal = (self.root / 'manifest.journal').read_text().splitlines()
+        journal = (self.root / 'manifest.journal').read_text(encoding='utf-8').splitlines()
         self.assertEqual(len(journal), 6)
         with (self.root / 'manifest.journal').open('a') as stream:
             stream.write('{"entry": {"key": "cut sh')  # the line being written when it crashed
@@ -1296,7 +1303,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(exporter.run_info['counts']['exported'], 5000)
         self.assertLess(exporter.saves, 150)
         self.assertEqual(exporter.saves, 1 + 5000 // 50 + 1)
-        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(len(manifest['entries']), 5000)
         self.assertFalse((self.root / 'manifest.journal').exists())
 
@@ -1320,7 +1327,7 @@ class ExportTests(unittest.TestCase):
         exporter = Exporter(self.root, self.adapter)
         with self.assertRaises(AttributeError):
             exporter.run(NS())
-        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         self.assertIn('error', manifest['runs'][0])
         self.assertIsNotNone(manifest['runs'][0]['finished'])
 

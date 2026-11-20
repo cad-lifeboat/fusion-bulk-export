@@ -57,7 +57,7 @@ class VerifyTests(unittest.TestCase):
 
     def test_manifest_solid_count_and_skipped_drawings(self):
         self.build(solids=2)
-        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         del manifest['entries'][0]['visible_solid_bodies']
         manifest['entries'][0]['solid_bodies'] = 2
         manifest['entries'].append(dict(id='d', name='Drawing', status='skipped',
@@ -70,7 +70,7 @@ class VerifyTests(unittest.TestCase):
 
     def test_unsupported_files_are_not_failures(self):
         self.build()
-        manifest = json.loads((self.root / 'manifest.json').read_text())
+        manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         manifest['entries'].append(dict(id='b', name='Board', kind='file', status='unsupported', files=[],
                                         error='Fusion cannot export this file type through its API (.fbrd)'))
         (self.root / 'manifest.json').write_text(json.dumps(manifest))
@@ -143,7 +143,7 @@ class CheckFolderTests(unittest.TestCase):
         empty = fake.File('Empty', 'empty')
         empty.step_solids = 0
         self.exporter.run(fake.data([fake.File('A', 'a'), empty]))
-        self.manifest = json.loads((self.root / 'manifest.json').read_text())
+        self.manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
 
     def test_clean_export_checks_out_and_reports_the_empty_step(self):
         from fusion_bulk_export import checks
