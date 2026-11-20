@@ -72,6 +72,13 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
      `export OUT --project ID` per project into the same OUT, and `check OUT` after each.
      About 3 to 9 seconds per design so far; complex designs take much longer,
      so time the first project.
+   - **Over about 500 designs: add `--restart-fusion`**, after telling the person it will
+     close and reopen Fusion by itself (only when no saved design or unsaved document is
+     open in it; they must not work in Fusion meanwhile, and Run on Startup must be on).
+     Long runs make Fusion use more memory; the export stops itself before Fusion runs out
+     (exit 75) and this flag restarts Fusion and carries on, at most 20 times, never more
+     than once per 50 designs. Do not add `=force` unless the person agrees: it ends a
+     Fusion that will not quit within 60 s, losing anything unsaved in it.
    - Otherwise: `python3 scripts/autorun.py export OUT`.
    - Only part of the account: `--project ID` for whole projects, `--folder ID:Folder/Sub`
      or `--folder ID:id=FOLDER_ID` (ids from `folder_ids` in `inventory.json`) for single
@@ -100,7 +107,12 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 - **"Stopped by itself"** in `status`: the code says why. `failing` means 5 designs in a
   row failed (offline or signed out?): check sign-in, then rerun. `disk_full`: free space
   or pick a folder on a bigger disk, then rerun with the same OUT. `output_missing` or
-  `output_unwritable`: the folder went away or cannot be written.
+  `output_unwritable`: the folder went away or cannot be written. `memory`: Fusion is using
+  a lot of memory (exit 75); restart Fusion and rerun, or rerun with `--restart-fusion`.
+- **Exit status** of `export`: 0 done; 1 the job failed or was refused; 75 stopped for
+  memory (restart Fusion, rerun); 76 `--restart-fusion` reopened Fusion but the add-in did
+  not start (ask the person to tick Run on Startup); 77 Fusion closed or crashed before the
+  export finished (open it, rerun); 130 interrupted. Rerunning always carries on.
 - **A design failed because it is open with unsaved changes, or another version is
   open**: have the person save or close it in Fusion, then rerun the export.
 - **Timeout or Ctrl-C**: if Fusion had not started the job yet, the command withdraws it

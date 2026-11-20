@@ -71,6 +71,8 @@ If you have hundreds or thousands of designs, start small:
 
 What to expect: the export starts right away and works folder by folder: it lists a folder, exports what it finds, then moves on, so the first files appear within seconds. The progress dialog shows the project, folder and design it is on, how long it has been running, the average time per design and how many failed. So far a design has taken between 3 and 9 seconds depending on the account, so 1,000 designs is roughly one to two and a half hours. **Your time will vary**: large assemblies, many bodies and heavy history take much longer than simple parts, and listing a large project is slow in Fusion itself, so treat these numbers as a rough guide and time your first project.
 
+Long runs make Fusion use more and more memory. Before Fusion runs out, the export stops itself and says "Stopped: Fusion is using a lot of memory": close Fusion, open it again and run the export on the same folder, and it carries on where it stopped. The command line can do that by itself with `autorun.py export OUT --restart-fusion`, which closes and reopens Fusion when nothing else is open in it.
+
 **Let your AI do it.** If you use an AI agent that can run commands on your computer, paste this into it:
 
 ```text

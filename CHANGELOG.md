@@ -3,6 +3,11 @@
 ## Unreleased
 
 - README: a short Questions section (Linux, exporting by hand).
+- Long runs: before Fusion runs out of memory, the export stops itself cleanly ("Stopped: Fusion is using a lot of memory"; close Fusion, open it again and export to the same folder to carry on). It stops when the computer's available memory falls below 1.5 GB (or 8% of its memory, if more), or Fusion has grown by over 6 GB in the run and holds over 60% of the computer's memory.
+- The report (`index.html`) and `status` show how much memory Fusion used ("Fusion memory: 1.4 GB ..."); `export.log` and `autorun-result.json` record it over the run.
+- The add-in lets go of everything of Fusion's after each design, also after a failed one, and runs Python's garbage collector after each item.
+- Command line: `export --restart-fusion` (opt-in) finishes a long job by itself: after a memory stop it quits Fusion politely (only when nothing but an empty "Untitled" is open in it), opens it again and carries on; after a crash it opens Fusion again. At most `--max-restarts` times (20), never more than once per 50 designs; `--restart-fusion=force` also ends a Fusion that will not quit within 60 s.
+- Command line: exit status 75 when the export stopped for memory, 76 when a restarted Fusion did not start the add-in, 77 when Fusion closed or crashed during the export (it used to wait until its time-out).
 
 ## 0.3.1
 
