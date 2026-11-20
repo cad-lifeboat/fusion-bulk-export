@@ -40,12 +40,43 @@ class FusionAdapter:
             # Counting is for checking only; it never stops an export.
             self.details['count_error'] = str(error)
 
+    def open_ids(self):
+        """Cloud ids of the documents open now. A document without a cloud file (new and never
+        saved) has no id; it is never one this add-in opened, so it is simply not listed."""
+        ids = set()
+        for document in collection(self.app.documents):
+            identity = document_id(document)
+            if identity is not None:
+                ids.add(identity)
+        return ids
+
+    def close_opened(self, before):
+        """Close the documents opened since `before` (an open_ids() snapshot) that hold no edits.
+
+        Opening an assembly makes Fusion open the designs it links to as well; left open they
+        pile up over a long run. Documents the user had open are in `before` and are never
+        touched; one that shows unsaved edits is left alone too. Returns how many stay open."""
+        left = 0
+        for document in list(collection(self.app.documents)):
+            identity = document_id(document)
+            if identity is None or identity in before:
+                continue
+            try:
+                if document.isModified or document.close(False) is False:
+                    left += 1
+            except Exception:
+                left += 1
+        if left:
+            self.details['documents_left_open'] = left
+        return left
+
     def export(self, data_file, stem):
         self.details = {}
+        before = self.open_ids()
         # Opening an already open document may return that same document. Export from it
         # without closing it, unless it holds unsaved edits or another version.
         for existing in collection(self.app.documents):
-            if existing.dataFile and existing.dataFile.id == data_file.id:
+            if document_id(existing) == str(data_file.id):
                 if existing.isModified:
                     raise RuntimeError('This design is open in Fusion with unsaved changes; '
                                        'save or close it, then run again.')
@@ -53,14 +84,18 @@ class FusionAdapter:
                     raise RuntimeError('Another version of this design is open in Fusion; '
                                        'close it, then run again.')
                 return self.write(existing, data_file, stem)
-        document = self.app.documents.open(data_file, False)
-        if not document:
-            raise RuntimeError('Fusion could not open the design')
         try:
-            return self.write(document, data_file, stem)
+            document = self.app.documents.open(data_file, False)
+            if not document:
+                raise RuntimeError('Fusion could not open the design')
+            try:
+                return self.write(document, data_file, stem)
+            finally:
+                if document.close(False) is False:
+                    raise RuntimeError('Fusion could not close the exported document')
         finally:
-            if document.close(False) is False:
-                raise RuntimeError('Fusion could not close the exported document')
+            # Also when opening or exporting failed: linked designs may be open by now.
+            self.close_opened(before)
 
     def write(self, document, data_file, stem):
         design = adsk.fusion.Design.cast(document.products.itemByProductType('DesignProductType'))
@@ -83,3 +118,12 @@ class FusionAdapter:
         if not os.path.isfile(step):
             raise RuntimeError('Fusion reported a successful STEP export but wrote no file')
         return [archive, step]
+
+
+def document_id(document):
+    """The cloud file id of an open document, or None (unsaved, or not readable)."""
+    try:
+        data_file = document.dataFile
+        return None if data_file is None else str(data_file.id)
+    except Exception:
+        return None

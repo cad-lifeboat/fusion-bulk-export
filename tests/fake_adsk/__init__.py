@@ -17,10 +17,14 @@ class Collection:
 
 
 class File:
+    """A cloud file. references=True (or a number) gives it linked designs, which Fusion opens
+    together with it, like the components of an assembly."""
     def __init__(self, name='Part', identity='file-1', version=3, extension='f3d', references=False, design=True):
         self.name, self.id, self.versionNumber = name, identity, version
         self.fileExtension, self.dateModified = extension, 1700000000
-        self.childReferences = Collection(*([NS(id='linked-' + identity, name='Linked part')] if references else []))
+        linked = [File('Linked part', 'linked-' + identity + ('' if n == 0 else '-%d' % (n + 1)))
+                  for n in range(int(references))]
+        self.childReferences = Collection(*linked)
         self.references, self.design = references, design
         self.failures = 0
         self.calls = 0
@@ -57,9 +61,10 @@ class Manager:
 
 
 class Document:
-    def __init__(self, file):
+    def __init__(self, file, owner=None):
         self.dataFile = file
         self.closed = False
+        self.owner = owner  # the Documents collection it is listed in, once opened there
         self.documentReferences = Collection(*([NS()] if file.references else []))
         self.isModified = False
         body = NS(isSolid=True, isLightBulbOn=True)
@@ -75,16 +80,30 @@ class Document:
     def close(self, save):
         assert save is False
         self.closed = True
+        if self.owner is not None and self in self.owner.items:
+            self.owner.items.remove(self)
         return True
 
 
 class Documents(Collection):
+    """Application.documents. Opening a design also opens the designs it references (as Fusion
+    does for an assembly), unless one of them is open already; all are listed until closed."""
     def open(self, file, visible):
         assert visible is False
         file.calls += 1
-        document = Document(file)
+        document = Document(file, self)
         file.documents.append(document)
+        self.items.append(document)
+        for linked in collection_items(file.childReferences):
+            if not any(open_.dataFile is not None and open_.dataFile.id == linked.id for open_ in self.items):
+                reference = Document(linked, self)
+                linked.documents.append(reference)
+                self.items.append(reference)
         return document
+
+
+def collection_items(values):
+    return [values.item(index) for index in range(values.count)]
 
 
 def install():

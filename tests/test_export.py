@@ -264,6 +264,46 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(file.calls, 0)
         self.assertEqual(self.manifest['entries'][0]['status'], 'done')
 
+    def test_linked_documents_opened_by_an_assembly_are_closed(self):
+        user = fake.Document(fake.File('Mine', 'user-file'), self.app.documents)
+        self.app.documents.items.append(user)
+        assembly = fake.File('Assembly', 'assembly', references=2)
+        self.run_export(fake.data([assembly]))
+        linked = [assembly.childReferences.item(i) for i in range(2)]
+        self.assertEqual([len(f.documents) for f in linked], [1, 1])
+        self.assertTrue(all(doc.closed for f in [assembly] + linked for doc in f.documents))
+        self.assertFalse(user.closed)
+        self.assertEqual(self.app.documents.items, [user])
+        self.assertEqual(self.manifest['entries'][0]['status'], 'done')
+
+    def test_linked_document_the_user_had_open_stays_open(self):
+        assembly = fake.File('Assembly', 'assembly', references=2)
+        mine = fake.Document(assembly.childReferences.item(0), self.app.documents)
+        self.app.documents.items.append(mine)
+        self.run_export(fake.data([assembly]))
+        self.assertFalse(mine.closed)
+        self.assertEqual(self.app.documents.items, [mine])
+
+    def test_linked_documents_closed_when_export_fails_and_edited_ones_left(self):
+        assembly = fake.File('Assembly', 'assembly', references=2)
+        original = fake.Documents.open
+
+        def open_and_edit(documents, file, visible):
+            first = file.calls == 0
+            document = original(documents, file, visible)
+            if first:
+                documents.items[-1].isModified = True  # the second linked design shows edits
+            return document
+        with patch.object(fake.Manager, 'execute', return_value=False), \
+                patch.object(fake.Documents, 'open', open_and_edit):
+            self.run_export(fake.data([assembly]))
+        entry = self.manifest['entries'][0]
+        self.assertEqual(entry['status'], 'failed')
+        self.assertEqual(assembly.calls, 2)  # two attempts
+        self.assertEqual(len(self.app.documents.items), 1)
+        self.assertTrue(self.app.documents.items[0].isModified)
+        self.assertEqual(self.app.documents.items[0].dataFile.id, 'linked-assembly-2')
+
     def test_open_design_with_unsaved_changes_or_other_version_is_refused(self):
         for change, message in [(dict(isModified=True), 'unsaved changes'),
                                 (dict(dataFile=NS(id='file-1', versionNumber=2)), 'Another version')]:
