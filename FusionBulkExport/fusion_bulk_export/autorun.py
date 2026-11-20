@@ -17,7 +17,10 @@ Configuration (all paths absolute):
                                      already up to date and other files do not count); other
                                      files in the folders visited until then are saved, including
                                      the rest of the folder where the limit was reached
-   "hub_timeout_seconds": 600}       optional; wait for hubs after sign-in
+   "hub_timeout_seconds": 600,       optional; wait for hubs after sign-in
+   "memory_guard": false}            optional; false switches the memory guard off for this
+                                     job (it stops a run only when Fusion itself holds too
+                                     much memory for a while; see core.py)
 
 "diagnostics" writes diagnostics.json (Fusion version, the export-related API
 members and text commands this build offers) for bug reports; it reads no designs.
@@ -111,8 +114,11 @@ def check_settings(config):
     designs_only = config.get('designs_only', False)
     if not isinstance(designs_only, bool):
         raise ValueError('designs_only must be true or false')
+    memory_guard = config.get('memory_guard', True)
+    if not isinstance(memory_guard, bool):
+        raise ValueError('memory_guard must be true or false')
     # "drawings" (from launchers before drawing export was removed) is ignored.
-    return mode, selection, limit, timeout, not designs_only
+    return mode, selection, limit, timeout, not designs_only, memory_guard
 
 
 FIND_LOG_EVERY = 50  # folders listed between progress lines while a folder id is looked for
@@ -331,7 +337,7 @@ def run_autorun(app, config_path):
     started = time.monotonic()
     try:
         try:
-            output, mode, selection, limit, timeout, other_files = read_config(config_path)
+            output, mode, selection, limit, timeout, other_files, memory_guard = read_config(config_path)
         except Exception as error:
             output = getattr(error, 'output', None) or config_path.parent / 'autorun-output'
             raise
@@ -364,6 +370,7 @@ def run_autorun(app, config_path):
             log.result['counts'] = listing['counts']
         else:
             exporter = Exporter(output, FusionAdapter(app), error_callback=log.error)
+            exporter.memory_guard = memory_guard
 
             def progress(state):
                 if state['phase'] == 'design':  # counts only: names stay out of the log
@@ -387,7 +394,8 @@ def run_autorun(app, config_path):
                               discovery_errors=len(info['discovery_errors']),
                               bytes=sum(f['bytes'] for e in exporter.manifest['entries']
                                         if e['status'] == 'done' for f in e['files']),
-                              memory=info.get('memory'), gc=info.get('gc'))
+                              memory=info.get('memory'), gc=info.get('gc'), memory_rule=info.get('memory_rule'),
+                              memory_guard=info.get('memory_guard', 'on'), low_memory=bool(info.get('low_memory')))
             # For the launcher's --restart-fusion: it closes Fusion only when nothing is open in it
             # that someone could be working on.
             log.result.update(open_document_facts(app))

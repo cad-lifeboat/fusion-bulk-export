@@ -1,14 +1,21 @@
-"""How much memory Fusion uses, and how much the computer has left. Standard library only.
+"""How much memory Fusion uses, how much the computer has left, and whether the computer is
+under memory pressure. Standard library only.
 
 sample() returns {"rss": bytes this process holds in physical memory now (not its peak),
-"total": the computer's physical memory, "available": what can still be had without swapping},
-each None when it cannot be read. Nothing here ever raises: memory figures are for the report and
-the memory guard, and an export never fails for want of them.
+"total": the computer's physical memory, "available": what can still be had without swapping,
+"pressure_level": macOS's own memory pressure level (1 normal, 2 warning, 4 critical),
+"commit_total" and "commit_available": Windows' commit limit and what is left of it}, each None
+when it cannot be read (or does not exist on this system). Nothing here ever raises: memory
+figures are for the report and the memory guard, and an export never fails for want of them.
+Whether the figures mean "under pressure" is decided in core (system_pressure), next to the
+guard's other numbers.
 
 Windows: K32GetProcessMemoryInfo (kernel32; psapi's GetProcessMemoryInfo on old systems)
-for the working set, GlobalMemoryStatusEx for total and available. macOS: task_info with
+for the working set, GlobalMemoryStatusEx for total and available physical memory and for the
+commit limit (ullTotalPageFile) and what is left of it (ullAvailPageFile). macOS: task_info with
 MACH_TASK_BASIC_INFO for the resident size, sysctl hw.memsize for the total, host_statistics64
-(free + inactive pages: free includes speculative pages) for available. Linux (tests, scripts):
+(free + inactive pages: free includes speculative pages) for available, sysctl
+kern.memorystatus_vm_pressure_level for the pressure level. Linux (tests, scripts):
 /proc/self/status and /proc/meminfo.
 """
 import sys
@@ -17,10 +24,11 @@ GB = float(1 << 30)
 
 
 def sample(platform=None):
-    """{"rss", "total", "available"} in bytes, each None when unknown. Never raises."""
+    """{"rss", "total", "available", "pressure_level", "commit_total", "commit_available"}
+    (bytes, but the level), each None when unknown. Never raises."""
     platform = sys.platform if platform is None else platform
     reader = {'win32': _windows, 'darwin': _macos}.get(platform, _linux if platform.startswith('linux') else None)
-    result = dict(rss=None, total=None, available=None)
+    result = dict((key, None) for key in KEYS)
     if reader is None:
         return result
     try:
@@ -30,10 +38,15 @@ def sample(platform=None):
     for key in result:
         try:
             value = found.get(key)
-            result[key] = int(value) if value is not None and int(value) > 0 else None
+            # What is left of the commit limit may truly be 0; every other figure is positive.
+            least = 0 if key == 'commit_available' else 1
+            result[key] = int(value) if value is not None and int(value) >= least else None
         except Exception:
             result[key] = None
     return result
+
+
+KEYS = ('rss', 'total', 'available', 'pressure_level', 'commit_total', 'commit_available')
 
 
 def gigabytes(value):
@@ -78,10 +91,11 @@ def _windows():
         kernel.GlobalMemoryStatusEx.restype = wintypes.BOOL
         if not kernel.GlobalMemoryStatusEx(ctypes.byref(status)):
             return None
-        return status.ullTotalPhys, status.ullAvailPhys
+        return status.ullTotalPhys, status.ullAvailPhys, status.ullTotalPageFile, status.ullAvailPageFile
 
-    both = _guard(physical) or (None, None)
-    return dict(rss=_guard(rss), total=both[0], available=both[1])
+    found = _guard(physical) or (None, None, None, None)
+    return dict(rss=_guard(rss), total=found[0], available=found[1], commit_total=found[2],
+                commit_available=found[3])
 
 
 def windows_structures():
@@ -162,15 +176,22 @@ def _macos():
             return None
         return info.resident_size
 
-    def total():
-        value = ctypes.c_uint64(0)
+    def sysctl(name, value):
         size = ctypes.c_size_t(ctypes.sizeof(value))
         system.sysctlbyname.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
                                         ctypes.c_void_p, ctypes.c_size_t]
         system.sysctlbyname.restype = ctypes.c_int
-        if system.sysctlbyname(b'hw.memsize', ctypes.byref(value), ctypes.byref(size), None, 0) != 0:
+        if system.sysctlbyname(name, ctypes.byref(value), ctypes.byref(size), None, 0) != 0:
             return None
         return value.value
+
+    def total():
+        return sysctl(b'hw.memsize', ctypes.c_uint64(0))
+
+    def pressure_level():
+        # The kernel's own judgement (what Activity Monitor's memory pressure graph shows):
+        # 1 normal, 2 warning, 4 critical. An int; None where the name does not exist.
+        return sysctl(b'kern.memorystatus_vm_pressure_level', ctypes.c_int32(0))
 
     def available():
         system.mach_host_self.restype = natural
@@ -189,7 +210,8 @@ def _macos():
             return None
         return (stats.free_count + stats.inactive_count) * page.value
 
-    return dict(rss=_guard(rss), total=_guard(total), available=_guard(available))
+    return dict(rss=_guard(rss), total=_guard(total), available=_guard(available),
+                pressure_level=_guard(pressure_level))
 
 
 def _linux():
@@ -226,7 +248,7 @@ class Tracker:
             return None
         try:
             found = self.sampler() or {}
-            return dict(rss=found.get('rss'), total=found.get('total'), available=found.get('available'))
+            return dict((key, found.get(key)) for key in KEYS)
         except Exception:
             return None
 

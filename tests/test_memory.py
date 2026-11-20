@@ -129,17 +129,28 @@ GB = 1 << 30
 
 
 class Sampler:
-    """A fake memory.sample: rss grows by step per call; total and available as given."""
-    def __init__(self, rss=1 * GB, step=10 << 20, total=16 * GB, available=8 * GB, fall=0):
+    """A fake memory.sample: rss grows by step per call; the other figures as given."""
+    def __init__(self, rss=1 * GB, step=10 << 20, total=16 * GB, available=8 * GB, fall=0, **more):
         self.rss, self.step, self.total, self.available, self.fall = rss, step, total, available, fall
+        self.more = more  # pressure_level, commit_total, commit_available
         self.calls = 0
 
     def __call__(self):
         self.calls += 1
-        found = dict(rss=self.rss, total=self.total, available=self.available)
+        found = dict(rss=self.rss, total=self.total, available=self.available, **self.more)
         self.rss += self.step
         self.available -= self.fall
         return found
+
+
+class Clock:
+    """A fake time.monotonic for the guard: each reading is step seconds after the last."""
+    def __init__(self, step=10.0):
+        self.now, self.step = 0.0, step
+
+    def __call__(self):
+        self.now += self.step
+        return self.now
 
 
 class SamplingTests(unittest.TestCase):
@@ -151,11 +162,16 @@ class SamplingTests(unittest.TestCase):
         self.assertGreater(found['total'], found['available'])
 
     def test_sample_never_raises(self):
-        self.assertEqual(memory.sample('plan9'), dict(rss=None, total=None, available=None))
+        nothing = dict(rss=None, total=None, available=None, pressure_level=None, commit_total=None,
+                       commit_available=None)
+        self.assertEqual(memory.sample('plan9'), nothing)
         with patch.object(memory, '_windows', side_effect=OSError('no kernel32')):
-            self.assertEqual(memory.sample('win32'), dict(rss=None, total=None, available=None))
-        with patch.object(memory, '_macos', return_value=dict(rss=-1, total='x', available=5)):
-            self.assertEqual(memory.sample('darwin'), dict(rss=None, total=None, available=5))
+            self.assertEqual(memory.sample('win32'), nothing)
+        with patch.object(memory, '_macos', return_value=dict(rss=-1, total='x', available=5, pressure_level=2)):
+            self.assertEqual(memory.sample('darwin'), dict(nothing, available=5, pressure_level=2))
+        # Windows: no commit left is a real figure (0), not an unknown one.
+        with patch.object(memory, '_windows', return_value=dict(rss=5, commit_total=9, commit_available=0)):
+            self.assertEqual(memory.sample('win32'), dict(nothing, rss=5, commit_total=9, commit_available=0))
         # The real calls on another system fail inside and give None, never an error.
         self.assertIn(memory.sample('win32' if sys.platform != 'win32' else 'darwin')['rss'], (None,))
 
@@ -233,42 +249,155 @@ class RunMemoryTests(Base):
         self.assertEqual(line, 'Fusion memory: 1.4 GB (at most 1.6 GB during the last run, 0.8 GB at its start).')
 
 
-class GuardRuleTests(unittest.TestCase):
-    def test_available_memory_below_the_floor_stops(self):
-        rule = core.memory_rule
-        start = dict(rss=GB, total=16 * GB, available=8 * GB)
-        self.assertIsNone(rule(start, dict(rss=2 * GB, total=16 * GB, available=int(1.6 * GB))))
-        self.assertEqual(rule(start, dict(rss=2 * GB, total=16 * GB, available=int(1.4 * GB))), 'available')
-        # 8% of a large machine is above 1.5 GB: 64 GB -> 5.12 GB.
-        self.assertEqual(rule(start, dict(rss=2 * GB, total=64 * GB, available=5 * GB)), 'available')
-        self.assertIsNone(rule(start, dict(rss=2 * GB, total=64 * GB, available=6 * GB)))
-        # Total unknown: the 1.5 GB floor alone.
-        self.assertEqual(rule(start, dict(rss=None, total=None, available=GB)), 'available')
+MAC_8GB = 8 * GB
+WIN_32GB = 32 * GB
 
-    def test_growth_counts_only_when_fusion_holds_most_of_the_memory(self):
-        rule = core.memory_rule
-        start = dict(rss=GB, total=16 * GB, available=12 * GB)
-        self.assertEqual(rule(start, dict(rss=10 * GB, total=16 * GB, available=4 * GB)), 'growth')
-        self.assertIsNone(rule(start, dict(rss=9 * GB, total=16 * GB, available=4 * GB)))   # under 60%
-        self.assertIsNone(rule(start, dict(rss=6 * GB, total=8 * GB, available=2 * GB)))    # grew 5 GB only
-        self.assertIsNone(rule(dict(rss=None), dict(rss=12 * GB, total=16 * GB, available=None)))
-        self.assertIsNone(rule(start, dict(rss=12 * GB, total=None, available=None)))
+
+def guard_run(samples, start=None, step=10.0, enabled=True):
+    """Feed samples to a MemoryGuard, one check each step seconds apart: (the check number that
+    stopped, or None; the guard)."""
+    guard = core.MemoryGuard(enabled, Clock(step))
+    start = start or samples[0]
+    for number, sample in enumerate(samples, 1):
+        if guard.check(start, sample):
+            return number, guard
+    return None, guard
+
+
+class GuardRuleTests(unittest.TestCase):
+    """The three cases measured on real computers, then the rules around them."""
+
+    def test_measured_8gb_mac_with_an_idle_fusion_never_stops(self):
+        # Fusion 0.7-1.1 GB, available (free + inactive) 1.4-2.1 GB, dipping while a design opens.
+        samples = []
+        for n in range(300):
+            rss = int((0.7 + 0.4 * (n % 5) / 4) * GB)
+            available = int((1.4 if n % 3 == 0 else 2.1) * GB)
+            samples.append(dict(rss=rss, total=MAC_8GB, available=available, pressure_level=1))
+        self.assertEqual(guard_run(samples)[0], None)
+        # Even if macOS said "warning" or "critical" throughout: Fusion is small, a restart cannot help.
+        for level in (2, 4):
+            stopped, guard = guard_run([dict(sample, pressure_level=level) for sample in samples])
+            self.assertIsNone(stopped)
+            self.assertTrue(guard.low_memory)  # the report says so instead
+        for sample in samples:
+            self.assertIsNone(core.memory_condition(samples[0], sample))
+
+    def test_measured_32gb_windows_with_a_small_fusion_and_busy_other_programs_never_stops(self):
+        # Fusion 1.4 GB; other programs hold the memory: 1.35 GB available. Commit short too
+        # (the worst case): the computer is under pressure, but restarting Fusion would not help.
+        sample = dict(rss=int(1.4 * GB), total=WIN_32GB, available=int(1.35 * GB), commit_total=40 * GB,
+                      commit_available=int(0.5 * GB))
+        self.assertTrue(core.system_pressure(sample))
+        self.assertIsNone(core.memory_condition(dict(sample, rss=int(1.3 * GB)), sample))
+        stopped, guard = guard_run([sample] * 200, start=dict(sample, rss=int(1.3 * GB)))
+        self.assertIsNone(stopped)
+        self.assertTrue(guard.low_memory)
+
+    def test_measured_32gb_windows_with_fusion_at_10_9_gb_may_stop_when_it_lasts(self):
+        # Fusion grew from 1.46 GB to 10.9 GB, 1.5 GB available, Windows short of commit.
+        start = dict(rss=int(1.458 * GB), total=WIN_32GB, available=int(4.4 * GB), commit_total=40 * GB,
+                     commit_available=12 * GB)
+        high = dict(rss=int(10.9 * GB), total=WIN_32GB, available=int(1.5 * GB), commit_total=40 * GB,
+                    commit_available=int(1.2 * GB))
+        self.assertEqual(core.memory_condition(start, high), 'growth')
+        calm = [dict(start, rss=int((1.5 + 0.3 * n) * GB)) for n in range(30)]
+        stopped, guard = guard_run(calm + [high] * 10, start=start)
+        self.assertEqual(stopped, 30 + core.MEMORY_SUSTAIN_CHECKS)
+        self.assertFalse(guard.low_memory)  # Fusion is the cause: no "close other programs" note
+        # Plenty of commit left: Windows can page it out, nothing is about to fail. No stop.
+        roomy = dict(high, commit_available=20 * GB)
+        self.assertIsNone(core.memory_condition(start, roomy))
+        self.assertIsNone(guard_run(calm + [roomy] * 50, start=start)[0])
+
+    def test_one_low_sample_never_stops_only_a_lasting_one(self):
+        start = dict(rss=GB, total=16 * GB)
+        big = dict(rss=13 * GB, total=16 * GB)   # over 70% of 16 GB
+        small = dict(rss=GB, total=16 * GB)
+        # Every fifth check high, for a long time: never five in a row.
+        self.assertIsNone(guard_run([big if n % 5 == 0 else small for n in range(400)], start)[0])
+        # Five in a row, but within 8 s (2 s apart): not yet lasting. Then it lasts 30 s: stop.
+        samples = [small] * 30 + [big] * 20
+        stopped, _ = guard_run(samples, start, step=2.0)
+        self.assertEqual(stopped, 30 + 16)  # checks 31..46 span 30 s at 2 s apart
+        stopped, _ = guard_run(samples, start, step=10.0)
+        self.assertEqual(stopped, 30 + core.MEMORY_SUSTAIN_CHECKS)
+
+    def test_never_in_the_first_25_items(self):
+        big = dict(rss=7 * GB, total=MAC_8GB)  # Fusion alone holds 7 of 8 GB from the first item
+        stopped, _ = guard_run([big] * 100, dict(rss=GB, total=MAC_8GB), step=60.0)
+        self.assertEqual(stopped, core.MEMORY_MIN_ITEMS)
+        self.assertEqual(core.MEMORY_MIN_ITEMS, 25)
+
+    def test_fusion_itself_over_70_percent_stops_without_pressure(self):
+        start = dict(rss=GB, total=MAC_8GB)
+        self.assertEqual(core.memory_condition(start, dict(rss=6 * GB, total=MAC_8GB, pressure_level=1)), 'fusion')
+        self.assertIsNone(core.memory_condition(start, dict(rss=5 * GB, total=MAC_8GB, pressure_level=1)))
+        # Grown by over 4 GB: only with pressure.
+        self.assertEqual(core.memory_condition(start, dict(rss=int(5.5 * GB), total=MAC_8GB, pressure_level=2)),
+                         'growth')
+        self.assertIsNone(core.memory_condition(start, dict(rss=int(4.9 * GB), total=MAC_8GB, pressure_level=4)))
+
+    def test_a_small_fusion_never_stops_even_on_a_small_computer(self):
+        tiny = 2 * GB
+        sample = dict(rss=int(1.9 * GB), total=tiny, pressure_level=4)
+        self.assertIsNone(core.memory_condition(dict(rss=GB), sample))
+
+    def test_pressure_signals(self):
+        pressure = core.system_pressure
+        self.assertFalse(pressure(dict(pressure_level=1)))
+        self.assertTrue(pressure(dict(pressure_level=2)))
+        self.assertTrue(pressure(dict(pressure_level=4)))
+        # macOS free + inactive is not a pressure signal: only the kernel's level counts.
+        self.assertIsNone(pressure(dict(total=MAC_8GB, available=100 << 20)))
+        win = dict(total=WIN_32GB, available=GB, commit_total=40 * GB)
+        self.assertTrue(pressure(dict(win, commit_available=int(1.9 * GB))))     # under 5% of 40 GB
+        self.assertFalse(pressure(dict(win, commit_available=int(2.1 * GB))))
+        self.assertFalse(pressure(dict(win, available=4 * GB, commit_available=GB // 2)))  # RAM left
+        self.assertTrue(pressure(dict(total=WIN_32GB, available=GB, commit_total=10 * GB,
+                                      commit_available=900 << 20)))             # under 1 GB
+        self.assertIsNone(pressure({}))
+        self.assertIsNone(pressure(None))
 
     def test_nothing_known_means_no_guard(self):
-        self.assertIsNone(core.memory_rule(None, None))
-        self.assertIsNone(core.memory_rule({}, dict(rss=None, total=None, available=None)))
+        self.assertIsNone(core.memory_condition(None, None))
+        self.assertIsNone(core.memory_condition({}, dict(rss=None, total=None, available=None)))
+        self.assertIsNone(guard_run([dict(rss=None)] * 100)[0])
+
+    def test_the_kill_switch(self):
+        enabled = core.memory_guard_enabled
+        self.assertTrue(enabled({}, {}))
+        for value in ('off', 'OFF', '0', 'false', 'no'):
+            self.assertFalse(enabled({core.MEMORY_GUARD_ENV: value}, {}))
+        self.assertTrue(enabled({core.MEMORY_GUARD_ENV: 'on'}, {}))
+        self.assertFalse(enabled({}, dict(memory_guard=False)))
+        self.assertTrue(enabled({}, dict(memory_guard=True)))
+        with tempfile.TemporaryDirectory() as folder:
+            stored = Path(folder) / 'settings.json'
+            stored.write_text(json.dumps(dict(memory_guard=False)), encoding='utf-8')
+            with patch.dict('os.environ', {'FUSION_BULK_EXPORT_SETTINGS': str(stored)}):
+                self.assertFalse(enabled({}))
+        big = dict(rss=7 * GB, total=MAC_8GB)
+        self.assertIsNone(guard_run([big] * 100, enabled=False)[0])
 
     def test_the_test_limit_comes_from_the_environment_only_when_set(self):
         self.assertIsNone(core.memory_test_limit({}))
         self.assertIsNone(core.memory_test_limit({core.MEMORY_TEST_ENV: 'lots'}))
         self.assertIsNone(core.memory_test_limit({core.MEMORY_TEST_ENV: '0'}))
         self.assertEqual(core.memory_test_limit({core.MEMORY_TEST_ENV: '1500'}), 1500 << 20)
-        self.assertEqual(core.memory_rule({}, dict(rss=1600 << 20), 1500 << 20), 'test')
+        guard = core.MemoryGuard(True, Clock(), 1500 << 20)
+        self.assertEqual(guard.check({}, dict(rss=1600 << 20)), 'test')  # at once: it is for testing
 
 
 class GuardRunTests(Base):
-    def files(self, count=6):
+    def files(self, count=30):
         return [fake.File('Design %d' % n, 'design-%d' % n) for n in range(count)]
+
+    def exporter(self, sampler):
+        exporter = Exporter(self.root, self.adapter)
+        exporter.memory_sampler = sampler
+        exporter.memory_clock = Clock(10.0)
+        return exporter
 
     def test_the_run_stops_cleanly_between_items_and_the_next_run_carries_on(self):
         files = self.files()
@@ -280,16 +409,15 @@ class GuardRunTests(Base):
                 yield
             finally:
                 released.append(True)
-        exporter = Exporter(self.root, self.adapter)
-        # Available memory: 5 GB at the start, then 1 GB less after each item: 4, 3, 2, 1 (stop).
-        exporter.memory_sampler = Sampler(total=16 * GB, available=5 * GB, fall=GB)
+        # Fusion holds 6 of 8 GB (over 70%) from the first item: the guard waits for item 25.
+        exporter = self.exporter(Sampler(rss=6 * GB, step=0, total=MAC_8GB, available=GB))
         with patch.object(core, 'keep_awake', awake):
             counts = exporter.run(fake.data(files))
         info = exporter.run_info
         self.assertEqual((info['stopped_code'], info['stopped_reason']), ('memory', 'Fusion is using a lot of memory'))
-        self.assertEqual(info['memory_rule'], 'available')
+        self.assertEqual(info['memory_rule'], 'fusion')
         self.assertFalse(info['cancelled'])
-        self.assertEqual(counts['exported'], 4)
+        self.assertEqual(counts['exported'], 25)
         self.assertEqual(released, [True])
         self.assertFalse((self.root / 'export.lock').exists())
         self.assertFalse((self.root / 'manifest.journal').exists() and
@@ -297,46 +425,75 @@ class GuardRunTests(Base):
         saved = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(sum(1 for e in saved['entries'] if e['status'] == 'done'), counts['exported'])
         self.assertEqual(saved['runs'][-1]['stopped_code'], 'memory')
-        self.assertIn('stopped: memory (available rule)', (self.root / 'export.log').read_text(encoding='utf-8'))
+        self.assertIn('stopped: memory (fusion rule, 25 checks in a row)',
+                      (self.root / 'export.log').read_text(encoding='utf-8'))
         data = report.summary(counts, info, exporter.manifest, self.root)
         self.assertEqual(data['headline'], 'Stopped: Fusion is using a lot of memory')
         self.assertIn('Close Fusion, open it again and run the export on the same folder. '
                       'It carries on where it stopped.', data['notes'])
+        self.assertNotIn(core.LOW_MEMORY_NOTE, data['notes'])
         page = report.render_html(exporter.manifest, info, counts)
         self.assertIn('The run stopped itself: Fusion is using a lot of memory. Close Fusion, open it again', page)
         # After restarting Fusion: memory is back, the run carries on and finishes.
-        exporter = Exporter(self.root, self.adapter)
-        exporter.memory_sampler = Sampler()
+        exporter = self.exporter(Sampler())
         later = exporter.run(fake.data(files))
-        self.assertEqual(later['exported'] + counts['exported'], 6)
+        self.assertEqual(later['exported'] + counts['exported'], 30)
         self.assertIsNone(exporter.run_info['stopped_code'])
 
-    def test_it_stops_after_the_item_that_crossed_the_line(self):
-        exporter = Exporter(self.root, self.adapter)
-        exporter.memory_sampler = Sampler(total=16 * GB, available=int(3.2 * GB), fall=GB)
-        counts = exporter.run(fake.data(self.files()))
-        # Samples: 3.2 at the start, then 2.2 (go on), 1.2 (stop) after the second design.
-        self.assertEqual(counts['exported'], 2)
+    def test_measured_8gb_mac_exports_everything(self):
+        # The 8 GB Mac's figures that stopped every launch of the earlier guard: now no stop.
+        exporter = self.exporter(Sampler(rss=int(0.7 * GB), step=5 << 20, total=MAC_8GB, available=int(1.45 * GB),
+                                         pressure_level=1))
+        counts = exporter.run(fake.data(self.files(59)))
+        self.assertEqual(counts['exported'], 59)
+        self.assertIsNone(exporter.run_info['stopped_code'])
+        self.assertNotIn('low_memory', exporter.run_info)
 
-    def test_growth_rule_stops_a_run(self):
-        exporter = Exporter(self.root, self.adapter)
-        exporter.memory_sampler = Sampler(rss=GB, step=4 * GB, total=16 * GB, available=12 * GB)
+    def test_other_programs_using_the_memory_get_a_note_not_a_stop(self):
+        exporter = self.exporter(Sampler(rss=int(1.4 * GB), step=0, total=WIN_32GB, available=int(1.35 * GB),
+                                         commit_total=40 * GB, commit_available=GB // 2))
+        counts = exporter.run(fake.data(self.files(40)))
+        info = exporter.run_info
+        self.assertEqual(counts['exported'], 40)
+        self.assertIsNone(info['stopped_code'])
+        self.assertTrue(info['low_memory'])
+        data = report.summary(counts, info, exporter.manifest, self.root)
+        self.assertIn('This computer was low on memory during the export; closing other programs may speed it up.',
+                      data['notes'])
+        self.assertIn(core.LOW_MEMORY_NOTE, report.render_html(exporter.manifest, info, counts))
+
+    def test_growth_with_pressure_stops_a_run(self):
+        # 1 GB at the start, +0.25 GB per item; macOS says "warning" all along. Grown over 4 GB
+        # from item 17 (5.25 GB; 7 GB at item 24, still under 70% of 16 GB), so the rule holds
+        # from there; the guard waits for item 25.
+        exporter = self.exporter(Sampler(rss=GB, step=GB // 4, total=16 * GB, available=GB, pressure_level=2))
         counts = exporter.run(fake.data(self.files()))
-        # rss: 1 GB at the start, then 5, 9 (grew 8 GB but under 9.6 GB), 13: stop.
-        self.assertEqual(counts['exported'], 3)
+        self.assertEqual(counts['exported'], 25)
         self.assertEqual(exporter.run_info['memory_rule'], 'growth')
+
+    def test_switched_off_it_never_stops(self):
+        exporter = self.exporter(Sampler(rss=7 * GB, step=0, total=MAC_8GB))
+        with patch.dict('os.environ', {core.MEMORY_GUARD_ENV: 'off'}):
+            counts = exporter.run(fake.data(self.files()))
+        self.assertEqual(counts['exported'], 30)
+        self.assertEqual(exporter.run_info['memory_guard'], 'off')
+        self.assertIn('memory guard: off', (self.root / 'export.log').read_text(encoding='utf-8'))
+        exporter = self.exporter(Sampler(rss=7 * GB, step=0, total=MAC_8GB))
+        exporter.memory_guard = False  # a job's "memory_guard": false
+        exporter.run(fake.data(self.files(31)))
+        self.assertIsNone(exporter.run_info['stopped_code'])
 
     def test_no_sampler_no_guard(self):
         exporter = Exporter(self.root, self.adapter)
         counts = exporter.run(fake.data(self.files()))
-        self.assertEqual(counts['exported'], 6)
+        self.assertEqual(counts['exported'], 30)
         self.assertIsNone(exporter.run_info['stopped_code'])
 
     def test_up_to_date_items_are_not_sampled(self):
         files = self.files(3)
         Exporter(self.root, self.adapter).run(fake.data(files))
-        exporter = Exporter(self.root, self.adapter)
-        exporter.memory_sampler = sampler = Sampler(available=GB)  # would stop at once
+        exporter = self.exporter(Sampler(rss=7 * GB, total=MAC_8GB))
+        sampler = exporter.memory_sampler
         counts = exporter.run(fake.data(files))
         self.assertEqual((counts['up_to_date'], sampler.calls), (3, 1))
         self.assertIsNone(exporter.run_info['stopped_code'])
@@ -374,6 +531,44 @@ class LauncherMemoryTests(unittest.TestCase):
         self.assertEqual(stream.getvalue().count(launcher.MEMORY_LINE), 1)
         self.assertIn('Stopped by itself (memory): Fusion is using a lot of memory.', stream.getvalue())
         self.assertIn('75 the export stopped itself because', launcher.__doc__.replace('\n', ' '))
+
+
+class SwitchTests(unittest.TestCase):
+    """The kill switch reaches the add-in from the launcher's environment, through the job."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def test_the_launcher_passes_the_switch_in_the_job(self):
+        installed, out = self.root / 'AddIns' / 'FusionBulkExport', self.root / 'out'
+        installed.mkdir(parents=True)
+        with patch.dict('os.environ', {launcher.MEMORY_GUARD_ENV: 'off'}), \
+                patch.object(launcher, 'update_addin', lambda installed: False):
+            launcher.install(installed, out, 'export')
+        self.assertIs(json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))['memory_guard'], False)
+        with patch.dict('os.environ', {launcher.MEMORY_GUARD_ENV: 'on'}), \
+                patch.object(launcher, 'update_addin', lambda installed: False):
+            launcher.install(installed, out, 'export')
+        self.assertNotIn('memory_guard', json.loads((installed / 'autorun.json').read_text(encoding='utf-8')))
+        self.assertEqual(launcher.MEMORY_GUARD_ENV, core.MEMORY_GUARD_ENV)
+        self.assertEqual(launcher.LOW_MEMORY_NOTE, core.LOW_MEMORY_NOTE)
+
+    def test_the_add_in_reads_the_switch_from_the_job(self):
+        from fusion_bulk_export import autorun
+        self.assertIs(autorun.check_settings(dict(memory_guard=False))[-1], False)
+        self.assertIs(autorun.check_settings({})[-1], True)
+        with self.assertRaises(ValueError):
+            autorun.check_settings(dict(memory_guard='off'))
+
+    def test_the_launcher_says_when_the_computer_was_low_on_memory(self):
+        out = self.root / 'out'
+        out.mkdir()
+        (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts=dict(exported=3),
+                                                                 low_memory=True)))
+        self.assertIn('Note: ' + core.LOW_MEMORY_NOTE, launcher.summary(out))
+        (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts=dict(exported=3))))
+        self.assertFalse([line for line in launcher.summary(out) if 'low on memory' in line])
 
 
 if __name__ == '__main__':

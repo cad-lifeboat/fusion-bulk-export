@@ -49,42 +49,150 @@ SAVE_EVERY_SECONDS = 30     # ...or this long, whichever comes first (the journa
 COLLECT_AFTER_ITEM = True
 FULL_COLLECT_EVERY = 50
 
-# The memory guard. Fusion's memory grows over a long run (by gigabytes over thousands of designs,
-# in Fusion itself), and a Fusion that runs out of memory dies with whatever it had open. Between
-# items the run stops cleanly, as if cancelled, with stopped_code 'memory', when either
-#   (a) the computer's available physical memory is below max(MEMORY_FLOOR, MEMORY_FLOOR_SHARE of
-#       its total): the computer is about to swap hard or kill something; or
-#   (b) Fusion has grown by more than MEMORY_GROWTH since the run started and holds more than
-#       MEMORY_PROCESS_SHARE of the total: it is the one using it up.
-# A rule whose figures cannot be read is not applied; with no figures at all the guard is off.
-# Restarting Fusion gives the memory back; the next run carries on where this one stopped.
-MEMORY_FLOOR = 1536 << 20          # 1.5 GB
-MEMORY_FLOOR_SHARE = 0.08
-MEMORY_GROWTH = 6 << 30            # 6 GB
-MEMORY_PROCESS_SHARE = 0.60
+# The memory guard. Fusion's memory can grow over a long run (by gigabytes over thousands of
+# designs, in Fusion itself), and a Fusion that runs out of memory dies with whatever it had open.
+# Between items the run then stops cleanly, as if cancelled, with stopped_code 'memory', and the
+# next run (after restarting Fusion) carries on where it stopped. A guard that stops a healthy run
+# is worse than none, so it stops only when restarting Fusion would actually help, and only when
+# that is so for a while, never on one sample:
+#   'fusion': Fusion itself holds more than MEMORY_FUSION_SHARE of the computer's physical memory; or
+#   'growth': Fusion has grown by more than MEMORY_GROWTH since the run started AND the computer is
+#             under real memory pressure (system_pressure: the operating system's own signal, not
+#             how little memory is free, which other programs decide as much as Fusion);
+# and never while Fusion holds less than MEMORY_FUSION_MIN, never before MEMORY_MIN_ITEMS items of
+# the run, and only once the rule has held on MEMORY_SUSTAIN_CHECKS checks in a row (one check
+# after each item Fusion worked on) spanning at least MEMORY_SUSTAIN_SECONDS.
+# When the computer is under pressure for as long but Fusion is not the cause, the run goes on and
+# the report says so (LOW_MEMORY_NOTE): closing other programs helps, restarting Fusion would not.
+# A rule whose figures cannot be read is not applied; with no figures at all the guard is off. It
+# can be switched off (MEMORY_GUARD_ENV, or "memory_guard": false in settings.json or the job).
+#
+# The numbers, against what real runs measured:
+#   8 GB Mac: Fusion 0.7-1.1 GB, "available" (free + inactive pages) 1.4-2.1 GB, dipping for ~2 s
+#     while a design opens. Normal, nothing wrong: must not stop (Fusion is under MEMORY_FUSION_MIN
+#     and far under 70% of 8 GB; a dip is one sample, not a sustained condition). The earlier rule
+#     (available under 1.5 GB) stopped every launch after 1-11 designs.
+#   32 GB Windows, Fusion 1.4 GB, other programs holding most of the memory (available 1.35 GB):
+#     must not stop, since restarting Fusion would not help (Fusion under MEMORY_FUSION_MIN); the
+#     report gets LOW_MEMORY_NOTE when the pressure lasts.
+#   32 GB Windows, Fusion grown from 1.5 GB to 10.9 GB with 1.5 GB available: legitimate; it may
+#     stop once the growth rule holds over MEMORY_SUSTAIN_CHECKS checks and MEMORY_SUSTAIN_SECONDS
+#     with Windows short of commit (10.9 GB is 34% of 32 GB, so the 'fusion' rule alone does not).
+MEMORY_FUSION_SHARE = 0.70          # Fusion alone over 70% of physical memory: it is the problem
+MEMORY_GROWTH = 4 << 30             # 4 GB grown in one run (a slow leak's 1.4 MB/design is ~3000 designs)
+MEMORY_FUSION_MIN = 2 << 30         # under 2 GB, restarting Fusion cannot give back enough to matter
+MEMORY_MIN_ITEMS = 25               # items Fusion worked on in this run before the guard may stop it
+MEMORY_SUSTAIN_CHECKS = 5           # the rule must hold on this many checks in a row...
+MEMORY_SUSTAIN_SECONDS = 30         # ...spanning at least this long (a design's dip lasts ~2 s)
+# Under pressure: on macOS the kernel's pressure level at warning (2) or critical (4). On Windows,
+# what is left of the commit limit (physical memory plus page file: when it runs out, programs
+# fail to get memory and can die) is under MEMORY_COMMIT_FLOOR or MEMORY_COMMIT_SHARE of the limit,
+# while available physical memory is under MEMORY_PHYSICAL_FLOOR or MEMORY_PHYSICAL_SHARE of it.
+MEMORY_PRESSURE_LEVEL = 2
+MEMORY_COMMIT_FLOOR = 1 << 30       # 1 GB
+MEMORY_COMMIT_SHARE = 0.05
+MEMORY_PHYSICAL_FLOOR = 1 << 30     # 1 GB
+MEMORY_PHYSICAL_SHARE = 0.10
 MEMORY_REASON = 'Fusion is using a lot of memory'
+LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing other programs may speed it up.'
+# The kill switch: "off" (or 0, false, no) in Fusion's environment switches the guard off. The
+# command-line launcher passes it on in the job, so it works from the launcher's environment too.
+MEMORY_GUARD_ENV = 'FUSION_BULK_EXPORT_MEMORY_GUARD'
 # For testing on a real Fusion only: with this set (a number of MB) in Fusion's environment, the
-# guard also stops once Fusion holds more than that.
+# guard also stops at once (no minimum, no waiting) once Fusion holds more than that.
 MEMORY_TEST_ENV = 'FUSION_BULK_EXPORT_TEST_MEMORY_MB'
 
 
-def memory_rule(start, last, test_limit=None):
-    """Which memory-guard rule says stop now ('available', 'growth' or 'test'), or None. start
-    and last: memory samples ({"rss", "total", "available"}, any value None when unknown)."""
+def system_pressure(sample):
+    """Whether the computer is under real memory pressure now (True or False), from the operating
+    system's own figures; None when this sample does not say (no rule applies then)."""
+    sample = sample or {}
+    level = sample.get('pressure_level')
+    if level is not None:
+        return level >= MEMORY_PRESSURE_LEVEL
+    limit, left = sample.get('commit_total'), sample.get('commit_available')
+    total, available = sample.get('total'), sample.get('available')
+    if limit is not None and left is not None and available is not None:
+        short_of_commit = left < max(MEMORY_COMMIT_FLOOR, MEMORY_COMMIT_SHARE * limit)
+        physical_floor = MEMORY_PHYSICAL_FLOOR if total is None else max(MEMORY_PHYSICAL_FLOOR,
+                                                                          MEMORY_PHYSICAL_SHARE * total)
+        return short_of_commit and available < physical_floor
+    return None
+
+
+def memory_condition(start, last):
+    """The guard rule that holds for this one sample ('fusion' or 'growth'), or None. start and
+    last: memory samples (memory.sample()'s keys, any value None when unknown). Whether to stop
+    also needs the rule to last: MemoryGuard."""
     if not last:
         return None
-    rss, total, available = last.get('rss'), last.get('total'), last.get('available')
-    if available is not None:
-        floor = MEMORY_FLOOR if total is None else max(MEMORY_FLOOR, MEMORY_FLOOR_SHARE * total)
-        if available < floor:
-            return 'available'
+    rss, total = last.get('rss'), last.get('total')
+    if rss is None or rss < MEMORY_FUSION_MIN:
+        return None
+    if total is not None and rss > MEMORY_FUSION_SHARE * total:
+        return 'fusion'
     begun = (start or {}).get('rss')
-    if rss is not None and begun is not None and total is not None:
-        if rss - begun > MEMORY_GROWTH and rss > MEMORY_PROCESS_SHARE * total:
-            return 'growth'
-    if rss is not None and test_limit is not None and rss > test_limit:
-        return 'test'
+    if begun is not None and rss - begun > MEMORY_GROWTH and system_pressure(last):
+        return 'growth'
     return None
+
+
+class Streak:
+    """Checks in a row on which something held: how many, and since when."""
+    def __init__(self):
+        self.what, self.count, self.since = None, 0, None
+
+    def add(self, what, now):
+        """Count this check (what: the thing that held, None for nothing)."""
+        if what is None or what != self.what:
+            self.what, self.count, self.since = what, 0, now
+        if what is not None:
+            self.count += 1
+
+    def lasting(self, now):
+        return (self.what is not None and self.count >= MEMORY_SUSTAIN_CHECKS
+                and now - self.since >= MEMORY_SUSTAIN_SECONDS)
+
+
+class MemoryGuard:
+    """Decides, check by check (one after each item Fusion worked on), whether the run stops for
+    memory; also whether the computer was under lasting pressure Fusion did not cause (low_memory).
+    clock: seconds (time.monotonic; tests pass a fake)."""
+    def __init__(self, enabled=True, clock=time.monotonic, test_limit=None):
+        self.enabled, self.clock, self.test_limit = enabled, clock, test_limit
+        self.items = 0
+        self.rule = Streak()        # a stop rule holding check after check
+        self.pressure = Streak()    # system pressure check after check
+        self.low_memory = False
+
+    def check(self, start, sample):
+        """The rule that stops the run now ('fusion', 'growth' or 'test'), or None."""
+        now = self.clock()
+        self.items += 1
+        sample = sample or {}
+        rss = sample.get('rss')
+        if self.enabled and self.test_limit is not None and rss is not None and rss > self.test_limit:
+            return 'test'
+        rule = memory_condition(start, sample)
+        self.rule.add(None if rule is None else 'stop', now)  # either rule, one after the other, counts
+        self.pressure.add(True if system_pressure(sample) else None, now)
+        if rule is None and self.pressure.lasting(now):
+            self.low_memory = True  # pressure that restarting Fusion would not cure
+        if not self.enabled or self.items < MEMORY_MIN_ITEMS:
+            return None
+        return rule if self.rule.lasting(now) else None
+
+
+def memory_guard_enabled(environ=None, settings=None):
+    """False when the guard is switched off: MEMORY_GUARD_ENV is off/0/false/no, or settings.json
+    has "memory_guard": false."""
+    value = (os.environ if environ is None else environ).get(MEMORY_GUARD_ENV)
+    if value is not None and value.strip().lower() in ('off', '0', 'false', 'no'):
+        return False
+    if settings is None:
+        from . import settings as stored
+        settings = stored.load()
+    return settings.get('memory_guard') is not False
 
 
 def memory_test_limit(environ=None):
@@ -565,6 +673,10 @@ class Exporter:
         self.other_files = True
         # Fusion's memory, sampled between items (memory.sample inside Fusion; tests set a fake).
         self.memory_sampler = memory.sample if inside_fusion() else None
+        # False switches the memory guard off for this exporter (a job's "memory_guard": false);
+        # MEMORY_GUARD_ENV and settings.json can switch it off too (memory_guard_enabled).
+        self.memory_guard = True
+        self.memory_clock = time.monotonic
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
         if self.upgraded:
             self.run_info['upgraded_schema'] = 1
@@ -896,7 +1008,11 @@ class Exporter:
             tracker = memory.Tracker(self.memory_sampler, self.run_info.setdefault('memory', {}), self.log)
             if tracker.begin() is None:
                 self.run_info.pop('memory', None)  # nothing could be sampled: the guard is off
-            test_limit = memory_test_limit()
+            guard = MemoryGuard(bool(self.memory_guard) and memory_guard_enabled(), self.memory_clock,
+                                memory_test_limit())
+            if tracker.active and not guard.enabled:
+                self.run_info['memory_guard'] = 'off'
+                self.log('memory guard: off')
             finishing = None  # the folder in which the limit was reached: only its other files go on
             with keep_awake():
                 for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
@@ -956,14 +1072,17 @@ class Exporter:
                             self.run_info.update(stopped_reason=problem.reason, stopped_code=problem.code)
                             break
                         failing = []
-                    rule = memory_rule(tracker.start, sample, test_limit) if sample is not None else None
+                    rule = guard.check(tracker.start, sample) if sample is not None else None
+                    if guard.low_memory and not self.run_info.get('low_memory'):
+                        self.run_info['low_memory'] = True
+                        self.log('low memory: the computer is under memory pressure, Fusion is not the cause')
                     if rule is not None:
                         # Between items, like a Cancel: everything so far is saved; a run after
                         # restarting Fusion carries on from here.
                         stopping = Trouble('memory', MEMORY_REASON)
                         self.run_info.update(stopped_reason=MEMORY_REASON, stopped_code='memory', memory_rule=rule)
-                        self.log('stopped: memory (%s rule), Fusion %s MB, available %s MB' % (
-                            rule, '?' if sample.get('rss') is None else sample['rss'] >> 20,
+                        self.log('stopped: memory (%s rule, %d checks in a row), Fusion %s MB, available %s MB' % (
+                            rule, guard.rule.count, '?' if sample.get('rss') is None else sample['rss'] >> 20,
                             '?' if sample.get('available') is None else sample['available'] >> 20))
                         break
                     if limit is not None and counts['exported'] >= limit and finishing is None:

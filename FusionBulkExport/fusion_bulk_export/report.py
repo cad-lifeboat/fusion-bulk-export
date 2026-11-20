@@ -13,7 +13,7 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-from .core import DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE
+from .core import DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE
 from .names import long_path
 from .words import form, plural
 
@@ -237,6 +237,8 @@ def render_html(manifest, run_info, counts):
     memory = memory_line(run_info)
     if memory:
         out.append('<div class="muted">%s</div>' % esc(memory))
+    if low_memory(run_info):
+        out.append('<p class="muted">Note: %s</p>' % esc(LOW_MEMORY_NOTE))
     long_paths = long_path_count(manifest)
     if long_paths:
         out.append('<p class="stop">%s</p>' % esc(long_paths_text(long_paths)))
@@ -267,6 +269,13 @@ def slow_html(rows):
                    % (esc(row['name']), esc(where), esc(duration_text(row['slow_seconds']))))
     out.append('</ul>')
     return out
+
+
+def low_memory(run_info):
+    """Whether to say the computer was low on memory: lasting pressure Fusion did not cause, in a
+    run that did not stop for memory (whose own note says what to do)."""
+    run_info = run_info or {}
+    return bool(run_info.get('low_memory')) and run_info.get('stopped_code') != 'memory'
 
 
 def memory_line(run_info):
@@ -416,6 +425,8 @@ def summary(counts, run_info, manifest, output, page=None):
     if run_info.get('low_space'):
         free = run_info.get('free_bytes')
         notes.append('Low disk space: %s free.' % ('%d MB' % (free >> 20) if free is not None else 'little'))
+    if low_memory(run_info):
+        notes.append(LOW_MEMORY_NOTE)
     long_paths = long_path_count(manifest)
     if long_paths:
         notes.append(long_paths_text(long_paths))

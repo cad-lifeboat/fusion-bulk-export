@@ -26,7 +26,7 @@ command says so and keeps waiting. If Fusion is closed it is opened. The running
 and its toolbar button stays available. A job sent while an export
 from the button is running is refused with a "busy" message: run the command again later.
 Environment: FUSION_APP (app name, .app or .exe path), AUTORUN_TIMEOUT_SECONDS
-(default 86400).
+(default 86400), FUSION_BULK_EXPORT_MEMORY_GUARD=off (switches the memory guard off for the job).
 
 Exit status: 0 done; 1 the job failed or was refused; 75 the export stopped itself because
 Fusion was using a lot of memory (restart Fusion and run the same command again: it carries on);
@@ -300,7 +300,22 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['limit'] = limit
     if designs_only:
         config['designs_only'] = True
+    if not memory_guard_wanted():
+        config['memory_guard'] = False
     (installed / 'autorun.json').write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
+
+
+MEMORY_GUARD_ENV = 'FUSION_BULK_EXPORT_MEMORY_GUARD'  # the add-in's core.MEMORY_GUARD_ENV
+
+
+def memory_guard_wanted(environ=None):
+    """False when this command's environment switches the memory guard off (off, 0, false, no):
+    the job then tells the add-in, whose own environment (Fusion's) is out of reach here."""
+    value = (os.environ if environ is None else environ).get(MEMORY_GUARD_ENV)
+    return not (value is not None and value.strip().lower() in ('off', '0', 'false', 'no'))
+
+
+LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing other programs may speed it up.'
 
 
 def count_line(counts):
@@ -343,6 +358,8 @@ def summary(output):
                          'export again to carry on.')
         elif report.get('stopped_reason'):
             lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
+        if report.get('low_memory') and report.get('stopped_code') != 'memory':
+            lines.append('Note: ' + LOW_MEMORY_NOTE)
         if report.get('low_space'):
             lines.append('Low disk space: %d MB free' % ((report.get('free_bytes') or 0) >> 20))
         memory = memory_line(report.get('memory'))
