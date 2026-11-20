@@ -1,1 +1,11 @@
 blank_issues_enabled: true
+contact_links:
+  - name: It worked (or mostly worked)
+    url: https://github.com/cad-lifeboat/fusion-bulk-export/discussions/new?category=show-and-tell
+    about: Tell us how your export went. Your Fusion version, how many designs and how long it took help everyone.
+  - name: Idea or suggestion
+    url: https://github.com/cad-lifeboat/fusion-bulk-export/discussions/new?category=ideas
+    about: Something that could be better or a feature you would like.
+  - name: Question
+    url: https://github.com/cad-lifeboat/fusion-bulk-export/discussions/new?category=q-a
+    about: Not sure how to do something? Ask here.

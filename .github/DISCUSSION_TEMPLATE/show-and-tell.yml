@@ -1,0 +1,29 @@
+title: "It worked: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting back. Numbers only, please: **do not include project or design names.**
+  - type: input
+    id: fusion
+    attributes:
+      label: Fusion version and operating system
+      placeholder: "2706.1.17, Windows 11"
+    validations:
+      required: true
+  - type: input
+    id: counts
+    attributes:
+      label: Counts from the last dialog
+      placeholder: "412 done, 3 failed, 20 skipped"
+    validations:
+      required: true
+  - type: input
+    id: time
+    attributes:
+      label: Roughly how long it took
+      placeholder: "about 35 minutes"
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything that was confusing, slow or could be better

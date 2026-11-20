@@ -87,6 +87,8 @@ FusionExport/
 - **Check the files:** `python3 scripts/verify-export.py <folder>` (from a download of this repository) opens every archive and STEP file and prints counts only.
 - Still stuck? [Open an issue](../../issues/new/choose) with the counts and error messages, with any design names replaced by `X`.
 
+**Tell us how it went.** If it worked, or mostly worked, [post your numbers](../../discussions/new?category=show-and-tell) (Fusion version, how many designs, how long). Ideas and questions go in [Discussions](../../discussions) too; issues are for things that are broken.
+
 ## How resuming works
 
 Running again on the same folder skips a finished design only if its files are still
