@@ -32,10 +32,9 @@ class VerifyTests(unittest.TestCase):
             out.writestr('Manifest.dat', 'x')
             out.writestr('FusionAssetName[Active]/x', 'x')
         (self.root / 'a.step').write_text(step)
-        entry = dict(id='f1', name='Secret Name', status='done',
+        entry = dict(id='f1', name='Secret Name', status='done', visible_solid_bodies=solids,
                      files=[dict(path='a' + archive), dict(path='a.step')])
         (self.root / 'manifest.json').write_text(json.dumps(dict(entries=[entry])))
-        (self.root / 'selftest-result.json').write_text(json.dumps(dict(designs=[dict(id='f1', solid_bodies=solids)])))
 
     def run_check(self, *flags):
         stream = io.StringIO()
@@ -57,8 +56,8 @@ class VerifyTests(unittest.TestCase):
     def test_manifest_solid_count_and_skipped_drawings(self):
         self.build(solids=2)
         manifest = json.loads((self.root / 'manifest.json').read_text())
+        del manifest['entries'][0]['visible_solid_bodies']
         manifest['entries'][0]['solid_bodies'] = 2
-        (self.root / 'selftest-result.json').unlink()
         manifest['entries'].append(dict(id='d', name='Drawing', status='skipped',
                                         error='Not a Fusion design: f2d', files=[]))
         (self.root / 'manifest.json').write_text(json.dumps(manifest))

@@ -5,9 +5,7 @@ Usage: verify-export.py OUTPUT_FOLDER [--names] [--strict]
 
 A STEP whose solid count differs from Fusion's visible solid count is a NOTE
 (--strict makes it a problem). Prints counts only, unless --names is given (manifests hold private design names).
-When selftest-result.json is present, STEP solid counts are compared with the
-solid-body counts Fusion reported for each design. Exit status 0 means every
-check passed.
+Exit status 0 means every check passed.
 """
 import json
 from pathlib import Path
@@ -72,11 +70,6 @@ def main(argv):
     names = '--names' in argv
     strict = '--strict' in argv
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
-    observed = {}
-    result_path = root / 'selftest-result.json'
-    if result_path.is_file():
-        for design in json.loads(result_path.read_text(encoding='utf-8'))['designs']:
-            observed[design['id']] = design.get('solid_bodies')
     totals = dict(entries=0, done=0, not_designs=0, f3d=0, step_ok=0, solids_match=0, solids_differ=0,
                   solids_unknown=0, failed_checks=0)
     for number, entry in enumerate(manifest['entries'], 1):
@@ -100,7 +93,7 @@ def main(argv):
         if not step_problems:
             totals['step_ok'] += 1
         # STEP leaves out hidden bodies, so compare with the visible count when recorded.
-        expected = entry.get('visible_solid_bodies', entry.get('solid_bodies', observed.get(entry['id'])))
+        expected = entry.get('visible_solid_bodies', entry.get('solid_bodies'))
         if expected is None:
             totals['solids_unknown'] += 1
         elif expected == solids:
