@@ -105,6 +105,12 @@ GONE_LINE = ('Fusion closed before the export finished (it may have crashed). Op
 # Exit status when --restart-fusion opened Fusion again but the add-in did not start in it.
 EXIT_NO_ADDIN = 76
 SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|finding folder: \d+ folders listed|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files?|inventory stopped)$')
+# A job the add-in took (autorun.json gone) while it is idle (heartbeat not busy) and no result
+# anywhere for this long: it could not answer (wait() stops with LOST_JOB_LINE, exit status 1).
+LOST_JOB_SECONDS = 60
+LOST_JOB_LINE = ('Fusion took the job but wrote no result, and it is not exporting. It may not reach the output '
+                 'folder (a network drive must be connected for Fusion too): choose another folder, or run the '
+                 'same command again.')
 MANUAL_HINT_SECONDS = 180
 MANUAL_STEPS = ('Fusion has not started the add-in. In Fusion press Shift+S and find FusionBulkExport in '
                 'the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on '
@@ -436,6 +442,7 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
     started_at = time.time() - 5
     hinted = False
     seen = False  # the add-in's heartbeat was fresh at some point while waiting
+    lost = None   # since when the job is taken, the add-in idle, and no result written
     running = running or fusion_running
 
     def fresh(path):
@@ -456,9 +463,12 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
                 for error in report.get('errors', []):
                     print('Fusion is busy: ' + error.get('error', ''), flush=True)
                 return 1
-            print('The add-in rejected the job:', flush=True)
-            for error in report.get('errors', []):
-                print('  ' + error.get('error', ''), flush=True)
+            if isinstance(report.get('counts'), dict):
+                # It ran, but its output folder could not take the result.
+                print(count_line(report['counts']), flush=True)
+            errors = [str(error.get('error', '')) for error in report.get('errors', [])] or ['no reason given']
+            for error in errors:
+                print('The add-in rejected the job: ' + ' '.join(error.split()), flush=True)
             return 1
         crash = installed / 'startup-error.txt'
         if crash.is_file():
@@ -469,6 +479,17 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
             hinted = True
         if alive(installed):
             seen = True
+            beat = heartbeat(installed)
+            # The add-in took the job (it renames autorun.json as it starts) and is not running it,
+            # yet no result appeared anywhere: it could not answer. Not waiting a day for nothing.
+            # (Only with an add-in whose heartbeat says whether it is busy.)
+            if 'busy' in beat and not beat.get('busy') and not (installed / 'autorun.json').exists():
+                lost = clock() if lost is None else lost
+                if clock() - lost >= LOST_JOB_SECONDS:
+                    print(LOST_JOB_LINE, flush=True)
+                    return 1
+            else:
+                lost = None
         elif seen and not running() and not fresh(result):
             print(GONE_LINE, flush=True)
             return EXIT_FUSION_GONE

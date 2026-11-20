@@ -60,8 +60,11 @@ class Log:
                            errors=[], timings={})
 
     def write(self, message):
-        with (self.output / 'autorun.log').open('a', encoding='utf-8') as stream:
-            stream.write(now() + ' ' + message + '\n')
+        try:
+            with (self.output / 'autorun.log').open('a', encoding='utf-8') as stream:
+                stream.write(now() + ' ' + message + '\n')
+        except OSError:
+            pass  # a progress line; the result itself always finds a place (run_autorun)
 
     def error(self, stage, error):
         detail = dict(stage=stage, error=str(error), traceback=traceback.format_exc())
@@ -331,19 +334,44 @@ def reject_busy(app, config_path, reason=BUSY):
     return log.result
 
 
+def usable_folder(output):
+    """None when the job's output folder exists or could be created; else one plain line saying
+    Fusion cannot use it (a drive letter the launcher sees but Fusion's session does not, a
+    folder it may not create)."""
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        if output.is_dir():
+            return None
+        problem = 'it is not a folder'
+    except OSError as error:
+        problem = error.strerror or type(error).__name__
+    return ('Fusion cannot use the output folder %s (%s). A network drive must be connected for Fusion '
+            'too; or choose another folder.' % (output, problem))
+
+
 def run_autorun(app, config_path):
+    """Run the job in config_path. Every job taken gets an autorun-result.json the launcher finds:
+    in the output folder, or in autorun-output beside the add-in when the job cannot be read or
+    the output folder cannot be used."""
     config_path = Path(config_path)
+    beside = config_path.parent / 'autorun-output'
     log = None
     started = time.monotonic()
     try:
+        unusable = None
         try:
             output, mode, selection, limit, timeout, other_files, memory_guard = read_config(config_path)
         except Exception as error:
-            output = getattr(error, 'output', None) or config_path.parent / 'autorun-output'
+            output = getattr(error, 'output', None) or beside
             raise
         finally:
-            output.mkdir(parents=True, exist_ok=True)
+            unusable = usable_folder(output)
+            if unusable is not None:
+                output = beside
+                beside.mkdir(parents=True, exist_ok=True)
             log = Log(output)
+        if unusable is not None:
+            raise ValueError(unusable)
         log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
                           other_files=other_files)
         log.write('autorun start ' + mode)
@@ -405,10 +433,22 @@ def run_autorun(app, config_path):
     except Exception as error:
         if log is not None:
             log.error('autorun', error)
+            if unusable is not None:  # the line says it all; the traceback adds nothing
+                log.result['errors'][-1].update(error=unusable, traceback='')
     finally:
         if log is not None:
             log.result['finished'] = now()
             log.result['timings']['total_seconds'] = time.monotonic() - started
             log.write('autorun finished')
-            atomic_write(log.output / 'autorun-result.json', log.result)
+            try:
+                atomic_write(log.output / 'autorun-result.json', log.result)
+            except OSError as error:
+                if log.output == beside:
+                    raise
+                # The output folder went away or became unwritable: answer beside the add-in.
+                log.result['errors'].append(dict(stage='autorun', traceback='', error=(
+                    'The result could not be written in the output folder %s (%s).'
+                    % (log.output, error.strerror or type(error).__name__))))
+                beside.mkdir(parents=True, exist_ok=True)
+                atomic_write(beside / 'autorun-result.json', log.result)
     return log.result if log else None

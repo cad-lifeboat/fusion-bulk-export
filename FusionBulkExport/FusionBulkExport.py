@@ -63,8 +63,12 @@ class AutorunEvent(adsk.core.CustomEventHandler):
             return
         # Each job uses the add-in package as currently installed (but no reload while the
         # button's export runs: see forget_package).
-        forget_package()
-        from fusion_bulk_export import autorun
+        try:
+            forget_package()
+            from fusion_bulk_export import autorun
+        except Exception:
+            answer_job(traceback.format_exc())
+            return
         if _busy['by'] == 'button':
             # Fusion processes events during an export: a job may arrive in the middle of one.
             autorun.reject_busy(adsk.core.Application.get(), _HERE / 'autorun.json')
@@ -72,8 +76,28 @@ class AutorunEvent(adsk.core.CustomEventHandler):
         _busy['by'] = 'job'
         try:
             autorun.run_autorun(adsk.core.Application.get(), _HERE / 'autorun.json')
+        except Exception:
+            answer_job(traceback.format_exc())  # run_autorun answers itself; this is the last resort
         finally:
             _busy['by'] = None
+
+
+def answer_job(text):
+    """Consume a job the package could not run (it failed to load) and answer it in
+    autorun-output beside the add-in, where the launcher looks: a job taken never goes unanswered."""
+    try:
+        job = _HERE / 'autorun.json'
+        if job.is_file():
+            job.replace(job.with_name(job.name + '.last'))
+        folder = _HERE / 'autorun-output'
+        folder.mkdir(parents=True, exist_ok=True)
+        lines = [line for line in text.strip().splitlines() if line.strip()]
+        result = dict(schema=1, finished=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), errors=[dict(
+            stage='autorun', error='The add-in could not run the job: ' + (lines[-1] if lines else 'unknown error'),
+            traceback=text)])
+        (folder / 'autorun-result.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+    except Exception:
+        pass
 
 
 class Watcher(threading.Thread):

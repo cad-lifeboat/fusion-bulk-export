@@ -251,6 +251,36 @@ class AutorunTests(unittest.TestCase):
         self.assertIn('JSONDecodeError', result['errors'][0]['traceback'])
         self.assertTrue((self.root / 'autorun-output' / 'autorun-result.json').exists())
 
+    def test_an_output_folder_fusion_cannot_reach_is_answered_beside_the_add_in(self):
+        # As a drive letter the launcher sees but Fusion does not: the folder cannot be made.
+        blocker = self.root / 'not-a-drive'
+        blocker.write_text('a file, so nothing can be created below it')
+        self.config.write_text(json.dumps(dict(output=str(blocker / 'out'))))
+        result = run_autorun(self.app, self.config)
+        self.assertFalse(self.config.exists())  # consumed...
+        answer = self.root / 'autorun-output' / 'autorun-result.json'
+        self.assertEqual(json.loads(answer.read_text(encoding='utf-8')), result)  # ...and answered
+        self.assertEqual(len(result['errors']), 1)
+        self.assertEqual(result['errors'][0]['stage'], 'autorun')
+        self.assertIn('Fusion cannot use the output folder ' + str(blocker / 'out'), result['errors'][0]['error'])
+        self.assertNotIn('\n', result['errors'][0]['error'])
+        self.assertIsNotNone(result['finished'])
+
+    def test_a_result_that_cannot_be_written_in_the_output_folder_goes_beside_the_add_in(self):
+        from fusion_bulk_export import autorun
+        write = autorun.atomic_write
+
+        def failing(path, value):
+            if Path(path).parent == self.output and Path(path).name == 'autorun-result.json':
+                raise OSError(5, 'Input/output error')
+            return write(path, value)
+        self.config.write_text(json.dumps(dict(output=str(self.output))))
+        with patch.object(autorun, 'atomic_write', failing):
+            result = run_autorun(self.app, self.config)
+        answer = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text(encoding='utf-8'))
+        self.assertEqual(answer['counts'], result['counts'])
+        self.assertIn('could not be written', answer['errors'][-1]['error'])
+
     def start_add_in(self):
         events = {}
         self.fired = []
@@ -294,6 +324,16 @@ class AutorunTests(unittest.TestCase):
         events['FusionBulkExportAutorun'].handlers[0].notify(None)
         self.assertEqual(json.loads((second / 'autorun-result.json').read_text(encoding='utf-8'))['mode'], 'inventory')
         self.assertFalse(self.config.exists())
+
+    def test_a_job_the_package_cannot_run_is_still_consumed_and_answered(self):
+        module, events = self.start_add_in()
+        self.config.write_text(json.dumps(dict(output=str(self.output))))
+        with patch('fusion_bulk_export.autorun.run_autorun', side_effect=RuntimeError('broken install')):
+            events['FusionBulkExportAutorun'].handlers[0].notify(None)
+        self.assertFalse(self.config.exists())
+        answer = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text(encoding='utf-8'))
+        self.assertEqual(answer['errors'][0]['error'], 'The add-in could not run the job: RuntimeError: broken install')
+        self.assertIsNone(module._busy['by'])
 
     def test_button_and_watching_together(self):
         # A pending job no longer hides the button: one mode, both at once.

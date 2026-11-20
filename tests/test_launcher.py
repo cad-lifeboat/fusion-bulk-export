@@ -253,6 +253,55 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn('rejected the job', stream.getvalue())
 
+    def test_wait_reports_an_output_folder_fusion_cannot_use_in_one_line(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        (installed / 'autorun-output').mkdir(parents=True)
+        error = 'Fusion cannot use the output folder T:\\out (No such file or directory). A network drive must be connected for Fusion too; or choose another folder.'
+        (installed / 'autorun-output' / 'autorun-result.json').write_text(json.dumps(dict(
+            errors=[dict(stage='autorun', error=error, traceback='')])))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
+        self.assertEqual(status, 1)
+        lines = stream.getvalue().splitlines()[1:]
+        self.assertEqual(lines, ['The add-in rejected the job: ' + error])
+
+    def heartbeat(self, installed, busy):
+        (installed / 'autorun.alive').write_text(json.dumps(dict(time=time.time(), busy=busy)))
+
+    def test_wait_stops_when_fusion_took_the_job_and_answered_nowhere(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        installed.mkdir()
+        out.mkdir()
+        self.heartbeat(installed, None)  # alive, not exporting, and the job file is gone
+        ticks = iter(range(0, 100000, 5))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            status = launcher.wait(installed, out, 86400, sleep=lambda _: self.heartbeat(installed, None),
+                                   clock=lambda: next(ticks), running=lambda: True)
+        self.assertEqual(status, 1)
+        self.assertEqual(stream.getvalue().splitlines()[-1], launcher.LOST_JOB_LINE)
+
+    def test_wait_keeps_waiting_while_the_job_runs_or_is_not_taken_yet(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        installed.mkdir()
+        out.mkdir()
+        for busy, job in (('job', False), (None, True)):
+            if job:
+                (installed / 'autorun.json').write_text('{}')
+            self.heartbeat(installed, busy)
+            ticks = iter(range(0, 1000, 5))
+            with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+                launcher.wait(installed, out, 600, sleep=lambda _: self.heartbeat(installed, busy),
+                              clock=lambda: next(ticks), running=lambda: True)
+        # An add-in from before the heartbeat said whether it is busy: no guessing, it waits.
+        (installed / 'autorun.json').unlink()
+        (installed / 'autorun.alive').write_text('')
+        ticks = iter(range(0, 1000, 5))
+        with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+            launcher.wait(installed, out, 600, sleep=lambda _: (installed / 'autorun.alive').write_text(''),
+                          clock=lambda: next(ticks), running=lambda: True)
+
     def test_reset_clears_a_stale_job_and_keeps_everything_else(self):
         installed = self.root / 'FusionBulkExport'
         installed.mkdir()
