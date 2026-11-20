@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Large accounts: the inventory logs progress per project, saves `inventory.json` as it goes and stops between projects when a `STOP` file appears; `--limit` stops listing as soon as it has enough designs.
+- Tested on Windows 11: inventory of a large account and a small trial export.
+
 ## 0.2.0
 
 - Tested on real Fusion through the toolbar button (Everything, 59/59) and the launcher (one folder); the Export button stays greyed out until something is chosen; the dialog opens wide enough for names, and the button sits on the toolbar.
