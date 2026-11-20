@@ -274,6 +274,65 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(len(self.manifest['runs']), 4)
         self.assertIn('verified', (self.root / 'export.log').read_text())
 
+    def test_resume_checks_size_and_time_without_hashing(self):
+        from fusion_bulk_export import checks
+        file = fake.File()
+        data = fake.data([file])
+        self.run_export(data)
+        records = self.manifest['entries'][0]['files']
+        self.assertTrue(all(isinstance(info['mtime_ns'], int) for info in records))
+        real = checks.file_sha256
+        hashed = []
+
+        def counting(path):
+            hashed.append(path)
+            return real(path)
+        with patch.object(checks, 'file_sha256', counting):
+            _, counts = self.run_export(data)
+            self.assertEqual((counts['up_to_date'], hashed), (1, []))
+            # Touched but unchanged (copied without times, say): hashed once, time recorded.
+            path = self.root / records[1]['path']
+            os.utime(path, ns=(records[1]['mtime_ns'] + 10 ** 9,) * 2)
+            _, counts = self.run_export(data)
+            self.assertEqual((counts['up_to_date'], len(hashed), file.calls), (1, 1, 1))
+            self.assertEqual(self.manifest['entries'][0]['files'][1]['mtime_ns'], path.stat().st_mtime_ns)
+            self.run_export(data)
+            self.assertEqual(len(hashed), 1)
+            # Same size, other bytes, new time: the hash catches it.
+            path.write_bytes(path.read_bytes()[::-1])
+            self.run_export(data)
+            self.assertEqual(file.calls, 2)
+
+    def test_entries_without_times_are_hashed_once_then_get_them(self):
+        from fusion_bulk_export import checks
+        file = fake.File()
+        data = fake.data([file])
+        self.run_export(data)
+        manifest = json.loads((self.root / 'manifest.json').read_text())
+        for info in manifest['entries'][0]['files']:
+            del info['mtime_ns']  # as written by earlier versions
+        (self.root / 'manifest.json').write_text(json.dumps(manifest))
+        hashed = []
+        real = checks.file_sha256
+        with patch.object(checks, 'file_sha256', lambda path: hashed.append(path) or real(path)):
+            _, counts = self.run_export(data)
+            self.assertEqual((counts['up_to_date'], len(hashed), file.calls), (1, 2, 1))
+            self.assertTrue(all('mtime_ns' in info for info in self.manifest['entries'][0]['files']))
+            self.run_export(data)
+            self.assertEqual(len(hashed), 2)
+
+    def test_size_change_is_caught_without_hashing(self):
+        file = fake.File()
+        data = fake.data([file])
+        self.run_export(data)
+        path = self.root / self.manifest['entries'][0]['files'][0]['path']
+        stat = path.stat()
+        with path.open('ab') as stream:
+            stream.write(b'x')
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))  # even with the old time
+        self.run_export(data)
+        self.assertEqual(file.calls, 2)
+
     def test_retry_then_success(self):
         file = fake.File()
         file.failures = 1

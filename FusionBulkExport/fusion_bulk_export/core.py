@@ -207,12 +207,12 @@ def digest(value):
 
 
 def file_info(path, root):
-    sha = hashlib.sha256()
-    with open(long_path(path), 'rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            sha.update(chunk)
-    return {'path': path.relative_to(root).as_posix(), 'sha256': sha.hexdigest(),
-            'bytes': os.stat(long_path(path)).st_size}
+    """A file's manifest record: relative path, SHA-256, size and modified time (mtime_ns, the
+    fast check on resume). Taken after the file is complete, its time included."""
+    sha256 = checks.file_sha256(path)
+    stat = os.stat(long_path(path))
+    return {'path': path.relative_to(root).as_posix(), 'sha256': sha256, 'bytes': stat.st_size,
+            'mtime_ns': stat.st_mtime_ns}
 
 
 def free_bytes(path):
@@ -286,6 +286,7 @@ class Exporter:
         self.unsaved = 0        # finished items only in the journal so far
         self.saved_at = time.monotonic()
         self.clock = time.monotonic
+        self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
         self.manifest['runs'].append(self.run_info)
 
@@ -334,14 +335,29 @@ class Exporter:
         return None
 
     def valid(self, entry):
+        """Whether a finished entry's files are still there unchanged. The fast check: the
+        size and modified time recorded at export. A file whose time differs (or an entry from
+        before times were recorded) is hashed instead, and on a match its time is recorded, so
+        it is hashed only once; self.refreshed then says the entry changed. Full hashing of
+        everything is checks.check_folder ("Check this folder")."""
+        self.refreshed = False
         if entry.get('status') != 'done' or len(entry.get('files', [])) != 2:
             return False
         try:
             for expected in entry['files']:
                 # normpath, not resolve(): no file-system call, so long Windows paths are fine.
                 path = Path(os.path.normpath(str(self.root / expected['path'])))
-                if not path.is_relative_to(self.root) or file_info(path, self.root) != expected:
+                if not path.is_relative_to(self.root):
                     return False
+                stat = os.stat(long_path(path))
+                if stat.st_size != expected.get('bytes'):
+                    return False
+                if expected.get('mtime_ns') == stat.st_mtime_ns:
+                    continue
+                if checks.file_sha256(path) != expected.get('sha256'):
+                    return False
+                expected['mtime_ns'] = stat.st_mtime_ns
+                self.refreshed = True
             return True
         except (OSError, ValueError):
             return False
@@ -525,7 +541,9 @@ class Exporter:
         entry = entries.get(key)
         if entry and self.valid(entry):
             counts[COUNT_OF_STATUS['verified']] += 1
-            self.log('verified ' + key)  # nothing changed: nothing to save
+            self.log('verified ' + key)
+            if self.refreshed:
+                self.record(entry)  # its files' times were recorded now; else nothing to save
             return 'verified'
         entry = {'key': key, 'hub': hub.name, 'project': project.name, 'path': list(folders),
                  'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
