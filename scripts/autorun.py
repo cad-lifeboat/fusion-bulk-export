@@ -275,6 +275,18 @@ def count_line(counts):
     return 'Counts: ' + json.dumps(counts, sort_keys=True)
 
 
+def memory_line(facts):
+    """'Fusion memory: 1.4 GB at the end (at most 1.6 GB, 0.8 GB at the start)' from the result's
+    memory facts, or None when the add-in did not measure it."""
+    facts = facts if isinstance(facts, dict) else {}
+    size = lambda key: None if not isinstance(facts.get(key), int) else '%.1f GB' % (facts[key] / float(1 << 30))
+    last, peak, start = size('last_rss'), size('peak_rss'), size('start_rss')
+    if last is None:
+        return None
+    more = [text for text in ('at most ' + peak if peak else None, start + ' at the start' if start else None) if text]
+    return 'Fusion memory: %s at the end%s' % (last, ' (%s)' % ', '.join(more) if more else '')
+
+
 def summary(output):
     """Counts only: manifests and logs hold design names, which stay private."""
     lines = []
@@ -288,6 +300,9 @@ def summary(output):
             lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
         if report.get('low_space'):
             lines.append('Low disk space: %d MB free' % ((report.get('free_bytes') or 0) >> 20))
+        memory = memory_line(report.get('memory'))
+        if memory:
+            lines.append(memory)
         for key in ('found', 'cancelled', 'discovery_errors', 'bytes'):
             if key in report:
                 lines.append('%s: %s' % (key, report[key]))

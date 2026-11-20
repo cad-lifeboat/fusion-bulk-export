@@ -12,12 +12,12 @@ import time
 import traceback
 from datetime import datetime, timezone
 
-from . import checks
+from . import checks, memory
 from .journal import Journal, replay
 from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
 from .names import (NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, clean, design_suffixes, long_path,
                     output_root_problem, too_long, windows_length)
-from .power import keep_awake
+from .power import inside_fusion, keep_awake
 from .staging import Staging
 
 SCHEMA = 2  # manifest schema; schema-1 folders are read and saved as 2
@@ -497,6 +497,8 @@ class Exporter:
         self.clock = time.monotonic
         self.refreshed = False  # set by valid(): an entry's file times were just recorded
         self.other_files = True
+        # Fusion's memory, sampled between items (memory.sample inside Fusion; tests set a fake).
+        self.memory_sampler = memory.sample if inside_fusion() else None
         self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
         if self.upgraded:
             self.run_info['upgraded_schema'] = 1
@@ -789,6 +791,7 @@ class Exporter:
         found = 0
         failing = []  # errors of the designs that failed one after another
         stopping = None
+        tracker = None
         try:
             self.log('run started')
             numbers = {}
@@ -824,6 +827,9 @@ class Exporter:
                 report('listing')
 
             entries = {entry['key']: entry for entry in self.manifest['entries']}
+            tracker = memory.Tracker(self.memory_sampler, self.run_info.setdefault('memory', {}), self.log)
+            if tracker.begin() is None:
+                self.run_info.pop('memory', None)  # nothing could be sampled
             finishing = None  # the folder in which the limit was reached: only its other files go on
             with keep_awake():
                 for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
@@ -860,11 +866,12 @@ class Exporter:
                         if problem is None:
                             raise
                         status = 'failed'
-                    if status != 'verified':
-                        self.collect()  # Fusion worked on this item: release what it left behind
                     if status != 'verified' and str(file.fileExtension).lower() == 'f3d':
                         timing['seconds'] += self.clock() - began
                         timing['designs'] += 1
+                    if status != 'verified':
+                        self.collect()  # Fusion worked on this item: release what it left behind
+                        tracker.update(timing['designs'])
                     if self.reached_cloud(status, entries.get(self.item_key(hub, project, file))):
                         failing = []
                     elif status == 'failed' and (problem is not None or not failed_before):
@@ -890,6 +897,8 @@ class Exporter:
             self.run_info['error'] = str(error)
             raise
         finally:
+            if tracker is not None:
+                tracker.finish()
             self.staging.clean()
             self.run_info.update(finished=now(), counts=counts, found=found)
             try:

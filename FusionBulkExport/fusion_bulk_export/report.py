@@ -217,6 +217,9 @@ def render_html(manifest, run_info, counts):
     if unread:
         line += '; %d whose links could not be read (exported all the same)' % unread
     out.append('<div class="muted">%s.</div>' % esc(line))
+    memory = memory_line(run_info)
+    if memory:
+        out.append('<div class="muted">%s</div>' % esc(memory))
     long_paths = long_path_count(manifest)
     if long_paths:
         out.append('<p class="stop">%s</p>' % esc(LONG_PATHS % long_paths))
@@ -247,6 +250,22 @@ def slow_html(rows):
                    % (esc(row['name']), esc(where), esc(duration_text(row['slow_seconds']))))
     out.append('</ul>')
     return out
+
+
+def memory_line(run_info):
+    """'Fusion memory: 1.4 GB (at most 1.6 GB during the last run, 0.8 GB at its start).', from
+    run_info['memory'], or None when it was not measured."""
+    from .memory import gigabytes
+    facts = (run_info or {}).get('memory') or {}
+    last, peak, start = (gigabytes(facts.get(key)) for key in ('last_rss', 'peak_rss', 'start_rss'))
+    if last is None:
+        return None
+    more = []
+    if peak is not None and peak != last:
+        more.append('at most %s during the last run' % peak)
+    if start is not None:
+        more.append('%s at its start' % start)
+    return 'Fusion memory: %s%s.' % (last, ' (%s)' % ', '.join(more) if more else '')
 
 
 def duration_text(seconds):

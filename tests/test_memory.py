@@ -3,6 +3,7 @@ each item Fusion worked on."""
 import errno
 import gc
 import json
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 from tests import fake_adsk as fake
-from fusion_bulk_export import core
+from fusion_bulk_export import core, memory, report
 from fusion_bulk_export.core import Exporter, Trouble
 
 fake.install()
@@ -118,6 +119,114 @@ class ReleaseTests(Base):
         self.assertEqual(generations.count((1,)), 98)
         self.assertEqual(exporter.run_info['gc']['full'], 2)
         self.assertEqual(exporter.run_info['gc']['objects'], 100)
+
+
+GB = 1 << 30
+
+
+class Sampler:
+    """A fake memory.sample: rss grows by step per call; total and available as given."""
+    def __init__(self, rss=1 * GB, step=10 << 20, total=16 * GB, available=8 * GB, fall=0):
+        self.rss, self.step, self.total, self.available, self.fall = rss, step, total, available, fall
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        found = dict(rss=self.rss, total=self.total, available=self.available)
+        self.rss += self.step
+        self.available -= self.fall
+        return found
+
+
+class SamplingTests(unittest.TestCase):
+    def test_sample_reads_this_process_and_the_machine_on_linux(self):
+        found = memory.sample('linux')
+        if not Path('/proc/meminfo').exists():
+            self.skipTest('no /proc')
+        self.assertGreater(found['rss'], 1 << 20)
+        self.assertGreater(found['total'], found['available'])
+
+    def test_sample_never_raises(self):
+        self.assertEqual(memory.sample('plan9'), dict(rss=None, total=None, available=None))
+        with patch.object(memory, '_windows', side_effect=OSError('no kernel32')):
+            self.assertEqual(memory.sample('win32'), dict(rss=None, total=None, available=None))
+        with patch.object(memory, '_macos', return_value=dict(rss=-1, total='x', available=5)):
+            self.assertEqual(memory.sample('darwin'), dict(rss=None, total=None, available=5))
+        # The real calls on another system fail inside and give None, never an error.
+        self.assertIn(memory.sample('win32' if sys.platform != 'win32' else 'darwin')['rss'], (None,))
+
+    def test_structures_match_the_system_headers(self):
+        import ctypes
+        task, vm = memory.mac_structures()
+        self.assertEqual(ctypes.sizeof(task) // 4, 12)       # MACH_TASK_BASIC_INFO_COUNT
+        self.assertEqual(task.resident_size.offset, 8)
+        self.assertEqual(ctypes.sizeof(vm) // 4, 38)         # HOST_VM_INFO64_COUNT
+        self.assertEqual(vm.inactive_count.offset, 8)
+        counters, status = memory.windows_structures()
+        if ctypes.sizeof(ctypes.c_size_t) == 8:
+            self.assertEqual(ctypes.sizeof(counters), 72)    # PROCESS_MEMORY_COUNTERS, 64-bit
+            self.assertEqual(counters.WorkingSetSize.offset, 16)
+        self.assertEqual(ctypes.sizeof(status), 64)          # MEMORYSTATUSEX
+
+    def test_tracker_keeps_start_peak_last_and_a_bounded_series(self):
+        info, lines = {}, []
+        tracker = memory.Tracker(Sampler(), info, lines.append)
+        tracker.begin()
+        for designs in range(1, 1001):
+            tracker.update(designs)
+        self.assertEqual(info['start_rss'], GB)
+        self.assertEqual(info['last_rss'], GB + 1000 * (10 << 20))
+        self.assertEqual(info['peak_rss'], info['last_rss'])
+        self.assertEqual([point[0] for point in info['series']], list(range(0, 1001, 100)))
+        self.assertEqual(info['samples'], 1001)
+        self.assertTrue(all(line.startswith('memory') and 'MB' in line for line in lines))
+        self.assertEqual(len(lines), 11)
+        with patch.object(memory, 'SERIES_MAX', 5):
+            info = {}
+            tracker = memory.Tracker(Sampler(), info)
+            tracker.begin()
+            for designs in range(1, 3001):
+                tracker.update(designs)
+            self.assertLessEqual(len(info['series']), 6)
+            self.assertGreater(info['series_every'], 100)
+
+    def test_no_sampler_or_a_failing_one_records_nothing(self):
+        info = {}
+        self.assertIsNone(memory.Tracker(None, info).begin())
+        tracker = memory.Tracker(lambda: 1 / 0, info)
+        self.assertIsNone(tracker.begin())
+        self.assertIsNone(tracker.update(5))
+        self.assertEqual(info, {})
+
+
+class RunMemoryTests(Base):
+    def test_the_run_records_memory_and_the_report_shows_it(self):
+        exporter = Exporter(self.root, self.adapter)
+        exporter.memory_sampler = Sampler()
+        exporter.run(fake.data([fake.File('A', 'a'), fake.File('B', 'b'), fake.File('Up', 'up', extension='pdf')]))
+        facts = exporter.run_info['memory']
+        self.assertEqual(facts['samples'], 4)  # start and after each of the three items
+        self.assertEqual(facts['start_rss'], GB)
+        self.assertEqual(facts['total'], 16 * GB)
+        saved = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))['runs'][-1]['memory']
+        self.assertEqual(saved['last_rss'], facts['last_rss'])
+        log = (self.root / 'export.log').read_text(encoding='utf-8')
+        self.assertIn('memory at start: Fusion 1024 MB, available 8192 MB of 16384 MB', log)
+        self.assertIn('memory at end', log)
+        page = report.render_html(exporter.manifest, exporter.run_info, exporter.run_info['counts'])
+        self.assertIn('Fusion memory: 1.0 GB (1.0 GB at its start).', page)
+
+    def test_without_a_sampler_nothing_is_recorded_or_shown(self):
+        exporter = Exporter(self.root, self.adapter)
+        self.assertIsNone(exporter.memory_sampler)  # the synthetic API: not inside Fusion
+        exporter.run(fake.data([fake.File('A', 'a')]))
+        self.assertNotIn('memory', exporter.run_info)
+        self.assertNotIn('Fusion memory', report.render_html(exporter.manifest, exporter.run_info, {}))
+
+    def test_memory_line_wording(self):
+        self.assertIsNone(report.memory_line({}))
+        line = report.memory_line(dict(memory=dict(last_rss=int(1.4 * GB), peak_rss=int(1.6 * GB), start_rss=int(0.8 * GB))))
+        self.assertEqual(line, 'Fusion memory: 1.4 GB (at most 1.6 GB during the last run, 0.8 GB at its start).')
 
 
 if __name__ == '__main__':

@@ -110,6 +110,16 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('Stopped by itself (output_missing)', text)
         self.assertIn('10 bytes', text)
 
+    def test_status_shows_fusion_memory(self):
+        out = self.root / 'out'
+        out.mkdir()
+        gb = 1 << 30
+        (out / 'autorun-result.json').write_text(json.dumps(dict(
+            mode='export', counts=dict(exported=1), memory=dict(start_rss=gb // 2, peak_rss=2 * gb, last_rss=3 * gb // 2))))
+        self.assertIn('Fusion memory: 1.5 GB at the end (at most 2.0 GB, 0.5 GB at the start)', launcher.summary(out))
+        (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts={}, memory=None)))
+        self.assertFalse([line for line in launcher.summary(out) if 'memory' in line])
+
     def test_status_counts_link_problems_without_names(self):
         out = self.root / 'out'
         out.mkdir()

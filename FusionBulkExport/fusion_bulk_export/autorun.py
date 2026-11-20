@@ -46,7 +46,7 @@ import adsk.core
 from .core import (Exporter, Listing, Selection, atomic_write, collection, now, reference_facts, select_projects,
                    walk)
 from .fusion import FusionAdapter
-from .report import write as write_report
+from .report import memory_line, write as write_report
 
 
 class Log:
@@ -357,7 +357,11 @@ def run_autorun(app, config_path):
                               low_space=info.get('low_space'), free_bytes=info.get('free_bytes'),
                               discovery_errors=len(info['discovery_errors']),
                               bytes=sum(f['bytes'] for e in exporter.manifest['entries']
-                                        if e['status'] == 'done' for f in e['files']))
+                                        if e['status'] == 'done' for f in e['files']),
+                              memory=info.get('memory'), gc=info.get('gc'))
+            line = memory_line(info)
+            if line:
+                log.write(line)
     except Exception as error:
         if log is not None:
             log.error('autorun', error)
