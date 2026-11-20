@@ -142,6 +142,12 @@ A design whose STEP has no bodies, or fewer solids than the distinct bodies Fusi
 - Still stuck? [Open an issue](../../issues/new/choose) with the counts and error messages, with any design names replaced by `X`.
 - **Tell us how it went.** If it worked, or mostly worked, [post your numbers](../../discussions/new?category=show-and-tell) (Fusion version, how many designs, how long). Ideas and questions go in [Discussions](../../discussions); issues are for things that are broken.
 
+## Questions
+
+**Is there a Linux version?** It is not needed: this is an add-in that runs inside Fusion, and Fusion itself runs only on Windows and macOS. If you run Fusion on Linux through Wine, the Windows installer may work, but it has not been tested; please tell us in [Discussions](../../discussions) if you try.
+
+**Why not just export by hand?** For a few designs, File → Export in Fusion is fine. This is for when you have dozens or thousands: it keeps your project and folder layout, saves STEP files too, and can stop and pick up where it left off.
+
 ## How resuming works
 
 Running again on the same folder skips a finished item only if its files are still there

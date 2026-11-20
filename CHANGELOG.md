@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- README: a short Questions section (Linux, exporting by hand).
+
 ## 0.3.1
 
 - Install steps match Fusion's current Scripts and Add-Ins window: no Add-Ins tab; tick Run on Startup before switching Run on.
