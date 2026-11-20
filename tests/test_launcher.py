@@ -362,3 +362,92 @@ class LauncherTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AddInVersionTests(unittest.TestCase):
+    """The launcher installs its checkout's add-in only when none is installed or the installed
+    one is older; it never downgrades, and replaces nothing while an export runs. (A tester's
+    older checkout once downgraded the installed add-in, and the next toolbar click failed with
+    an ImportError.)"""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.installed = self.root / 'AddIns' / 'FusionBulkExport'
+        self.installer = launcher._installer()
+
+    def addin(self, folder, version, body='# entry\n'):
+        (folder / 'fusion_bulk_export').mkdir(parents=True, exist_ok=True)
+        (folder / 'FusionBulkExport.manifest').write_text(json.dumps(dict(version=version)), encoding='utf-8')
+        (folder / 'FusionBulkExport.py').write_text(body, encoding='utf-8')
+        (folder / 'fusion_bulk_export' / '__init__.py').write_text('', encoding='utf-8')
+        return folder
+
+    def installed_copy(self, version, body='# entry\n', stamped=True):
+        self.addin(self.installed, version, body)
+        if stamped:
+            (self.installed / self.installer.STAMP).write_text(self.installer.stamp_text(self.installed))
+
+    def update(self, source):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            copied = launcher.update_addin(self.installed, source)
+        lines = stream.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)  # one line says which add-in is used
+        return copied, lines[0]
+
+    def test_missing_add_in_is_installed_with_its_stamp(self):
+        source = self.addin(self.root / 'checkout', '0.3.0')
+        copied, line = self.update(source)
+        self.assertTrue(copied)
+        self.assertIn('Installing the add-in 0.3.0', line)
+        self.assertEqual(self.installer.read_stamp(self.installed), self.installer.stamp(source))
+
+    def test_an_older_installed_add_in_is_updated(self):
+        self.installed_copy('0.2.3', '# old\n')
+        copied, line = self.update(self.addin(self.root / 'checkout', '0.3.0'))
+        self.assertTrue(copied)
+        self.assertEqual(line, 'Updating the installed add-in 0.2.3 to 0.3.0 from this checkout.')
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# entry\n')
+
+    def test_a_newer_installed_add_in_is_never_downgraded(self):
+        self.installed_copy('0.3.0', '# newer\n')
+        copied, line = self.update(self.addin(self.root / 'checkout', '0.2.3'))
+        self.assertFalse(copied)
+        self.assertIn('newer than this checkout (0.2.3) and is never downgraded', line)
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# newer\n')
+
+    def test_the_same_version_is_kept_whether_or_not_its_files_match(self):
+        source = self.addin(self.root / 'checkout', '0.3.0')
+        self.installed_copy('0.3.0')
+        self.assertEqual(self.update(source), (False, 'Using the installed add-in 0.3.0 (the same as this checkout).'))
+        # Another build of the same version (a test build; an older checkout before a version
+        # bump): which is newer cannot be told, so the installed one stays.
+        for stamped in (True, False):
+            self.installed_copy('0.3.0', '# test build\n', stamped=stamped)
+            copied, line = self.update(source)
+            self.assertFalse(copied)
+            self.assertIn('same version as this checkout but other files, so it is kept', line)
+            self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# test build\n')
+
+    def test_nothing_is_replaced_while_an_export_runs(self):
+        self.installed_copy('0.2.3', '# old\n')
+        (self.installed / 'autorun.alive').write_text(json.dumps(dict(time=time.time(), busy='button')))
+        copied, line = self.update(self.addin(self.root / 'checkout', '0.3.0'))
+        self.assertFalse(copied)
+        self.assertIn('An export is running in Fusion', line)
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# old\n')
+        # Idle (or an add-in from before the heartbeat said so): the update goes ahead.
+        for heartbeat in (json.dumps(dict(time=time.time(), busy=None)), str(time.time())):
+            (self.installed / 'autorun.alive').write_text(heartbeat)
+            self.assertFalse(launcher.exporting(self.installed))
+        self.assertTrue(self.update(self.root / 'checkout')[0])
+
+    def test_a_job_from_an_older_checkout_keeps_the_newer_add_in(self):
+        self.installed_copy('9.0.0', '# newer\n')
+        out = self.root / 'out'
+        with contextlib.redirect_stdout(io.StringIO()) as stream:
+            launcher.install(self.installed, out, 'export')
+        self.assertIn('never downgraded', stream.getvalue())
+        self.assertEqual((self.installed / 'FusionBulkExport.py').read_text(), '# newer\n')
+        self.assertTrue((self.installed / 'autorun.json').is_file())  # the job is still sent

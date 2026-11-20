@@ -14,6 +14,11 @@
                                                     archives, STEP files); needs no Fusion
   autorun.py stop OUTPUT                            pause an export between designs
 
+The add-in in Fusion is installed or updated from this checkout only when it is missing
+or older (by version) than this checkout: an installed add-in is never downgraded, an
+installation of the same version is kept, and nothing is replaced while an export runs.
+One line says which it used (scripts/install.py replaces it on purpose).
+
 Sign in to Fusion first, and switch the add-in on in Fusion once (Shift+S, Add-Ins tab,
 FusionBulkExport: Run, and tick Run on Startup); until it runs, this command says so and
 keeps waiting. If Fusion is closed it is opened. The running add-in always watches for jobs,
@@ -119,6 +124,64 @@ def alive(installed, now=None):
     return age < ALIVE_SECONDS
 
 
+def heartbeat(installed):
+    """What the running add-in's autorun.alive says: {"busy": None | "button" | "job"}, or {} when
+    it holds no such facts (an add-in from before they were written, or none running)."""
+    try:
+        value = json.loads((installed / 'autorun.alive').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def exporting(installed, now=None):
+    """Whether the running add-in says an export is running now (a fresh heartbeat with busy set)."""
+    return alive(installed, now) and bool(heartbeat(installed).get('busy'))
+
+
+def choose_addin(installed, source=None):
+    """(install, line): whether to copy this checkout's add-in over the installed one, and one
+    line saying which add-in is used. Installed only when none is there or the installed one is
+    older by version; never downgraded; one of the same version is kept (its files may differ:
+    a test build, an edited checkout), since which is newer cannot be told."""
+    installer = _installer()
+    source = Path(source or REPO / 'FusionBulkExport')
+    mine = installer.manifest_version(source)
+    theirs = installer.manifest_version(installed)
+    if theirs is None:
+        return True, 'Installing the add-in %s from this checkout (none was installed).' % mine
+    mine_key, theirs_key = installer.version_key(mine), installer.version_key(theirs)
+    if mine_key is not None and theirs_key is not None and mine_key > theirs_key:
+        return True, 'Updating the installed add-in %s to %s from this checkout.' % (theirs, mine)
+    if mine_key != theirs_key:
+        return False, ('Using the installed add-in %s: it is newer than this checkout (%s) and is never '
+                       'downgraded.' % (theirs, mine))
+    stamp = installer.read_stamp(installed) or {}
+    if stamp.get('sha256') == installer.content_hash(source):
+        return False, 'Using the installed add-in %s (the same as this checkout).' % theirs
+    return False, ('Using the installed add-in %s: same version as this checkout but other files, so it is '
+                   'kept (scripts/install.py replaces it).' % theirs)
+
+
+def update_addin(installed, source=None):
+    """Install this checkout's add-in when choose_addin() says so, unless an export is running
+    in Fusion (then nothing is replaced at all). Prints one line; returns whether it copied."""
+    if exporting(installed):
+        print('An export is running in Fusion: the installed add-in is used as it is (%s).'
+              % (_installer().manifest_version(installed) or 'unknown version'), flush=True)
+        return False
+    copy, line = choose_addin(installed, source)
+    print(line, flush=True)
+    if not copy:
+        return False
+    shutil.copytree(str(Path(source or REPO / 'FusionBulkExport')), str(installed), dirs_exist_ok=True,
+                    ignore=runtime_files)
+    installer = _installer()
+    (installed / installer.STAMP).write_text(installer.stamp_text(Path(source or REPO / 'FusionBulkExport')),
+                                             encoding='utf-8')
+    return True
+
+
 def check_output(output):
     """The output folder as an absolute path. Its length is not limited: the add-in writes
     long paths itself (and says so if a folder cannot be used)."""
@@ -155,8 +218,7 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
             (output / stale).unlink()
         except FileNotFoundError:
             pass
-    shutil.copytree(REPO / 'FusionBulkExport', installed, dirs_exist_ok=True,
-                    ignore=runtime_files)
+    update_addin(installed)
     for stale in ('startup-error.txt', 'autorun-output/autorun-result.json'):
         try:
             (installed / stale).unlink()

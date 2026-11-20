@@ -922,3 +922,18 @@ class ResultsSwitchTests(UIBase):
             self.custom.pump()
         self.assertEqual(self.plain, [])
         self.assertEqual(len(self.definitions.itemById('FusionBulkExportResults').commands), 1)
+
+
+class HeartbeatTests(UIBase):
+    def test_the_heartbeat_says_whether_an_export_runs(self):
+        watcher = self.module.Watcher()
+        watcher.poll()
+        self.assertIsNone(json.loads((self.addin / 'autorun.alive').read_text())['busy'])
+        self.module._busy['by'] = 'button'
+        try:
+            watcher.poll()
+        finally:
+            self.module._busy['by'] = None
+        beat = json.loads((self.addin / 'autorun.alive').read_text())
+        self.assertEqual(beat['busy'], 'button')
+        self.assertGreater(beat['time'], 0)

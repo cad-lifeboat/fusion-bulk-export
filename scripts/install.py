@@ -6,13 +6,17 @@
   install.py --target DIR    use another AddIns folder (for testing)
 
 An older copy is replaced as a whole. Run-time files (job files, logs, caches) are
-never copied. Fusion lists the add-in by itself afterwards: press Shift+S, open the
+never copied. The installed copy gets install-stamp.json: its version and a hash of
+its files (the release zip carries the same stamp), so the command-line launcher can
+tell whether it is older than a checkout. Fusion lists the add-in by itself afterwards: press Shift+S, open the
 Add-Ins tab, switch FusionBulkExport on and tick Run on Startup.
 
 The release zip carries "Install (macOS).command" and "Install (Windows).bat", which
 do the same for people without Python.
 """
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -28,8 +32,11 @@ NEXT_STEP = ('Installed. In Fusion press Shift+S, open the Add-Ins tab, switch F
 
 # Files and folders the add-in creates at run time, plus caches. Never installed or packaged.
 RUNTIME_DIRS = ('__pycache__', 'autorun-output')
+# The stamp an installation carries (see stamp()). Never copied from a source folder: it is
+# written for exactly the files installed.
+STAMP = 'install-stamp.json'
 RUNTIME_FILES = ('autorun.json', 'autorun.json.last', 'autorun.alive', 'startup-error.txt', 'errors.log',
-                 'trace', 'trace.log', '.DS_Store')
+                 'trace', 'trace.log', '.DS_Store', STAMP)
 RUNTIME_SUFFIXES = ('.pyc', '.pyo')
 
 
@@ -48,6 +55,54 @@ def addin_files(source=SOURCE):
         relative = path.relative_to(source)
         if path.is_file() and not is_runtime(relative):
             yield path, relative
+
+
+def content_hash(source=SOURCE):
+    """SHA-256 over the add-in's shipped files: each relative path and its bytes, in order, with
+    CRLF read as LF (so a Windows checkout and the zip agree). The LICENSE the installers add
+    beside the add-in is not part of it, so a checkout and its installation agree."""
+    digest = hashlib.sha256()
+    for path, relative in addin_files(source):
+        if relative.as_posix() == 'LICENSE':
+            continue
+        digest.update(relative.as_posix().encode('utf-8') + b'\0')
+        digest.update(path.read_bytes().replace(b'\r\n', b'\n') + b'\0')
+    return digest.hexdigest()
+
+
+def manifest_version(folder):
+    """The version in folder's manifest, or None (no manifest, or unreadable)."""
+    try:
+        value = json.loads((Path(folder) / MANIFEST).read_text(encoding='utf-8')).get('version')
+        return str(value) if value else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def stamp(source=SOURCE):
+    """What install-stamp.json holds for these files: {"version", "sha256"}."""
+    return dict(version=manifest_version(source), sha256=content_hash(source))
+
+
+def stamp_text(source=SOURCE):
+    return json.dumps(stamp(source), indent=2, sort_keys=True) + '\n'
+
+
+def read_stamp(folder):
+    """An installation's install-stamp.json, or None (installed before stamps, or unreadable)."""
+    try:
+        value = json.loads((Path(folder) / STAMP).read_text(encoding='utf-8'))
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def version_key(version):
+    """A version for comparing: its numbers ("0.3.1" < "0.10"); None stays None."""
+    if not version:
+        return None
+    import re
+    return tuple(int(number) for number in re.findall(r'\d+', str(version)))
 
 
 def addins_dir(system=None, environ=None):
@@ -91,6 +146,7 @@ def install(target, source=SOURCE, license_file=ROOT / 'LICENSE'):
             shutil.copy2(str(path), str(destination))
         if Path(license_file).is_file() and not (staging / 'LICENSE').exists():
             shutil.copy2(str(license_file), str(staging / 'LICENSE'))
+        (staging / STAMP).write_text(stamp_text(source), encoding='utf-8')
         _remove(installed)
         staging.rename(installed)
     except BaseException:

@@ -63,6 +63,8 @@ def build(out_dir=ROOT / 'dist', root=ROOT):
         for path, relative in files(root):
             _add(archive, '%s/%s/%s' % (top, NAME, relative.as_posix()), path.read_bytes())
         _add(archive, '%s/%s/LICENSE' % (top, NAME), (root / 'LICENSE').read_bytes())
+        # The same stamp install.py writes: the launcher compares it with a checkout's.
+        _add(archive, '%s/%s/%s' % (top, NAME, install.STAMP), install.stamp_text(root / NAME).encode('utf-8'))
     return target
 
 

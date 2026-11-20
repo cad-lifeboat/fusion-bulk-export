@@ -80,7 +80,7 @@ class InstallTests(unittest.TestCase):
         installed = install.install(self.target, self.source, self.license)
         self.assertEqual(installed, self.target / 'FusionBulkExport')
         self.assertEqual(tree(installed), ['FusionBulkExport.manifest', 'FusionBulkExport.py', 'LICENSE',
-                                           'fusion_bulk_export/core.py'])
+                                           'fusion_bulk_export/core.py', 'install-stamp.json'])
         self.assertEqual(os.listdir(str(self.target)), ['FusionBulkExport'])
 
     def test_replaces_an_older_copy_as_a_whole(self):
@@ -92,9 +92,24 @@ class InstallTests(unittest.TestCase):
         (self.target / 'OtherAddIn').mkdir()
         install.install(self.target, self.source, self.license)
         self.assertEqual(tree(old), ['FusionBulkExport.manifest', 'FusionBulkExport.py', 'LICENSE',
-                                     'fusion_bulk_export/core.py'])
+                                     'fusion_bulk_export/core.py', 'install-stamp.json'])
         self.assertEqual((old / 'FusionBulkExport.py').read_text(encoding='utf-8'), '# entry\n')
         self.assertTrue((self.target / 'OtherAddIn').is_dir())
+
+    def test_the_stamp_names_the_version_and_a_hash_of_the_files(self):
+        installed = install.install(self.target, self.source, self.license)
+        stamp = install.read_stamp(installed)
+        self.assertEqual(stamp, dict(version='9.9.9', sha256=install.content_hash(self.source)))
+        # The run-time files and the stamp itself are not part of the hash; any shipped byte is.
+        (self.source / 'errors.log').write_text('later', encoding='utf-8')
+        self.assertEqual(install.content_hash(self.source), stamp['sha256'])
+        self.assertEqual(install.content_hash(installed), stamp['sha256'])
+        (self.source / 'FusionBulkExport.py').write_text('# entry\r\n', encoding='utf-8')  # CRLF reads as LF
+        self.assertEqual(install.content_hash(self.source), stamp['sha256'])
+        (self.source / 'FusionBulkExport.py').write_text('# changed\n', encoding='utf-8')
+        self.assertNotEqual(install.content_hash(self.source), stamp['sha256'])
+        self.assertLess(install.version_key('0.2.3'), install.version_key('0.3'))
+        self.assertLess(install.version_key('0.9.1'), install.version_key('0.10.0'))
 
     def test_refuses_a_source_without_manifest(self):
         (self.source / 'FusionBulkExport.manifest').unlink()
@@ -132,7 +147,7 @@ class InstallTests(unittest.TestCase):
                      / 'AddIns' / 'FusionBulkExport')
         self.assertIn(NEXT_STEP, output.getvalue())
         expected = sorted([relative.as_posix() for _, relative in install.addin_files(ROOT / 'FusionBulkExport')]
-                          + ['LICENSE'])
+                          + ['LICENSE', 'install-stamp.json'])
         self.assertEqual(tree(installed), expected)
         with contextlib.redirect_stdout(io.StringIO()):
             install.main(['--uninstall'], system='Windows', environ={'APPDATA': str(self.base)})
@@ -172,6 +187,11 @@ class LauncherTests(unittest.TestCase):
             self.assertIn(NEXT_STEP, result.stdout)
         self.assertEqual(tree(addins / 'FusionBulkExport'), self.expected())
         self.assertEqual(sorted(os.listdir(str(addins))), ['FusionBulkExport'])
+
+    def test_the_zip_carries_the_stamp_install_py_writes(self):
+        shipped = install.read_stamp(self.folder / 'FusionBulkExport')
+        self.assertEqual(shipped, install.stamp(ROOT / 'FusionBulkExport'))
+        self.assertEqual(install.content_hash(self.folder / 'FusionBulkExport'), shipped['sha256'])
 
     @unittest.skipIf(platform.system() == 'Windows' or not shutil.which('bash'), 'needs bash')
     def test_mac_launcher_refuses_without_the_add_in_folder(self):

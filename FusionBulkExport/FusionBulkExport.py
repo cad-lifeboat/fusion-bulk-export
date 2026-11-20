@@ -1,4 +1,5 @@
 """Fusion add-in entry point (MIT)."""
+import json
 import os
 import sys
 from pathlib import Path
@@ -83,7 +84,9 @@ class Watcher(threading.Thread):
         self.stopped = threading.Event()
 
     def poll(self):
-        (_HERE / 'autorun.alive').write_text(str(time.time()))
+        # The heartbeat also says whether an export is running: the command-line launcher then
+        # replaces no files of this add-in.
+        (_HERE / 'autorun.alive').write_text(json.dumps(dict(time=time.time(), busy=_busy['by'])))
         if (_HERE / 'autorun.json').is_file() and _busy['by'] != 'job':
             adsk.core.Application.get().fireCustomEvent(_EVENT, '')
 
