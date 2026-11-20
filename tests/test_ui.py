@@ -102,6 +102,11 @@ class UIBase(unittest.TestCase):
         timer = patch.object(self.module, '_Timer', Timer)
         timer.start()
         self.addCleanup(timer.stop)
+        # The add-in's clock: a timer firing moves it on by the timer's seconds.
+        self.now = [0.0]
+        clock = patch.object(self.module, '_clock', lambda: self.now[0])
+        clock.start()
+        self.addCleanup(clock.stop)
 
     @property
     def definition(self):
@@ -137,7 +142,9 @@ class UIBase(unittest.TestCase):
     def run_checks(self):
         """CHECK_SECONDS later: the timers fire their custom event, which Fusion then handles."""
         while self.timers:
-            self.timers.pop(0).function()
+            timer = self.timers.pop(0)
+            self.now[0] += timer.seconds
+            timer.function()
             self.custom.pump()
 
     @staticmethod
@@ -478,11 +485,46 @@ class UItests(UIBase):
         self.export()
         self.custom.pump()
         self.assertEqual(self.plain, [])  # not yet: Fusion may be slow
-        self.assert_fallback('commandCreated did not run within')
+        self.assert_fallback('commandCreated did not run within 120 s after execute() (24 checks)')
+        self.assertIn('Nothing is lost', self.plain[0][0])
+        self.assertEqual(len(self.plain), 1)  # exactly once
         # Fusion builds it after all, too late: it ends without a dialog (the box showed).
         definition.create()
         self.assertTrue(definition.commands[-1].isAutoExecute)
         self.assertEqual(len(self.plain), 1)
+
+    def test_a_dialog_twenty_seconds_late_after_a_long_run_is_shown_and_no_box(self):
+        self.module.run(None)
+        definition = self.definitions.itemById('FusionBulkExportResults')
+        definition.execute_mode = 'never'  # Fusion is busy: commandCreated comes later
+        self.export()
+        self.custom.pump()
+        for _ in range(4):  # 20 s of checks go by
+            timer = self.timers.pop(0)
+            self.now[0] += timer.seconds
+            timer.function()
+            self.custom.pump()
+        self.assertEqual(self.plain, [])
+        definition.create()  # Fusion builds the dialog at last
+        self.assertFalse(definition.commands[-1].isAutoExecute)
+        self.assert_dialog_only()
+
+    def test_a_busy_fusion_that_handles_few_checks_is_not_given_up_on(self):
+        # Ten minutes pass but Fusion handled only a few checks: still waiting, no box.
+        self.module.run(None)
+        definition = self.definitions.itemById('FusionBulkExportResults')
+        definition.execute_mode = 'never'
+        self.export()
+        self.custom.pump()
+        for _ in range(5):
+            timer = self.timers.pop(0)
+            self.now[0] += 120
+            timer.function()
+            self.custom.pump()
+        self.assertEqual(self.plain, [])
+        self.assertEqual(len(self.timers), 1)  # the next check is on its way
+        definition.create()
+        self.assert_dialog_only()
 
     def test_neither_the_event_nor_the_destroy_handler_start_it_then_the_check_does(self):
         self.module.run(None)

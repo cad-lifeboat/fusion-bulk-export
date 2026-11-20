@@ -237,9 +237,13 @@ def log_fallback(folder, reason):
         return None
 
 
+FALLBACK_NOTE = 'Nothing is lost: everything above is in the folder, and the report lists it.'
+
+
 def fallback(ui, data):
-    """The summary in a plain message box, OK only, with the folder and report paths as text."""
-    text = data.get('text') or report.text_of(data)
+    """The summary in a plain message box, OK only, with the folder and report paths as text, and
+    a line saying that nothing is lost (the box only stands in for the results dialog)."""
+    text = (data.get('text') or report.text_of(data)) + '\n\n' + FALLBACK_NOTE
     try:
         errors.message_box(ui, text, warning=False)
     except Exception:

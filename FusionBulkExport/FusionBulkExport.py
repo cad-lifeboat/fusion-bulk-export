@@ -234,15 +234,23 @@ class Created(adsk.core.CommandCreatedEventHandler):
 #   waiting  -> starting (execute() called) -> started (execute() returned True)
 #            -> shown (commandCreated built the dialog) -> closed
 #   or       -> fallback (the message box: the dialog could not be made, reason logged).
-# A run is claimed once, so the dialog and the message box never both show, and a check
-# CHECK_SECONDS later shows the message box if Fusion never built the dialog. Everything lives
-# in this file, not in the package, so it survives the package being reloaded (forget_package);
-# every handler is kept in _handlers until stop().
+# A run is claimed once, so the dialog and the message box never both show. A check every
+# CHECK_SECONDS sees whether Fusion has built the dialog; the message box shows only when it has
+# not after PATIENCE_SECONDS since execute() AND after PATIENCE_CHECKS checks were handled. A check
+# is a custom event, handled only when Fusion is free to handle events, so a Fusion that is busy
+# (after a run of hours, for minutes) counts few checks and is not given up on: a dialog that is
+# merely late still shows. (Until 0.3.1 one check after 5 s decided; after a two-hour run Fusion
+# took longer than that and the box replaced the dialog.) Everything lives in this file, not in the
+# package, so it survives the package being reloaded (forget_package); every handler is kept in
+# _handlers until stop().
 _RESULTS_ID = 'FusionBulkExportResults'
 _RESULTS_EVENT = 'FusionBulkExportShowResults'
 _results = {'definition': None, 'event': None, 'run': None, 'view': None, 'last': None, 'runs': 0}
 CHECK_SECONDS = 5.0
+PATIENCE_SECONDS = 120.0
+PATIENCE_CHECKS = 12
 _Timer = threading.Timer  # (the tests run the check themselves)
+_clock = time.monotonic   # (and move this clock)
 
 
 def _results_module():
@@ -345,6 +353,7 @@ def start_results(trigger):
     if run is None or run['state'] != 'waiting':
         return
     run['state'] = 'starting'
+    run.update(asked=_clock(), checks=0)
     try:
         started = results_definition().execute()
     except Exception as error:
@@ -361,8 +370,9 @@ def start_results(trigger):
 
 
 def check_results(number):
-    """CHECK_SECONDS after the export: the dialog must be built by now, or the message box shows
-    (and a dialog Fusion builds later ends without showing)."""
+    """A check, CHECK_SECONDS after the last: once the dialog is asked for (execute()), it is
+    waited for until PATIENCE_SECONDS have passed and PATIENCE_CHECKS checks were handled; only
+    then the message box shows (and a dialog Fusion builds later ends without showing)."""
     run = _results['run']
     if run is None or run['number'] != number:
         return
@@ -373,7 +383,14 @@ def check_results(number):
             start_check(number)  # commandCreated gets its time from now
         return
     if run['state'] in ('starting', 'started'):
-        results_fallback(run['data'], 'commandCreated did not run within %g s after execute()' % CHECK_SECONDS)
+        run['checks'] = run.get('checks', 0) + 1
+        waited = _clock() - run.get('asked', _clock())
+        if waited < PATIENCE_SECONDS or run['checks'] < PATIENCE_CHECKS:
+            trace('results dialog not built yet (%d s, check %d): waiting' % (waited, run['checks']))
+            start_check(number)
+            return
+        results_fallback(run['data'], 'commandCreated did not run within %d s after execute() (%d checks)'
+                         % (waited, run['checks']))
 
 
 class ResultsEvent(adsk.core.CustomEventHandler):
