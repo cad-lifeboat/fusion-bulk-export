@@ -35,6 +35,17 @@ body:
       description: Output of `scripts/autorun.py status OUT` or the end-of-run dialog.
       render: text
   - type: textarea
+    id: errors
+    attributes:
+      label: errors.log
+      description: |
+        Paste `errors.log` from the add-in folder, if it exists:
+        macOS `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionBulkExport/errors.log`,
+        Windows `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\FusionBulkExport\errors.log`
+        (or the folder you added with the green "+"). Replace your user name in the paths with `X`,
+        and any project or design name with `X` too.
+      render: text
+  - type: textarea
     id: what
     attributes:
       label: What happened
