@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Not yet tested on real Fusion.** Everything below passes the automated tests against a simulated Fusion; 0.3.0 is released only after a test pass on real Fusion on macOS and Windows.
+Tested on real Fusion 2706.1.17 on macOS and Windows 11 before release: the dialog and tree, small and whole-account exports (59 designs), resume from a folder made by 0.2, cancel and continue, long output paths, the results dialog and the command line. Not yet exercised on real Fusion: runs of hundreds of designs with this version, the pause after repeated failures, and a design whose links Fusion cannot read (covered by automated tests only).
 
 ### What you get
 - Readable names: files and folders keep their real names, in any language, with only the characters Windows or macOS cannot store replaced. Designs are saved as `<name> v<version>.f3d` and `.step`. A short `~1a2b` suffix is added only when two items in one folder would get the same name, and same-named sibling folders stay apart.
