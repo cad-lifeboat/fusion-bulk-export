@@ -126,24 +126,39 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue((out / 'STOP').exists())
         self.assertIn('STOP is set', stream.getvalue())
 
-    def test_install_writes_config_without_watch_marker(self):
+    def test_install_writes_config(self):
         installed, out = self.root / 'AddIns' / 'FusionBulkExport', self.root / 'out'
         out.mkdir()
         (out / 'STOP').write_text('')
         installed.mkdir(parents=True)
-        (installed / 'autorun.watch').write_text('')  # from an earlier version
         launcher.install(installed, out, 'export', ['p1'], 5)
         self.assertEqual(json.loads((installed / 'autorun.json').read_text()),
                          dict(output=str(out), mode='export', projects=['p1'], limit=5))
-        self.assertFalse((installed / 'autorun.watch').exists())
         self.assertTrue((installed / 'FusionBulkExport.py').exists())
         # Every module of the add-in package is installed (a broad "autorun*" ignore once dropped one).
         source = Path(launcher.__file__).resolve().parents[1] / 'FusionBulkExport' / 'fusion_bulk_export'
         for module in source.glob('*.py'):
             self.assertTrue((installed / 'fusion_bulk_export' / module.name).is_file(), module.name)
         self.assertFalse((out / 'STOP').exists())
-        launcher.set_startup(installed, True)
-        self.assertTrue(json.loads((installed / 'FusionBulkExport.manifest').read_text())['runOnStartup'])
+
+    def test_start_launches_fusion_without_touching_the_manifest(self):
+        # Fusion's Run on Startup lives in Fusion's own settings, so the launcher leaves the
+        # installed manifest exactly as shipped and relies on the hint when the add-in stays off.
+        installed = self.root / 'AddIns' / 'FusionBulkExport'
+        source = Path(launcher.__file__).resolve().parents[1] / 'FusionBulkExport' / 'FusionBulkExport.manifest'
+        args = launcher.argparse.Namespace(output=str(self.root / 'out'), command='export', project=None,
+                                           limit=None, folder=None, designs_only=False, timeout=10)
+        launched, waited = [], []
+        with patch.object(launcher, 'system', return_value='Darwin'), \
+                patch.object(launcher, 'addins_dir', return_value=installed.parent), \
+                patch.object(launcher, 'fusion_running', return_value=False), \
+                patch.object(launcher, 'launch_fusion', side_effect=lambda name: launched.append(name)), \
+                patch.object(launcher, 'wait', side_effect=lambda *a, **k: waited.append(k) or 0):
+            self.assertEqual(launcher.start(args), 0)
+        self.assertEqual(launched, ['Darwin'])
+        self.assertEqual(waited, [{}])  # the default wait, which prints the hint if nothing starts
+        self.assertEqual((installed / 'FusionBulkExport.manifest').read_bytes(), source.read_bytes())
+        self.assertFalse(hasattr(launcher, 'set_startup'))
 
     def test_wait_prints_manual_hint_once_then_reports(self):
         out, installed = self.root / 'out', self.root / 'inst'
@@ -162,6 +177,7 @@ class LauncherTests(unittest.TestCase):
             status = launcher.wait(installed, out, 86400, sleep=sleep, clock=lambda: next(ticks))
         self.assertEqual(status, 1)
         self.assertEqual(stream.getvalue().count('has not started the add-in'), 1)
+        self.assertIn('tick Run on Startup', stream.getvalue())
 
     def test_wait_reports_add_in_startup_crash(self):
         out, installed = self.root / 'out', self.root / 'inst'
@@ -186,16 +202,17 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn('rejected the job', stream.getvalue())
 
-    def test_reset_clears_stale_job_files_and_keeps_heartbeat(self):
+    def test_reset_clears_a_stale_job_and_keeps_everything_else(self):
         installed = self.root / 'FusionBulkExport'
         installed.mkdir()
-        for name in ('autorun.watch', 'autorun.json', 'autorun.alive'):
+        for name in ('autorun.json', 'autorun.alive'):
             (installed / name).write_text('')
-        (installed / 'FusionBulkExport.manifest').write_text(json.dumps(dict(runOnStartup=True)))
+        manifest = json.dumps(dict(version='1.0.0', runOnStartup=False))
+        (installed / 'FusionBulkExport.manifest').write_text(manifest)
         with contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(launcher.reset(installed), 0)
         self.assertEqual(sorted(p.name for p in installed.iterdir()), ['FusionBulkExport.manifest', 'autorun.alive'])
-        self.assertFalse(json.loads((installed / 'FusionBulkExport.manifest').read_text())['runOnStartup'])
+        self.assertEqual((installed / 'FusionBulkExport.manifest').read_text(), manifest)
         self.assertIn('button is always available', out.getvalue())
 
     def test_wait_reports_busy_fusion(self):

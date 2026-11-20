@@ -12,9 +12,10 @@
                                                     archives, STEP files); needs no Fusion
   autorun.py stop OUTPUT                            pause an export between designs
 
-Sign in to Fusion first. The first run needs Fusion closed (or the add-in started by
-hand from Utilities > Add-Ins); later runs reuse the open Fusion session, where the add-in
-always watches for jobs and its toolbar button stays available. A job sent while an export
+Sign in to Fusion first, and switch the add-in on in Fusion once (Shift+S, Add-Ins tab,
+FusionBulkExport: Run, and tick Run on Startup); until it runs, this command says so and
+keeps waiting. If Fusion is closed it is opened. The running add-in always watches for jobs,
+and its toolbar button stays available. A job sent while an export
 from the button is running is refused with a "busy" message: run the command again later.
 Environment: FUSION_APP (app name, .app or .exe path), AUTORUN_TIMEOUT_SECONDS
 (default 86400).
@@ -34,16 +35,15 @@ import time
 # Files the add-in creates at run time. Never copied over an installation (and never
 # a broad glob: "autorun*" would also skip the autorun.py module itself).
 RUNTIME_FILES = shutil.ignore_patterns(
-    '__pycache__', 'selftest.json', 'selftest.json.last', 'selftest-output', 'autorun.json',
-    'autorun.json.last', 'autorun.watch', 'autorun.alive', 'autorun-output', 'startup-error.txt',
-    'errors.log', 'trace', 'trace.log')
+    '__pycache__', 'autorun.json', 'autorun.json.last', 'autorun.alive', 'autorun-output',
+    'startup-error.txt', 'errors.log', 'trace', 'trace.log')
 
 REPO = Path(__file__).resolve().parent.parent
 ALIVE_SECONDS = 20
 SAFE_LOG = re.compile(r'^\S+ (project \d+/\d+ design \d+|autorun (start (export|inventory|diagnostics)|finished|busy)|inventory: [\d ,a-z]+|inventory hub \d+/\d+ project \d+/\d+: \d+ files|inventory stopped)$')
 MANUAL_HINT_SECONDS = 180
-MANUAL_HINT = ('Fusion has not started the add-in. In Fusion: Utilities > Add-Ins > Scripts and '
-               'Add-Ins, select FusionBulkExport, click Run (tick Run on Startup).')
+MANUAL_HINT = ('Fusion has not started the add-in. In Fusion press Shift+S, open the Add-Ins tab, '
+               'switch FusionBulkExport on (Run) and tick Run on Startup. This command keeps waiting.')
 
 
 def system():
@@ -103,13 +103,6 @@ def alive(installed, now=None):
     return age < ALIVE_SECONDS
 
 
-def set_startup(installed, on):
-    manifest = installed / 'FusionBulkExport.manifest'
-    settings = json.loads(manifest.read_text(encoding='utf-8'))
-    settings['runOnStartup'] = bool(on)
-    manifest.write_text(json.dumps(settings, indent=2) + '\n', encoding='utf-8')
-
-
 def check_output(output):
     """The output folder as an absolute path. Its length is not limited: the add-in writes
     long paths itself (and says so if a folder cannot be used)."""
@@ -149,10 +142,6 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
             (installed / stale).unlink()
         except FileNotFoundError:
             pass
-    try:
-        (installed / 'autorun.watch').unlink()  # the marker of earlier versions; no longer used
-    except FileNotFoundError:
-        pass
     config = dict(output=str(output), mode=mode)
     if projects:
         config['projects'] = projects
@@ -268,25 +257,23 @@ def start(args):
         # Open but not watching: the job is in place; starting the add-in by hand picks it up.
         print(MANUAL_HINT, flush=True)
         return wait(installed, output, args.timeout, hint_after=float('inf'))
-    set_startup(installed, True)
-    try:
-        launch_fusion(name)
-        return wait(installed, output, args.timeout)
-    finally:
-        set_startup(installed, False)
+    # Whether Fusion starts the add-in is Fusion's own Run on Startup setting (kept in Fusion's
+    # settings, not in the add-in's manifest), so nothing here can switch it on. If the add-in
+    # does not come up, wait() prints MANUAL_HINT once.
+    launch_fusion(name)
+    return wait(installed, output, args.timeout)
 
 
 def reset(installed):
-    """Kept for old instructions: clears stale job files. The add-in no longer has an unattended
-    mode; its toolbar button is always there. A running job finishes first."""
+    """Kept for old instructions: clears a job file that was never picked up. The toolbar button
+    is always there. A running job finishes first."""
     removed = []
-    for name in ('autorun.json', 'autorun.watch'):
+    for name in ('autorun.json',):
         try:
             (installed / name).unlink()
             removed.append(name)
         except FileNotFoundError:
             pass
-    set_startup(installed, False) if (installed / 'FusionBulkExport.manifest').is_file() else None
     print('Nothing to reset: the Fusion Bulk Export button is always available%s.'
           % (' (removed stale ' + ', '.join(removed) + ')' if removed else ''))
     return 0
