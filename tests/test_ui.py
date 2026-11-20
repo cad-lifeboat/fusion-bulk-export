@@ -20,7 +20,7 @@ class Event:
         self.handlers.append(handler)
 
 
-class UItests(unittest.TestCase):
+class UIBase(unittest.TestCase):
     def setUp(self):
         import adsk
         self.adsk = adsk
@@ -28,8 +28,7 @@ class UItests(unittest.TestCase):
         adsk.core.CommandCreatedEventHandler = object
         self.temp = tempfile.TemporaryDirectory(prefix='fusion-')
         self.addCleanup(self.temp.cleanup)
-        self.folder = NS(title='', folder=self.temp.name, showDialog=lambda: 1)
-        adsk.core.DialogResults = NS(DialogOK=1)
+        self.folder = NS(title='', folder=self.temp.name, showDialog=lambda: adsk.core.DialogResults.DialogOK)
         self.progress = NS(isCancelButtonShown=False, wasCancelled=False,
                            show=lambda *args: None, hide=lambda: None)
         self.summaries, self.errors = [], []
@@ -105,6 +104,7 @@ class UItests(unittest.TestCase):
         command.validateInputs.handlers[0].notify(args)
         return args.areInputsValid
 
+class UItests(UIBase):
     def test_dialog_defaults_to_everything(self):
         self.picker_data()
         command = self.open_dialog()
@@ -179,7 +179,7 @@ class UItests(unittest.TestCase):
         self.assertTrue((Path(folder) / 'manifest.json').exists())
 
     def test_folder_selection_cancel_does_not_open(self):
-        self.folder.showDialog = lambda: 0
+        self.folder.showDialog = lambda: self.adsk.core.DialogResults.DialogCancel
         self.module.Execute().notify(None)
         self.assertEqual(self.file.calls, 0)
         self.assertEqual(self.summaries, [])
@@ -191,6 +191,98 @@ class UItests(unittest.TestCase):
         self.assertEqual(self.file.calls, 0)
         self.assertIn('Cancelled', self.summaries[0][0])
         self.assertTrue((Path(self.temp.name) / 'manifest.json').exists())
+
+
+class FriendlyErrorTests(UIBase):
+    def setUp(self):
+        super().setUp()
+        log = tempfile.TemporaryDirectory(prefix='log-')
+        self.addCleanup(log.cleanup)
+        self.log = Path(log.name)
+        patcher = patch.object(self.module, '_LOG_DIR', str(self.log))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def export(self):
+        command = self.open_dialog()
+        self.errors.clear()
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(len(self.errors), 1, self.errors)
+        text = self.errors[0][0]
+        self.assertNotIn('Traceback', text)
+        self.assertFalse((self.log / 'errors.log').exists())
+        return text
+
+    def test_unusable_folder_is_one_plain_sentence(self):
+        target = Path(self.temp.name) / 'a file'
+        target.write_text('')
+        self.folder.folder = str(target)
+        text = self.export()
+        self.assertTrue(text.startswith('This folder cannot be used for the export: '), text)
+        self.assertIn('Choose a folder', text)
+        self.assertEqual(self.summaries, [])
+
+    def test_damaged_manifest(self):
+        (Path(self.temp.name) / 'manifest.json').write_text('{not json')
+        text = self.export()
+        self.assertIn('manifest.json in', text)
+        self.assertIn('cannot be read', text)
+        self.assertEqual(self.file.calls, 0)
+
+    def test_newer_manifest(self):
+        (Path(self.temp.name) / 'manifest.json').write_text('{"schema": 99, "entries": [], "runs": []}')
+        self.assertIn('newer version', self.export())
+
+    def test_signed_out(self):
+        self.app.data.dataHubs.items.clear()
+        text = self.export()
+        self.assertIn('no hubs', text)
+        self.assertIn('Sign in', text)
+
+    def test_unexpected_error_is_logged_with_copyable_details(self):
+        command = self.open_dialog()
+        self.module._code['export_with_dialogs'] = lambda *args: {}['boom']
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.errors, [])
+        prompt, title, details = self.summaries[-1]
+        log = self.log / 'errors.log'
+        self.assertIn(str(log), prompt)
+        self.assertIn("KeyError: 'boom'", details)
+        self.assertNotIn('\n', details)
+        self.assertIn("KeyError: 'boom'", log.read_text())
+
+    def test_old_fusion_offers_everything_only(self):
+        self.module.run(None)
+        command = NS(execute=Event(), inputChanged=Event(), validateInputs=Event(), incomingFromHTML=Event(),
+                     commandInputs=fake.OldInputs(),
+                     setDialogInitialSize=lambda w, h: None, setDialogMinimumSize=lambda w, h: None)
+        self.definition.commandCreated.handlers[-1].notify(NS(command=command))
+        self.assertEqual(self.errors, [])
+        inputs = command.commandInputs
+        self.assertEqual([item.name for item in inputs.find('fbx_mode').listItems], ['Everything'])
+        self.assertIn('needs a newer Fusion', inputs.find('fbx_old').text)
+        self.assertIsNone(inputs.find('fbx_tree'))
+        self.change(command, inputs.find('fbx_mode'))
+        self.assertTrue(self.valid(command))
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(self.exported(), ['file-1'])
+
+
+class ErrorMappingTests(unittest.TestCase):
+    def test_trouble_codes_and_known_failures(self):
+        import errno
+        from fusion_bulk_export import errors
+        from fusion_bulk_export.core import Trouble
+        for code, words in (('disk_full', 'disk space'), ('output_missing', 'Reconnect'),
+                            ('output_unwritable', 'write to'), ('failing', 'signed in')):
+            known = errors.friendly(Trouble(code, 'Reason.'))
+            self.assertEqual(known.message, 'The export stopped: Reason.')
+            self.assertIn(words, known.next_step)
+        self.assertIn('disk space', errors.friendly(OSError(errno.ENOSPC, 'No space left on device')).next_step)
+        self.assertIn('Sign in', errors.friendly(TimeoutError('No hubs appeared; is Fusion signed in?')).text())
+        self.assertIsNone(errors.friendly(KeyError('x')))
+        self.assertIsNone(errors.output_folder(ValueError('something else'), '/x'))
+        self.assertIn('cannot be used', errors.output_folder(PermissionError(13, 'Permission denied'), '/x').text())
 
 
 class ProgressTextTests(unittest.TestCase):

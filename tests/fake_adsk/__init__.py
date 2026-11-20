@@ -124,6 +124,13 @@ def install():
     adsk.core.ValidateInputsEventHandler = object
     adsk.core.HTMLEventHandler = object
     adsk.core.DropDownStyles = NS(TextListDropDownStyle=1)
+    # Documented enums of messageBox and the dialogs (values here are arbitrary but distinct).
+    adsk.core.MessageBoxButtonTypes = NS(OKButtonType=0, OKCancelButtonType=1, RetryCancelButtonType=2,
+                                         YesNoButtonType=3, YesNoCancelButtonType=4)
+    adsk.core.MessageBoxIconTypes = NS(NoIconIconType=0, QuestionIconType=1, InformationIconType=2,
+                                       WarningIconType=3, CriticalIconType=4)
+    adsk.core.DialogResults = NS(DialogError=-1, DialogOK=0, DialogCancel=1, DialogNo=2, DialogYes=3,
+                                 DialogRetry=4)
     for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
         sys.modules[name] = module
 
@@ -198,3 +205,11 @@ class Group:
         if not value:
             raise RuntimeError('3 : the group cannot be folded')
         self._expanded = value
+
+
+class OldInputs(Inputs):
+    """Command inputs of an older Fusion, without HTML (browser) inputs in command dialogs."""
+    def __getattribute__(self, name):
+        if name == 'addBrowserCommandInput':
+            raise AttributeError(name)
+        return super().__getattribute__(name)

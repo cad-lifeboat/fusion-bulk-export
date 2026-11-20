@@ -106,17 +106,21 @@ _picker = None
 _code = {}  # the package's routines as loaded when the dialog opened
 
 
+# errors.log goes beside the add-in (the synthetic test API sets its own folder or none).
+_LOG_DIR = None if getattr(adsk, '_synthetic', False) else _DIR
+
+
 def report(title):
-    """Show the current exception and append it to errors.log beside the add-in."""
+    """Tell the user about the current exception: expected problems in plain words, anything
+    else logged to errors.log with the details in a copyable box."""
+    error = sys.exc_info()[1]
     detail = traceback.format_exc()
+    ui = adsk.core.Application.get().userInterface
     try:
-        if getattr(adsk, '_synthetic', False):
-            raise OSError('tests do not write errors.log into the source tree')
-        with open(os.path.join(_DIR, 'errors.log'), 'a', encoding='utf-8') as stream:
-            stream.write('%s %s\n%s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S'), title, detail))
-    except OSError:
-        pass
-    adsk.core.Application.get().userInterface.messageBox(detail, title)
+        from fusion_bulk_export import errors
+        errors.show(ui, title, error, detail, _LOG_DIR)
+    except Exception:
+        ui.messageBox(detail, title)  # the package itself is broken: show the raw details
 
 
 def trace(message):

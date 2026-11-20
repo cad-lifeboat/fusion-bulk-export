@@ -5,8 +5,27 @@ import os
 import adsk
 import adsk.core
 
+from . import errors
 from .core import Exporter
 from .fusion import FusionAdapter
+
+
+def open_exporter(output, adapter):
+    """The Exporter for output, or a UserError saying why that folder cannot be used."""
+    try:
+        return Exporter(output, adapter)
+    except Exception as error:
+        known = errors.output_folder(error, output)
+        if known is None:
+            raise
+        raise known from error
+
+
+def has_hubs(app):
+    try:
+        return app.data.dataHubs.count > 0
+    except Exception:
+        return False
 
 
 def describe(state):
@@ -27,6 +46,9 @@ def export_with_dialogs(app, selection):
     if dialog.showDialog() != adsk.core.DialogResults.DialogOK:
         return None
     output = os.path.normpath(dialog.folder)  # Fusion returns C:/x on Windows; show C:\x
+    if not has_hubs(app):
+        raise errors.no_hubs()
+    exporter = open_exporter(output, FusionAdapter(app))
     progress = ui.createProgressDialog()
     progress.isCancelButtonShown = True
     progress.show('Fusion Bulk Export', 'Starting…', 0, 1, 0)
@@ -41,7 +63,6 @@ def export_with_dialogs(app, selection):
             adsk.doEvents()
             return progress.wasCancelled
 
-        exporter = Exporter(output, FusionAdapter(app))
         counts = exporter.run(app.data, cancelled, update, selection=selection)
         progress.hide()
         summary = ('Cancelled.\n' if exporter.run_info['cancelled'] else 'Finished.\n')

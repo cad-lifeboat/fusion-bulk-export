@@ -9,6 +9,8 @@ from .core import Selection, collection
 
 EVERYTHING = 'Everything'
 CHOOSE = 'Choose projects or folders'
+OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
+              'This one can export everything.')
 TREE_HTML = Path(__file__).resolve().parent.parent / 'ui' / 'tree.html'
 
 
@@ -27,14 +29,24 @@ class Picker:
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
-        self.mode.listItems.add(CHOOSE, False, '')
         self.tip = inputs.addTextBoxCommandInput(
             'fbx_tip', '', 'Hundreds or thousands of designs? Start with one project or folder '
             '(Choose projects or folders), check it, then do the rest into the same output folder.', 3, True)
-        self.tree = inputs.addBrowserCommandInput('fbx_tree', '', TREE_HTML.as_uri(), 300, 0)
-        self.tree.isVisible = False
-        self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
-        self.summary.isVisible = False
+        self.tree = self.summary = None
+        add_browser = getattr(inputs, 'addBrowserCommandInput', None)
+        try:
+            self.tree = add_browser('fbx_tree', '', TREE_HTML.as_uri(), 300, 0) if add_browser else None
+        except Exception as error:
+            trace('no tree: %s' % error)
+        if self.tree is None:
+            # Older Fusion: no HTML in command dialogs, so no tree; everything still exports.
+            inputs.addTextBoxCommandInput('fbx_old', '', OLD_FUSION, 2, True)
+            self.tip.isVisible = False  # it speaks of choosing, which this Fusion cannot offer
+        else:
+            self.mode.listItems.add(CHOOSE, False, '')
+            self.tree.isVisible = False
+            self.summary = inputs.addTextBoxCommandInput('fbx_summary', '', 'Nothing chosen yet.', 1, True)
+            self.summary.isVisible = False
         trace('picker built')
 
     @property
@@ -42,7 +54,7 @@ class Picker:
         return self.mode.selectedItem is not None and self.mode.selectedItem.name == CHOOSE
 
     def changed(self, changed_input):
-        if changed_input.id == self.mode.id:
+        if changed_input.id == self.mode.id and self.tree is not None:
             self.tree.isVisible = self.summary.isVisible = self.choosing
             self.tip.isVisible = not self.choosing
             self.trace('mode choosing=%s' % self.choosing)
