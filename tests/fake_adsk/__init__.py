@@ -36,7 +36,14 @@ class File:
         self.hasOutofDateChildReferences = False
         # Set to a message: Documents.open raises it, as when a linked design is missing.
         self.open_error = None
-        self.step_solids = 1  # solids in the STEP the synthetic exporter writes
+        self.step_solids = 1  # solids in the STEP the synthetic exporter writes (of the shown bodies)
+        # The STEP options' hidden-bodies properties (isIncludingInvisibleBodies and
+        # isIncludingInvisibleComponents, seen on real Fusion's export options): 'both' (offered),
+        # 'none' (this Fusion has neither), 'bodies' (only the first), or 'raise' (setting fails).
+        self.step_hidden_options = 'both'
+        # Solids a STEP with hidden bodies included adds to step_solids; None: the design's
+        # switched-off solid bodies (see hidden_solids()).
+        self.step_hidden_solids = None
         # DataFile.thumbnail: a DataObjectFuture, finished here (see thumbnail()).
         self.thumbnail = thumbnail()
         self.root = None      # a root component (see component()) to use instead of the default
@@ -143,9 +150,10 @@ class Manager(Weak):
         return path if path.endswith('.f3d') else path + '.f3d'
 
     def createSTEPExportOptions(self, path):
-        return path
+        return step_options(path, self.file.step_hidden_options)
 
     def execute(self, path):
+        options = path  # a STEP's options are a str too (step_options), with properties
         # Real Fusion hangs on a path over 260 characters, even with the \\?\ prefix: never give it one.
         assert len(path) <= 259 and not path.startswith('\\\\?\\'), 'Fusion would hang on ' + path
         if self.file.failures:
@@ -158,8 +166,45 @@ class Manager(Weak):
                 raise self.document.dataFile.linked_error
             write_archive(path, links)
         else:
-            Path(path).write_bytes(step_text(self.file.step_solids))
+            solids = self.file.step_solids
+            if getattr(options, 'isIncludingInvisibleBodies', False):
+                extra = self.file.step_hidden_solids
+                solids += hidden_solids(self.document) if extra is None else extra
+            Path(path).write_bytes(step_text(solids))
         return True
+
+
+class OptionError(Exception):
+    pass
+
+
+def step_options(path, mode='both'):
+    """STEPExportOptions: filename, plus (mode 'both') isIncludingInvisibleBodies and
+    isIncludingInvisibleComponents, both False until set, as seen on real Fusion; 'none' has
+    neither, 'bodies' only the first, 'raise' both but setting them fails. A str (the path) as
+    well, so tests that look at the paths Fusion was given keep working."""
+    class Options(str):
+        def __setattr__(self, name, value):
+            if mode == 'raise' and name.startswith('isIncluding'):
+                raise OptionError('3 : synthetic refusal')
+            object.__setattr__(self, name, value)
+    options = Options(path)
+    object.__setattr__(options, 'filename', path)
+    names = dict(both=HIDDEN, bodies=HIDDEN[:1], none=(), **{'raise': HIDDEN})[mode]
+    for name in names:
+        object.__setattr__(options, name, False)
+    return options
+
+
+HIDDEN = ('isIncludingInvisibleBodies', 'isIncludingInvisibleComponents')
+
+
+def hidden_solids(document):
+    """The switched-off solid bodies of an open document's components (each component once)."""
+    if document is None:
+        return 0
+    return sum(1 for component in document.components for index in range(component.bRepBodies.count)
+               if component.bRepBodies.item(index).isSolid and not component.bRepBodies.item(index).isLightBulbOn)
 
 
 PNG = b'\x89PNG\r\n\x1a\n synthetic thumbnail'
@@ -322,10 +367,11 @@ def body(solid=True, shown=True):
     return NS(isSolid=solid, isLightBulbOn=shown)
 
 
-def component(identity, bodies=(), occurrences=()):
-    """A component with bodies; on a root, occurrences is its allOccurrences (see occurrence())."""
+def component(identity, bodies=(), occurrences=(), meshes=0):
+    """A component with bodies (and meshes mesh bodies); on a root, occurrences is its
+    allOccurrences (see occurrence())."""
     return NS(id=identity, bRepBodies=Collection(*bodies), allOccurrences=Collection(*occurrences),
-              isBodiesFolderLightBulbOn=True)
+              isBodiesFolderLightBulbOn=True, meshBodies=Collection(*[NS() for _ in range(meshes)]))
 
 
 def occurrence(part, visible=True, bulb=True, parent=None):
@@ -385,7 +431,7 @@ class Document:
             part = component('part', [body(shown=False)])
             root = component('root', [body(), body(solid=False)], [occurrence(part)])
             components = [root, part]
-        self.root = root
+        self.root, self.components = root, components
         me = weakref.ref(self)
         self._products = NS(itemByProductType=lambda product: design_product(file, me(), root, components)
                             if file.design else None)

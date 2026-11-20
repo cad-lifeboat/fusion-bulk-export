@@ -5,9 +5,10 @@ adsk), so they also run outside Fusion.
 - archive_facts(): does an .f3d (or .f3z) open as a zip with Fusion's members; with full=True,
   every member is also read to the end, which checks its CRC.
 - inline(): the quick checks made right after each export. A STEP or archive that is broken
-  raises BadExport (the design is tried again); a STEP with no bodies, or fewer solids than the
-  distinct bodies Fusion showed, is only a warning stored on the manifest entry (see
-  solid_warning(); other differences are only recorded).
+  raises BadExport (the design is tried again); a STEP missing bodies (empty, fewer solids than
+  expected, hidden bodies left out) is only a warning stored on the manifest entry, and a design
+  with no solid bodies at all only a note (see step_verdict(); other differences are only
+  recorded).
 - check_folder(): "Check this folder": every finished item of an export folder checked again,
   with full hashes. Used by `autorun.py check` and `verify-export.py`; it needs no Fusion.
 """
@@ -98,25 +99,118 @@ def archive_facts(path, full=True):
     return problems, len(designs), unchecked
 
 
-def solid_warning(solids, expected, distinct=None):
-    """The warning for a STEP's solid count against Fusion's visible counts, or None.
+def solid_warning(solids, expected, distinct=None, where='Fusion showed'):
+    """The warning for a STEP's solid count against Fusion's counts, or None.
 
     expected counts each shown occurrence (two instances of a part are two solids); distinct
     counts each shown component once. A STEP writer may write either, or something in between
     (seen on real Fusion: about twice Fusion's count, and other in-between numbers), so a
     difference alone says nothing: the numbers are only recorded (step_solids beside Fusion's
     counts). A warning is given only when the STEP is empty (with the bodies Fusion showed, if
-    any) or holds fewer solids than the distinct count: bodies are then really missing."""
+    any) or holds fewer solids than the distinct count: bodies are then really missing. where
+    says what the numbers are ('Fusion showed'; 'in the design' when hidden bodies were asked
+    for too)."""
     if solids == 0:
-        return 'STEP has no bodies' + (' (Fusion showed %d)' % expected if expected else '')
+        if not expected:
+            return 'STEP has no bodies'
+        if where == 'Fusion showed':
+            return 'STEP has no bodies (Fusion showed %d)' % expected
+        return 'STEP has no bodies (%s %s)' % (plural(expected, 'solid body'), where)
     if distinct is not None and solids < distinct:
-        return 'STEP has %d solids, fewer than the %d distinct ones Fusion showed' % (solids, distinct)
+        return 'STEP has %s, fewer than the %d distinct ones %s' % (plural(solids, 'solid'), distinct, where)
     return None
 
 
 def solids_agree(solids, expected, distinct=None):
     """Whether a STEP's solid count is one of Fusion's counts exactly."""
     return solids == expected or (distinct is not None and solids == distinct)
+
+
+def no_solids_note(surfaces=None, meshes=None):
+    """The quiet note for a design with no solid bodies at all (only sketches, surfaces or
+    meshes): its STEP has no solids, which is expected and not a warning."""
+    if surfaces is None or meshes is None:
+        return 'No solid bodies (sketches or surfaces only): its STEP is empty.'
+    if not surfaces and not meshes:
+        return 'No solid bodies (sketches only): its STEP is empty.'
+    kinds = ' and '.join(kind for kind, count in (('surfaces', surfaces), ('meshes', meshes)) if count)
+    return 'No solid bodies (%s only): its STEP has no solids.' % kinds
+
+
+def hidden_warning(hidden, empty):
+    """The warning for hidden solid bodies the STEP left out (this Fusion could not include
+    them); empty: the STEP has no bodies because every body is hidden."""
+    if empty:
+        if hidden == 1:
+            return 'Its one body is hidden, so its STEP is empty; the body is in the .f3d.'
+        return 'All its %d bodies are hidden, so its STEP is empty; they are in the .f3d.' % hidden
+    return 'Its STEP leaves out %s; %s in the .f3d.' % (plural(hidden, 'hidden body'),
+                                                         'it is' if hidden == 1 else 'they are')
+
+
+# Every warning step_verdict() can give, old wordings included: what entry_step() replaces.
+VERDICT_WARNING = re.compile(r'^(STEP has (no bodies|\d+ solids?, fewer than)|Its STEP leaves out \d+ hidden bod'
+                             r'|Its one body is hidden, so its STEP|All its \d+ bodies are hidden, so its STEP)')
+
+
+def step_verdict(solids, facts):
+    """What a STEP's solid count means for a design, from the facts Fusion gave (a manifest
+    entry, or the adapter's details): {'warnings': [...], 'note': text or None,
+    'hidden_left_out': n, 'expected': the count compared with, or None when unknown}.
+
+    - No solid bodies at all (solid_bodies 0): an empty STEP is expected; only a quiet note.
+    - Hidden bodies included (step_includes_hidden true): every solid body of the design
+      (solid_bodies, each component once) is expected.
+    - Otherwise the STEP holds the visible bodies only: hidden ones it left out are one warning
+      (they are in the .f3d), and fewer solids than the visible distinct ones another.
+    The tolerance is solid_warning()'s: only an empty STEP or fewer solids than the distinct count
+    is a warning."""
+    facts = facts or {}
+    result = dict(warnings=[], note=None, hidden_left_out=0, expected=None)
+    total = facts.get('solid_bodies')
+    shown = facts.get('visible_solid_bodies', total)
+    distinct = facts.get('visible_solid_bodies_distinct')
+    if total == 0 or (total is None and shown == 0):
+        result['expected'] = 0
+        if solids == 0:
+            result['note'] = no_solids_note(facts.get('surface_bodies'), facts.get('mesh_bodies'))
+        return result
+    if facts.get('step_includes_hidden') is True and total is not None:
+        result['expected'] = total
+        warning = solid_warning(solids, total, total, where='in the design')
+        if warning:
+            result['warnings'].append(warning)
+        return result
+    result['expected'] = shown
+    seen = distinct if distinct is not None else shown
+    hidden = total - seen if total is not None and seen is not None and total > seen else 0
+    if hidden:
+        result['hidden_left_out'] = hidden
+        empty = solids == 0 and not seen
+        result['warnings'].append(hidden_warning(hidden, empty))
+        if empty:
+            return result
+    warning = solid_warning(solids, shown, distinct)
+    if warning:
+        result['warnings'].append(warning)
+    return result
+
+
+def entry_step(entry):
+    """An exported design's STEP warnings and note as this version words them:
+    {'warnings': [...every warning of the entry], 'note': text or None, 'hidden_left_out': n}.
+    The STEP's own warnings are worked out again from the recorded counts (step_verdict), so a
+    folder written by an older version reads the same: a design with no solid bodies is no
+    longer a warning, and hidden bodies are named as such."""
+    entry = entry or {}
+    warnings = [str(warning) for warning in entry.get('warnings') or []]
+    solids = entry.get('step_solids')
+    if solids is None or entry.get('step') in ('off', 'failed'):
+        return dict(warnings=warnings, note=None, hidden_left_out=0)
+    verdict = step_verdict(solids, entry)
+    kept = [warning for warning in warnings if not VERDICT_WARNING.match(warning)]
+    return dict(warnings=verdict['warnings'] + kept, note=verdict['note'],
+                hidden_left_out=verdict['hidden_left_out'])
 
 
 def is_step(path):
@@ -144,9 +238,10 @@ def file_role(info):
     return 'file'
 
 
-def inline(paths, expected=None, distinct=None):
-    """Quick checks right after a design's export: {'step_solids': n, 'warnings': [...]}.
-    Raises BadExport when a file is broken."""
+def inline(paths, counts=None):
+    """Quick checks right after a design's export: {'step_solids': n, 'warnings': [...]}, plus
+    'step_note' for a design with no solid bodies (see step_verdict(); counts are the adapter's
+    facts). Raises BadExport when a file is broken."""
     facts = dict(step_solids=None, warnings=[])
     for path in paths:
         if is_archive(path):
@@ -160,9 +255,10 @@ def inline(paths, expected=None, distinct=None):
             if problems:
                 raise BadExport('The exported STEP file is incomplete: ' + '; '.join(problems))
             facts['step_solids'] = solids
-            warning = solid_warning(solids, expected, distinct)
-            if warning:
-                facts['warnings'].append(warning)
+            verdict = step_verdict(solids, counts)
+            facts['warnings'] += verdict['warnings']
+            if verdict['note']:
+                facts['step_note'] = verdict['note']
     return facts
 
 
@@ -189,7 +285,8 @@ def read_manifest(root):
 
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
               'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
-              'failed_checks', 'members_not_crc_checked', 'linked_copies', 'step_off', 'step_failed')
+              'failed_checks', 'members_not_crc_checked', 'linked_copies', 'step_off', 'step_failed',
+              'hidden_left_out', 'no_solid_bodies')
 
 
 def check_folder(root, strict=False, show=None):
@@ -283,29 +380,36 @@ def check_folder(root, strict=False, show=None):
                     notes += step_notes
                     if not step_problems:
                         totals['step_ok'] += 1
-                    # STEP leaves out hidden bodies, so compare with the visible count when recorded.
-                    expected = entry.get('visible_solid_bodies', entry.get('solid_bodies'))
-                    if expected is None:
+                    verdict = step_verdict(solids, entry)
+                    expected = verdict['expected']
+                    shortfall = [w for w in verdict['warnings'] if w.startswith('STEP has')]
+                    if verdict['hidden_left_out']:
+                        # Expected of a Fusion that cannot include hidden bodies: a note, never a
+                        # problem (the .f3d holds them).
+                        totals['hidden_left_out'] += 1
+                        notes += [w for w in verdict['warnings'] if not w.startswith('STEP has')]
+                    if verdict['note']:
+                        totals['no_solid_bodies'] += 1  # sketches or surfaces only: nothing to flag
+                    elif expected is None:
                         totals['solids_unknown'] += 1
-                    else:
-                        distinct = entry.get('visible_solid_bodies_distinct')
-                        warning = solid_warning(solids, expected, distinct)
-                        if warning is None or (solids == 0 and expected == 0):
-                            # A count that differs without a warning is only noted in the totals.
-                            totals['solids_match' if solids_agree(solids, expected, distinct)
-                                   or solids == 0 else 'solids_noted'] += 1
-                        else:
-                            # Advisory: the STEP translator can drop bodies it cannot write. The .f3d
-                            # is the complete copy.
-                            totals['solids_differ'] += 1
-                            (problems if strict else notes).append(warning)
+                    elif shortfall:
+                        # Advisory: the STEP translator can drop bodies it cannot write. The .f3d
+                        # is the complete copy.
+                        totals['solids_differ'] += 1
+                        (problems if strict else notes).extend(shortfall)
+                    elif not verdict['hidden_left_out']:
+                        # A count that differs without a warning is only noted in the totals.
+                        distinct = (expected if entry.get('step_includes_hidden') is True
+                                    else entry.get('visible_solid_bodies_distinct'))
+                        totals['solids_match' if solids_agree(solids, expected, distinct)
+                               or solids == 0 else 'solids_noted'] += 1
                     line = '%s, %s, STEP %d bytes, %s%s%s' % (
                         archive.suffix, plural(members, 'member design'), os.stat(long_path(step)).st_size,
                         plural(solids, 'solid'),
                         '' if expected is None else ' (Fusion: %d)' % expected,
                         ', and an experimental copy with linked parts' if any(file_role(f) == 'archive_with_linked_parts'
                                                                              for f in files) else '')
-        if entry.get('warnings'):
+        if entry_step(entry)['warnings']:
             totals['warnings'] += 1
         if show:
             show(number, entry, line, problems, notes)

@@ -13,7 +13,7 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-from .checks import file_role
+from .checks import entry_step, file_role
 from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, STEP_FAILED, STEP_OFF,
                    STEP_NOT_REQUESTED, STEP_OFF_NOTE)
 from .names import long_path
@@ -91,7 +91,8 @@ def items(manifest, run_info=None):
         status = shown_status(entry)
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
         roles = [file_role(f) for f in entry.get('files', []) if f.get('path')]
-        warnings = [str(w) for w in entry.get('warnings') or []] if status == 'done' else []
+        step = entry_step(entry) if status == 'done' else dict(warnings=[], note=None)
+        warnings = step['warnings']
         picture = (entry.get('thumbnail') or {}).get('path') if status == 'done' else None
         links = entry.get('references')
         result.append(dict(status=status, kind='file' if entry.get('kind') == 'file' else 'design',
@@ -101,7 +102,7 @@ def items(manifest, run_info=None):
                            next_step=(STEP_RETRIED if status == 'done' and entry.get('step') == STEP_FAILED
                                       else WARNING_STEP if warnings else next_step(status, entry.get('error'))),
                            step_off=status == 'done' and entry.get('step') == STEP_OFF,
-                           warnings=warnings, thumbnail=picture or '',
+                           warnings=warnings, note=step['note'] or '', thumbnail=picture or '',
                            has_links=entry.get('has_references'), links=len(links) if links else 0,
                            links_out_of_date=bool(entry.get('references_out_of_date')),
                            links_unreadable=bool(entry.get('references_unreadable')),
@@ -112,7 +113,7 @@ def items(manifest, run_info=None):
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
                            project=where[1] if len(where) > 1 else '', folder='/'.join(where[2:]),
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
-                           next_step=next_step('unreadable', problem.get('error')), warnings=[],
+                           next_step=next_step('unreadable', problem.get('error')), warnings=[], note='',
                            thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
                            fusion_error='', slow_seconds=None, roles=[], account_changed=False))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
@@ -192,6 +193,8 @@ def table_html(rows, heading, column):
         why = esc(row['reason'])
         for warning in row['warnings']:
             why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(warning) + '</span>'
+        if row.get('note'):
+            why += ('<br>' if why else '') + '<span class="muted">Note: ' + esc(row['note']) + '</span>'
         if row['fusion_error']:
             why += ('<br>' if why else '') + '<span class="muted">Fusion said: ' + esc(row['fusion_error']) + '</span>'
         if row['links_unreadable']:
@@ -258,6 +261,9 @@ def render_html(manifest, run_info, counts):
     out.append('<div class="muted">%s.</div>' % esc(line))
     if (run_info or {}).get('step') is False:
         out.append('<p class="muted">Note: %s</p>' % esc(STEP_OFF_NOTE))
+    hidden = hidden_note(hidden_left_out(manifest))
+    if hidden:
+        out.append('<p class="muted">Note: %s</p>' % esc(hidden))
     memory = memory_line(run_info)
     if memory:
         out.append('<div class="muted">%s</div>' % esc(memory))
@@ -332,7 +338,7 @@ def render_csv(manifest, run_info):
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
-                     'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds'])
+                     'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds', 'note'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         by_role = {}
@@ -346,7 +352,7 @@ def render_csv(manifest, run_info):
                          '' if design else (row['files'][0] if row['files'] else ''),
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
                          row['fusion_error'], 'yes' if row['links_unreadable'] else '',
-                         row['slow_seconds'] or ''])
+                         row['slow_seconds'] or '', row.get('note') or ''])
     return stream.getvalue()
 
 
@@ -416,9 +422,26 @@ def failures(manifest, run_info=None):
 
 def warned(manifest):
     """How many exported items carry a warning (a thin STEP, links that could not be read, an
-    account that changed)."""
+    account that changed). A design with no solid bodies, whose STEP is empty, is not one."""
     return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done'
-               and (entry.get('warnings') or entry.get('references_unreadable') or entry.get('account_changed')))
+               and (entry_step(entry)['warnings'] or entry.get('references_unreadable')
+                    or entry.get('account_changed')))
+
+
+def hidden_left_out(manifest):
+    """How many exported designs have a STEP without their hidden bodies (this Fusion could not
+    include them)."""
+    return sum(1 for entry in manifest.get('entries', []) if entry.get('status') == 'done'
+               and entry_step(entry)['hidden_left_out'])
+
+
+def hidden_note(count):
+    """The summary's one line about them, or None when there are none."""
+    if not count:
+        return None
+    return ('%s %s a STEP file without %s hidden bodies: this version of Fusion cannot include them. '
+            'The .f3d holds every body.' % (plural(count, 'design'), form(count, 'has'),
+                                             form(count, 'its', 'their')))
 
 
 def summary(counts, run_info, manifest, output, page=None):
@@ -463,6 +486,9 @@ def summary(counts, run_info, manifest, output, page=None):
         notes.append(unsupported_note(unsupported))
     if run_info.get('step') is False:
         notes.append(STEP_OFF_NOTE)
+    hidden = hidden_note(hidden_left_out(manifest))
+    if hidden:
+        notes.append(hidden)
     stale = links_out_of_date(manifest)
     if stale:
         notes.append('%s %s older versions of linked designs (a note, not a failure).'

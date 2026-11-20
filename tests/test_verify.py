@@ -141,7 +141,7 @@ class CheckFolderTests(unittest.TestCase):
         self.fake = fake
         self.exporter = Exporter(self.root, FusionAdapter(NS(documents=fake.Documents())))
         empty = fake.File('Empty', 'empty')
-        empty.step_solids = 0
+        empty.step_solids = empty.step_hidden_solids = 0  # nothing at all, hidden bodies included
         self.exporter.run(fake.data([fake.File('A', 'a'), empty]))
         self.manifest = json.loads((self.root / 'manifest.json').read_text(encoding='utf-8'))
 
@@ -153,7 +153,7 @@ class CheckFolderTests(unittest.TestCase):
         self.assertEqual((totals['done'], totals['designs'], totals['warnings']), (2, 2, 1))
         self.assertEqual(totals['solids_differ'], 1)
         notes = [n for args in shown for n in args[4]]
-        self.assertIn('STEP has no bodies (Fusion showed 1)', notes)
+        self.assertIn('STEP has no bodies (2 solid bodies in the design)', notes)
         self.assertEqual(checks.check_folder(self.root, strict=True)['failed_checks'], 1)
 
     def test_changed_and_missing_files_are_problems(self):

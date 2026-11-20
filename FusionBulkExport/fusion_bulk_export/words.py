@@ -2,7 +2,7 @@
 command-line scripts use it too)."""
 
 # Plurals that are not the word plus "s".
-IRREGULAR = {'entry': 'entries', 'assembly': 'assemblies', 'is': 'are', 'has': 'have', 'was': 'were', 'this': 'these',
+IRREGULAR = {'entry': 'entries', 'body': 'bodies', 'assembly': 'assemblies', 'is': 'are', 'has': 'have', 'was': 'were', 'this': 'these',
              'it': 'them', 'its': 'their', 'uses': 'use', 'holds': 'hold', 'takes': 'take', 'needs': 'need'}
 
 

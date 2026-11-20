@@ -476,9 +476,15 @@ def summary(output):
             lines.append("Not supported: %s can't be exported by an add-in (drawings, electronics); %s not %s"
                          % (plural(unsupported, 'file'), form(unsupported, 'it is', 'they are'),
                             form(unsupported, 'a failure', 'failures')))
-        warned = sum(1 for e in entries if e.get('status') == 'done' and e.get('warnings'))
+        steps = [package_checks().entry_step(e) for e in entries if e.get('status') == 'done']
+        warned = sum(1 for step in steps if step['warnings'])  # a design with no solid bodies is not one
         if warned:
             lines.append('Warnings: %s exported with a warning (see the report)' % plural(warned, 'item'))
+        hidden = sum(1 for step in steps if step['hidden_left_out'])
+        if hidden:
+            lines.append('Note: %s %s a STEP file without %s hidden bodies (this version of Fusion cannot '
+                         'include them; the .f3d holds every body)' % (plural(hidden, 'design'), form(hidden, 'has'),
+                                                                       form(hidden, 'its', 'their')))
         designs = [e for e in entries if (e.get('kind') or 'design') == 'design']
         broken = sum(1 for e in designs if e.get('status') == 'failed' and e.get('fusion_error') is not None)
         if broken:

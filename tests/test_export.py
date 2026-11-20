@@ -176,8 +176,10 @@ class ExportTests(unittest.TestCase):
 
     def test_each_step_is_checked_inline_and_warnings_stored(self):
         good, empty, more = fake.File('Good', 'good'), fake.File('Empty', 'empty'), fake.File('More', 'more')
-        empty.step_solids = 0
+        empty.step_solids = empty.step_hidden_solids = 0
         more.step_solids = 3
+        # Hidden bodies are included (this Fusion offers it): every solid body of the design is
+        # expected, each component once. The default design has one shown and one hidden solid.
         # Two different parts and two instances of one: Fusion shows 4 solids per occurrence, 3
         # distinct ones. A STEP with fewer than 3 is missing bodies; 3 to 8 is only noted.
         bolt, plate = fake.component('bolt', [fake.body()]), fake.component('plate', [fake.body()])
@@ -189,14 +191,15 @@ class ExportTests(unittest.TestCase):
         _, counts = self.run_export(fake.data([good, empty, more] + assembly))
         self.assertEqual(counts['exported'], 6)  # warnings are not failures
         entries = {e['id']: e for e in self.manifest['entries']}
-        self.assertEqual((entries['good']['step_solids'], entries['good']['warnings']), (1, []))
-        self.assertEqual(entries['empty']['warnings'], ['STEP has no bodies (Fusion showed 1)'])
+        self.assertEqual((entries['good']['step_solids'], entries['good']['warnings']), (2, []))
+        self.assertIs(entries['good']['step_includes_hidden'], True)
+        self.assertEqual(entries['empty']['warnings'], ['STEP has no bodies (2 solid bodies in the design)'])
         # More solids than Fusion showed (seen on real Fusion: about twice): recorded, no warning.
-        self.assertEqual((entries['more']['step_solids'], entries['more']['warnings']), (3, []))
+        self.assertEqual((entries['more']['step_solids'], entries['more']['warnings']), (4, []))
         self.assertEqual((entries['twice']['visible_solid_bodies'], entries['twice']['visible_solid_bodies_distinct'],
                           entries['twice']['step_solids'], entries['twice']['warnings']), (4, 3, 8, []))
         self.assertEqual(entries['distinct']['warnings'], [])
-        self.assertEqual(entries['short']['warnings'], ['STEP has 2 solids, fewer than the 3 distinct ones Fusion showed'])
+        self.assertEqual(entries['short']['warnings'], ['STEP has 2 solids, fewer than the 3 distinct ones in the design'])
 
     def test_broken_archive_fails_and_is_retried_a_truncated_step_keeps_the_archive(self):
         for broken in ('step', 'archive'):
@@ -639,7 +642,8 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(paths['two'], ['Hub/Project/spec~%s.pdf' % names.tag('file:two')])
         self.assertEqual(paths['three'], ['Hub/Project/Spec.txt'])  # another extension: no clash
         self.assertEqual(paths['lookalike'], ['Hub/Project/Bracket v3~%s.step' % names.tag('file:lookalike')])
-        self.assertEqual((self.root / 'Hub/Project/Bracket v3.step').read_bytes(), fake.step_text(1))
+        # The design's STEP: its shown solid and its hidden one (hidden bodies are included).
+        self.assertEqual((self.root / 'Hub/Project/Bracket v3.step').read_bytes(), fake.step_text(2))
         two.versionNumber = 4
         self.run_export(data)  # names rebuilt from the manifest on the next run: the same choices
         self.assertEqual([f['path'] for e in self.manifest['entries'] if e['id'] == 'two' for f in e['files']],

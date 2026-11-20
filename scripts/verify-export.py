@@ -4,10 +4,14 @@ archive opens with every member readable, every STEP is complete.
 
 Usage: verify-export.py OUTPUT_FOLDER [--names] [--strict]
 
-A STEP with no bodies, or with fewer solids than the distinct bodies Fusion showed,
-is a NOTE (--strict makes it a problem); other differences in the count are only
-counted (solids_noted), since a STEP writer may write a part used twice once or twice. Prints counts only, unless --names is given (manifests hold
-private design names). Exit status 0 means every check passed.
+A STEP missing bodies (empty, or fewer solids than the distinct bodies expected: every solid
+body when hidden bodies were included, else the visible ones) is a NOTE (--strict makes it a
+problem); hidden bodies a STEP left out because Fusion could not include them are a NOTE only
+(hidden_left_out; the .f3d holds them); a design with no solid bodies at all (sketches or
+surfaces only) is not flagged (no_solid_bodies). Other differences in the count are only counted
+(solids_noted), since a STEP writer may write a part used twice once or twice. Prints counts
+only, unless --names is given (manifests hold private design names). Exit status 0 means every
+check passed.
 
 The checks live in the add-in package (fusion_bulk_export/checks.py) and need no Fusion; this
 script runs them from a checkout of the repository. `autorun.py check OUTPUT_FOLDER` does the same.

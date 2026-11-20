@@ -78,6 +78,17 @@ class FusionAdapter:
             self.details.update(visible_counts(design.rootComponent))
         except Exception as error:
             self.details['count_error'] = str(error)
+        if self.details.get('solid_bodies') == 0:
+            # Only for a design with no solid bodies: what it holds instead (its note says so).
+            try:
+                self.details['surface_bodies'] = sum(
+                    1 for component in collection(design.allComponents)
+                    for body in collection(component.bRepBodies) if not body.isSolid)
+                self.details['mesh_bodies'] = sum(
+                    component.meshBodies.count for component in collection(design.allComponents))
+            except Exception:
+                self.details.pop('surface_bodies', None)  # unknown: the note names both
+                self.details.pop('mesh_bodies', None)
 
     def open_ids(self):
         """Cloud ids of the documents open now. A document without a cloud file (new and never
@@ -287,7 +298,9 @@ class FusionAdapter:
         problem = None
         if self.step:
             try:
-                if not manager.execute(manager.createSTEPExportOptions(fusion_path(staged_step))):
+                options = manager.createSTEPExportOptions(fusion_path(staged_step))
+                self.include_hidden(options)
+                if not manager.execute(options):
                     problem = 'STEP export returned false'
                 elif not os.path.isfile(long_path(staged_step)):
                     problem = 'Fusion reported a successful STEP export but wrote no file'
@@ -309,6 +322,32 @@ class FusionAdapter:
         # Only now, after the design's own files are written: from here on the document in memory
         # is no longer the design as it is in the account.
         return written + self.linked_copy(document, opened, design, stem)
+
+    def include_hidden(self, options):
+        """Ask the STEP export to include hidden bodies and hidden components too, when this
+        Fusion offers it (isIncludingInvisibleBodies and isIncludingInvisibleComponents, seen on
+        the export options of real Fusion; not in the API reference). Only the export options
+        change: nothing in the design (no body or component is shown or hidden).
+        details['step_includes_hidden']: True when both were set, False when this Fusion offers
+        neither (the STEP holds the visible bodies only, as before), None when only one could be
+        set or setting failed (step_hidden_error says why). Never raises."""
+        missing = [name for name in HIDDEN_OPTIONS if not has_option(options, name)]
+        if len(missing) == len(HIDDEN_OPTIONS):
+            self.details['step_includes_hidden'] = False
+            return
+        problem = None
+        for name in HIDDEN_OPTIONS:
+            if name in missing:
+                continue
+            try:
+                setattr(options, name, True)
+            except Exception as error:
+                problem = '%s: %s' % (name, str(error) or type(error).__name__)
+        if problem is None and missing:
+            problem = 'this Fusion has no ' + ', '.join(missing)
+        self.details['step_includes_hidden'] = None if problem else True
+        if problem:
+            self.details['step_hidden_error'] = problem
 
     def linked_copy(self, document, opened, design, stem):
         """Records how many linked components (occurrences with isReferencedComponent) the design
@@ -383,6 +422,18 @@ class FusionAdapter:
                     pass
         copy.update(status='saved', reason=None)
         return [target]
+
+
+# STEP export options that include hidden bodies and components (see FusionAdapter.include_hidden).
+HIDDEN_OPTIONS = ('isIncludingInvisibleBodies', 'isIncludingInvisibleComponents')
+
+
+def has_option(options, name):
+    """Whether an export options object has the property name (reading it may raise)."""
+    try:
+        return hasattr(options, name)
+    except Exception:
+        return False
 
 
 def referenced_occurrences(design):
@@ -492,7 +543,8 @@ def settle(design):
 
 
 def shown_solids(component):
-    """Solid bodies of a component that are switched on (hidden bodies are not in the STEP)."""
+    """Solid bodies of a component that are switched on (what a STEP holds when hidden bodies
+    cannot be included)."""
     if not getattr(component, 'isBodiesFolderLightBulbOn', True):
         return 0
     return sum(1 for body in collection(component.bRepBodies) if body.isSolid and body.isLightBulbOn)

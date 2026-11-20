@@ -1389,7 +1389,8 @@ class Exporter:
         for attempt in range(2):
             entry['attempts'] = attempt + 1
             began = self.clock()
-            for fact in ('linked_occurrences', 'linked_copy', 'links_broken', 'step', 'step_error'):
+            for fact in ('linked_occurrences', 'linked_copy', 'links_broken', 'step', 'step_error', 'step_note',
+                         'step_includes_hidden', 'step_hidden_error', 'surface_bodies', 'mesh_bodies'):
                 entry.pop(fact, None)  # an earlier attempt's (or run's)
             try:
                 stem, facts = self.destination(hub, project, folders, file, owned=owned)
@@ -1402,13 +1403,13 @@ class Exporter:
                 pictures = [path for path, role in roles if role == ROLE_THUMBNAIL]
                 details = dict(getattr(self.adapter, 'details', None) or {})
                 step_error = details.pop('step_error', None)
-                # Quick checks now: a broken archive is retried; an empty STEP is a warning; a
-                # STEP Fusion would not write (or wrote incomplete) leaves the .f3d standing.
+                # Quick checks now: a broken archive is retried; a STEP missing bodies is a warning
+                # (an empty one of a design with no solid bodies only a note); a STEP Fusion would
+                # not write (or wrote incomplete) leaves the .f3d standing.
                 facts = checks.inline(archives)
                 if steps:
                     try:
-                        more = checks.inline(steps, details.get('visible_solid_bodies'),
-                                             details.get('visible_solid_bodies_distinct'))
+                        more = checks.inline(steps, details)
                     except checks.BadExport as error:
                         step_error = str(error)
                         for path in steps:
@@ -1420,6 +1421,8 @@ class Exporter:
                     else:
                         facts['step_solids'] = more['step_solids']
                         facts['warnings'] += more['warnings']
+                        if more.get('step_note'):
+                            facts['step_note'] = more['step_note']
                 elif self.step and step_error is None:
                     step_error = 'Fusion wrote no STEP file'
                 paths = archives + steps
