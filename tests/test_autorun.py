@@ -317,13 +317,17 @@ class AutorunTests(unittest.TestCase):
         self.config.write_text(json.dumps(dict(output=str(self.output))))
         module._watcher.poll()
         self.assertEqual(self.fired, ['FusionBulkExportAutorun'])
+        self.output.mkdir(parents=True, exist_ok=True)
+        before = sorted(p.name for p in self.output.iterdir())
         events['FusionBulkExportAutorun'].handlers[0].notify(None)
-        result = json.loads((self.output / 'autorun-result.json').read_text())
+        # Answered beside the job file, never in its output folder (it may be the running export's).
+        result = json.loads((self.root / 'autorun-output' / 'autorun-result.json').read_text())
         self.assertTrue(result['busy'])
         self.assertIn('toolbar button', result['errors'][0]['error'])
+        self.assertEqual(sorted(p.name for p in self.output.iterdir()), before)
         self.assertFalse(self.config.exists())
         self.assertTrue(all(file.calls == 0 for file in self.files))
-        self.assertIn('autorun busy', (self.output / 'autorun.log').read_text())
+        self.assertIn('autorun busy', (self.root / 'autorun-output' / 'autorun.log').read_text())
 
     def test_package_is_never_reloaded_during_an_export(self):
         import adsk

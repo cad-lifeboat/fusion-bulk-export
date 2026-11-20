@@ -29,8 +29,10 @@ human-readable report) into the output folder; counts in autorun-result.json are
 up_to_date (designs), files (other files saved), files_up_to_date, skipped and failed. Creating a file named STOP in the output
 folder ends an export between designs; run again to resume.
 
-A job that arrives while an export from the toolbar button is running is not started: its
-autorun-result.json says busy (true) with the reason, and the command can simply be run again.
+A job that arrives while an export from the toolbar button is running is not started: an
+autorun-result.json in autorun-output beside the add-in (never in the job's output folder, which
+may be the running export's) says busy (true) with the reason, and the command can simply be run
+again.
 """
 import json
 from pathlib import Path
@@ -276,18 +278,15 @@ BUSY = ('An export started from the toolbar button is running in Fusion. '
 
 
 def reject_busy(app, config_path, reason=BUSY):
-    """Answer a job that cannot start now: consume autorun.json and write a "busy" result where
-    the launcher waits for it (the job's output folder, else autorun-output beside the add-in)."""
+    """Answer a job that cannot start now: consume autorun.json and write a "busy" result into
+    autorun-output beside the add-in, where the launcher looks for it. Never into the job's output
+    folder: that may be the folder the running export writes to."""
     config_path = Path(config_path)
     output = config_path.parent / 'autorun-output'
     try:
-        text = config_path.read_text(encoding='utf-8')
         config_path.replace(config_path.with_name(config_path.name + '.last'))
-        wanted = Path(json.loads(text)['output']).expanduser()
-        if wanted.is_absolute():
-            output = wanted
-    except Exception:
-        pass  # an unreadable job is answered beside the add-in
+    except OSError:
+        pass  # gone already
     output.mkdir(parents=True, exist_ok=True)
     log = Log(output)
     log.result.update(busy=True, finished=now(), fusion_version=getattr(app, 'version', None),

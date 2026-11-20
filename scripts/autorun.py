@@ -232,11 +232,14 @@ def root_problem(output, name=None):
 
 def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False):
     make_output(output)
-    for stale in ('autorun-result.json', 'STOP'):
-        try:
-            (output / stale).unlink()
-        except FileNotFoundError:
-            pass
+    if not exporting(installed):
+        # A running export may be writing to this very folder (its STOP, its result): left alone
+        # then. wait() only takes a result written after this command started.
+        for stale in ('autorun-result.json', 'STOP'):
+            try:
+                (output / stale).unlink()
+            except FileNotFoundError:
+                pass
     update_addin(installed)
     for stale in ('startup-error.txt', 'autorun-output/autorun-result.json'):
         try:
@@ -343,7 +346,13 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
     start = clock()
     started_at = time.time() - 5
     hinted = False
-    while not result.is_file():
+
+    def fresh(path):
+        try:
+            return path.stat().st_mtime >= started_at
+        except OSError:
+            return False
+    while not fresh(result):
         elapsed = clock() - start
         if elapsed >= timeout:
             raise SystemExit('Timed out. Inspect ' + str(output / 'autorun.log'))
@@ -351,7 +360,12 @@ def wait(installed, output, timeout, hint_after=MANUAL_HINT_SECONDS, sleep=time.
         if fallback.is_file() and fallback.stat().st_mtime >= started_at:
             # The add-in could not use this job's configuration; its report went beside it.
             report = json.loads(fallback.read_text(encoding='utf-8'))
-            print('Fusion is busy:' if report.get('busy') else 'The add-in rejected the job:', flush=True)
+            if report.get('busy'):
+                # Answered beside the add-in, never in the output folder (it may be the running export's).
+                for error in report.get('errors', []):
+                    print('Fusion is busy: ' + error.get('error', ''), flush=True)
+                return 1
+            print('The add-in rejected the job:', flush=True)
             for error in report.get('errors', []):
                 print('  ' + error.get('error', ''), flush=True)
             return 1

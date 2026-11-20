@@ -266,6 +266,28 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn('Fusion is busy: An export started', stream.getvalue())
 
+    def test_busy_answer_is_read_beside_the_add_in_and_the_running_folder_is_left_alone(self):
+        out, installed = self.root / 'out', self.root / 'inst'
+        (installed / 'autorun-output').mkdir(parents=True)
+        out.mkdir()
+        (out / 'STOP').write_text('')  # the running export's own
+        (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts={})))  # an old run's
+        os.utime(str(out / 'autorun-result.json'), (time.time() - 3600, time.time() - 3600))
+        (installed / 'autorun.alive').write_text(json.dumps(dict(time=time.time(), busy='button')))
+        (installed / 'FusionBulkExport.manifest').write_text(json.dumps(dict(version='99.0')))
+        with contextlib.redirect_stdout(io.StringIO()):
+            launcher.install(installed, out, 'export')
+        self.assertTrue((out / 'STOP').exists())
+        self.assertTrue((out / 'autorun-result.json').exists())
+        (installed / 'autorun-output' / 'autorun-result.json').write_text(json.dumps(dict(
+            busy=True, errors=[dict(stage='busy', error='An export started from the toolbar button is running')])))
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            status = launcher.wait(installed, out, 86400, sleep=lambda _: None, clock=lambda: 0)
+        self.assertEqual(status, 1)
+        lines = stream.getvalue().splitlines()[1:]
+        self.assertEqual(lines, ['Fusion is busy: An export started from the toolbar button is running'])
+
     def test_designs_only_flag_reaches_the_job(self):
         installed, out = self.root / 'installed', self.root / 'out'
         installed.mkdir()
