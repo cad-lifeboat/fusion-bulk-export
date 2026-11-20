@@ -1,6 +1,7 @@
 """Synthetic command lifecycle and output-folder dialog checks."""
 import importlib
 import json
+import re
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace as NS
@@ -21,6 +22,8 @@ class Event:
 
 
 class UIBase(unittest.TestCase):
+    results_dialog = True  # results.DIALOG_ENABLED during the test
+
     def setUp(self):
         import adsk
         self.adsk = adsk
@@ -78,6 +81,11 @@ class UIBase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.addCleanup(self.module.stop, None)
+        # These tests drive the results dialog; it is switched off by default (see
+        # ResultsSwitchTests), so it is switched on here.
+        switch = patch('fusion_bulk_export.results.DIALOG_ENABLED', self.results_dialog)
+        switch.start()
+        self.addCleanup(switch.stop)
         opener = patch('fusion_bulk_export.report.open_path', side_effect=self.opened.append)
         opener.start()
         self.addCleanup(opener.stop)
@@ -890,3 +898,27 @@ class TreeLayoutContractTests(UIBase):
         # minimum still fits in the first size.
         self.assertLessEqual((len(shown) - 1) * 30 + picker.TREE_MIN_HEIGHT + 60, height)
         self.assertLessEqual(picker.DIALOG_MINIMUM[1], height)
+
+
+class ResultsSwitchTests(UIBase):
+    """results.DIALOG_ENABLED: one switch for the results dialog, off by default for now."""
+    results_dialog = False
+
+    def test_off_by_default_the_summary_goes_straight_to_a_message_box(self):
+        from fusion_bulk_export import results
+        source = Path(results.__file__).read_text(encoding='utf-8')
+        self.assertEqual(re.findall(r'^DIALOG_ENABLED = (.*)$', source, re.M), ['False'])  # the shipped default
+        self.assertIs(results.DIALOG_ENABLED, False)
+        self.export()
+        self.assertIsNone(self.definitions.itemById('FusionBulkExportResults'))  # never registered
+        self.assertEqual(self.custom.queue, [])  # nothing fired
+        self.assertEqual(len(self.plain), 1)
+        self.assertTrue(self.plain[0][0].startswith('Finished'))
+        self.assertIn('Exported now', self.plain[0][0])
+
+    def test_on_it_shows_the_results_dialog(self):
+        with patch('fusion_bulk_export.results.DIALOG_ENABLED', True):
+            self.export()
+            self.custom.pump()
+        self.assertEqual(self.plain, [])
+        self.assertEqual(len(self.definitions.itemById('FusionBulkExportResults').commands), 1)

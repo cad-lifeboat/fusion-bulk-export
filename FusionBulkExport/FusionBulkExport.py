@@ -237,7 +237,7 @@ def show_results(data):
     """At the end of the button's export: keep the summary and ask Fusion, through a custom
     event, to open the results dialog once the export command has finished."""
     trace('results')
-    if _results['definition'] is None or _results['event'] is None:
+    if not results_dialog_enabled() or _results['definition'] is None or _results['event'] is None:
         results_fallback(data)
         return
     _results['data'] = data
@@ -322,9 +322,23 @@ class ResultsCreated(adsk.core.CommandCreatedEventHandler):
             trace('results destroy: %s' % error)
 
 
+def results_dialog_enabled():
+    """results.DIALOG_ENABLED, the one switch for the results dialog (False: message box only)."""
+    try:
+        from fusion_bulk_export import results
+        return bool(results.DIALOG_ENABLED)
+    except Exception as error:
+        trace('results switch: %s' % error)
+        return False
+
+
 def add_results():
     """The results command (not on any toolbar) and the custom event that starts it. Without
-    them the end-of-run summary is a plain message box."""
+    them the end-of-run summary is a plain message box. Nothing is added while the results dialog
+    is switched off (results.DIALOG_ENABLED)."""
+    if not results_dialog_enabled():
+        trace('results dialog switched off')
+        return
     app = adsk.core.Application.get()
     try:
         definitions = app.userInterface.commandDefinitions

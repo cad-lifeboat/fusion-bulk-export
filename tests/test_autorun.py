@@ -297,7 +297,7 @@ class AutorunTests(unittest.TestCase):
         # A pending job no longer hides the button: one mode, both at once.
         self.config.write_text(json.dumps(dict(output=str(self.output))))
         module, events = self.start_add_in()
-        self.assertEqual(self.buttons, ['FusionBulkExport', 'FusionBulkExportResults'])
+        self.assertEqual(self.buttons, ['FusionBulkExport'])  # the results command: switched off
         self.assertIn('FusionBulkExportAutorun', events)
         self.assertIsNotNone(module._watcher)
         self.assertEqual(self.dialogs, [])
@@ -307,7 +307,7 @@ class AutorunTests(unittest.TestCase):
     def test_no_job_still_watches_and_shows_button(self):
         (self.root / 'autorun.watch').write_text('')  # left over from an earlier version: ignored
         module, events = self.start_add_in()
-        self.assertEqual(self.buttons, ['FusionBulkExport', 'FusionBulkExportResults'])
+        self.assertEqual(self.buttons, ['FusionBulkExport'])  # the results command: switched off
         self.assertIn('FusionBulkExportAutorun', events)
 
     def test_job_during_button_export_is_refused_as_busy(self):

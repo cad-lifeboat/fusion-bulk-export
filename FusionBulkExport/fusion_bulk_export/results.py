@@ -20,6 +20,11 @@ from pathlib import Path
 
 from . import errors, report
 
+# The switch: False skips the results dialog entirely (no command is registered, nothing is
+# fired) and the summary goes straight to the plain message box (fallback()). Off for now: on real
+# Fusion the dialog never appeared, and which mechanism Fusion accepts is still being found out.
+DIALOG_ENABLED = False
+
 PAGE = Path(__file__).resolve().parent.parent / 'ui' / 'summary.html'
 TITLE = 'Fusion Bulk Export results'
 CLOSE = 'Close'
