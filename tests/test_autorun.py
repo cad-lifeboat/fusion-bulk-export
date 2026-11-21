@@ -234,6 +234,20 @@ class AutorunTests(unittest.TestCase):
         self.assertIs(result['step'], True)
         self.assertTrue(list(self.output.rglob('*.step')))
 
+    def test_a_job_keeping_only_the_newest_version(self):
+        result = self.run_with()
+        self.files[0].versionNumber = 4
+        result = self.run_with(keep_latest_only=True)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['removed'], dict(versions=1, files=3, kept=0, errors=0))
+        self.assertEqual(sorted(p.name for p in self.output.rglob('A v*')), ['A v4.f3d', 'A v4.png', 'A v4.step'])
+        self.files[1].versionNumber = 4
+        result = self.run_with()  # off unless the job asks: B v3 stays beside B v4
+        self.assertNotIn('removed', result)
+        self.assertEqual(len(list(self.output.rglob('B v*.f3d'))), 2)
+        result = self.run_with(keep_latest_only='yes')
+        self.assertIn('keep_latest_only must be true or false', result['errors'][0]['error'])
+
     def test_designs_only(self):
         result = self.run_with(designs_only=True)
         self.assertEqual(result['counts'], dict(exported=3, up_to_date=0, files=0, files_up_to_date=0, skipped=1, unsupported=0, failed=0, linked_copies=0))

@@ -14,8 +14,8 @@ import sys
 from urllib.parse import quote
 
 from .checks import entry_step, file_role
-from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, STEP_FAILED, STEP_OFF,
-                   STEP_NOT_REQUESTED, STEP_OFF_NOTE)
+from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, REMOVED, STEP_FAILED,
+                   STEP_OFF, STEP_NOT_REQUESTED, STEP_OFF_NOTE)
 from .names import long_path
 from .words import form, plural
 
@@ -85,10 +85,13 @@ def next_step(status, error):
 
 
 def items(manifest, run_info=None):
-    """One dict per manifest entry plus one per unreadable folder, failures first."""
+    """One dict per manifest entry plus one per unreadable folder, failures first. Older versions
+    removed on purpose (status "removed") are not items: removed_versions() lists them."""
     result = []
     for entry in manifest.get('entries', []):
         status = shown_status(entry)
+        if status == REMOVED:
+            continue
         files = [f.get('path') for f in entry.get('files', []) if f.get('path')]
         roles = [file_role(f) for f in entry.get('files', []) if f.get('path')]
         step = entry_step(entry) if status == 'done' else dict(warnings=[], note=None)
@@ -107,7 +110,8 @@ def items(manifest, run_info=None):
                            links_out_of_date=bool(entry.get('references_out_of_date')),
                            links_unreadable=bool(entry.get('references_unreadable')),
                            fusion_error=entry.get('fusion_error') or '', slow_seconds=entry.get('slow_seconds'),
-                           roles=roles, account_changed=bool(entry.get('account_changed'))))
+                           roles=roles, account_changed=bool(entry.get('account_changed')),
+                           kept=older_kept_text(entry)))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
@@ -115,10 +119,68 @@ def items(manifest, run_info=None):
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
                            next_step=next_step('unreadable', problem.get('error')), warnings=[], note='',
                            thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
-                           fusion_error='', slow_seconds=None, roles=[], account_changed=False))
+                           fusion_error='', slow_seconds=None, roles=[], account_changed=False, kept=''))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
+
+
+REMOVED_NOTE = ("Older versions of these designs were removed from this folder after each design's newest "
+                "version was saved (\u201cKeep only each design\u2019s newest version\u201d). Their manifest "
+                "entries stay, so this list says what was removed and when.")
+
+
+def removed_text(versions, files):
+    """'Removed 2 older versions (5 files).'"""
+    return 'Removed %s (%s).' % (plural(versions, 'older version'), plural(files, 'file'))
+
+
+def older_kept_text(entry):
+    """Why an older version's files were left in place when it would have been removed, or ''."""
+    if entry.get('status') != 'done':
+        return ''
+    reason = entry.get('kept') or ''
+    if entry.get('remove_error'):
+        reason = 'kept: could not be removed (%s)' % entry['remove_error']
+    if not reason:
+        return ''
+    return 'Older version %s; a newer version of this design is in the folder.' % reason
+
+
+def removed_versions(manifest):
+    """The older versions removed from the folder (entries with status "removed"), by name."""
+    found = [entry for entry in manifest.get('entries', []) if entry.get('status') == REMOVED]
+    found.sort(key=lambda e: (str(e.get('project') or '').casefold(), '/'.join(e.get('path') or []).casefold(),
+                              str(e.get('name') or '').casefold(), e.get('version') or 0))
+    return found
+
+
+def removed_files_count(manifest):
+    return sum(len(entry.get('removed_files') or []) for entry in removed_versions(manifest))
+
+
+def removed_html(manifest):
+    """The collapsed "Removed older versions" section, or nothing."""
+    removed = removed_versions(manifest)
+    if not removed:
+        return []
+    esc = html.escape
+    out = ['<details><summary><h2 style="display:inline">Removed older versions (%s, %s)</h2></summary>'
+           % (plural(len(removed), 'version'), plural(removed_files_count(manifest), 'file')),
+           '<p class="muted">%s</p><ul>' % esc(REMOVED_NOTE)]
+    for entry in removed:
+        where = ' / '.join(part for part in (entry.get('project') or '', '/'.join(entry.get('path') or [])) if part)
+        paths = [info.get('path') for info in entry.get('removed_files') or [] if info.get('path')]
+        line = '%s v%s <span class="muted">(%s), removed %s</span>' % (
+            esc(str(entry.get('name') or '')), esc(str(entry.get('version'))), esc(where),
+            esc(str(entry.get('removed') or '')[:10]))
+        if paths:
+            line += '<br><span class="muted">%s</span>' % esc('; '.join(paths))
+        if entry.get('remove_error'):
+            line += '<br><span class="warn">Not removed: %s</span>' % esc(entry['remove_error'])
+        out.append('<li>%s</li>' % line)
+    out.append('</ul></details>')
+    return out
 
 
 def shown_status(entry):
@@ -202,6 +264,8 @@ def table_html(rows, heading, column):
             why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(text) + '</span>'
         if row['links_out_of_date']:
             why += ('<br>' if why else '') + '<span class="muted">Note: ' + esc(LINKS_OUT_OF_DATE) + '</span>'
+        if row.get('kept'):
+            why += ('<br>' if why else '') + '<span class="muted">Note: ' + esc(row['kept']) + '</span>'
         if row.get('account_changed'):
             why += ('<br>' if why else '') + '<span class="warn">Warning: ' + esc(ACCOUNT_CHANGED_NOTE) + '</span>'
         if row['next_step']:
@@ -278,6 +342,7 @@ def render_html(manifest, run_info, counts):
     out += table_html(designs, 'Designs', 'Design')
     if others:
         out += table_html(others, 'Other files', 'File')
+    out += removed_html(manifest)
     out.append('</body></html>')
     return '\n'.join(out) + '\n'
 
@@ -352,7 +417,15 @@ def render_csv(manifest, run_info):
                          '' if design else (row['files'][0] if row['files'] else ''),
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
                          row['fusion_error'], 'yes' if row['links_unreadable'] else '',
-                         row['slow_seconds'] or '', row.get('note') or ''])
+                         row['slow_seconds'] or '', row.get('note') or row.get('kept') or ''])
+    for entry in removed_versions(manifest):
+        # One row per removed older version: status "removed", its removed files in note.
+        paths = [info.get('path') for info in entry.get('removed_files') or [] if info.get('path')]
+        writer.writerow([REMOVED, entry.get('hub') or '', entry.get('project') or '', '/'.join(entry.get('path') or []),
+                         entry.get('name') or '', '' if entry.get('version') is None else entry['version'], '', '',
+                         'Older version removed from this folder on %s' % str(entry.get('removed') or '')[:10],
+                         '', '', '', 'design', '', '', '', '', '', '', '',
+                         ('Removed: ' + '; '.join(paths)) if paths else ''])
     return stream.getvalue()
 
 
@@ -444,6 +517,23 @@ def hidden_note(count):
                                              form(count, 'its', 'their')))
 
 
+def removed_notes(run_info):
+    """The summary's lines about older versions removed in this run ("Keep only each design's
+    newest version"): how many, and any kept or not removable."""
+    tally = (run_info or {}).get('removed') or {}
+    notes = []
+    if tally.get('versions'):
+        notes.append(removed_text(tally['versions'], tally.get('files', 0)))
+    if tally.get('kept'):
+        notes.append('%s kept as %s (changed since %s exported); the report says which.'
+                     % (plural(tally['kept'], 'older version'), form(tally['kept'], 'it was', 'they were'),
+                        form(tally['kept'], 'it was', 'they were')))
+    if tally.get('errors'):
+        notes.append('%s could not be removed; the next run tries again (see the report).'
+                     % plural(tally['errors'], 'older version'))
+    return notes
+
+
 def summary(counts, run_info, manifest, output, page=None):
     """What the results dialog shows at the end of a run, as data: a one-line headline, the
     counts (zero rows left out, except "Exported now"), up to three failures by name with how
@@ -486,6 +576,7 @@ def summary(counts, run_info, manifest, output, page=None):
         notes.append(unsupported_note(unsupported))
     if run_info.get('step') is False:
         notes.append(STEP_OFF_NOTE)
+    notes += removed_notes(run_info)
     hidden = hidden_note(hidden_left_out(manifest))
     if hidden:
         notes.append(hidden)

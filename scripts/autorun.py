@@ -4,13 +4,17 @@
   autorun.py inventory OUTPUT                       list everything, open nothing
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
                     [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only] [--no-step]
+                    [--keep-latest-only]
                                                     export (rerun the same command to resume);
                                                     each design as .f3d and .step (.f3d only
                                                     with --no-step); other files (PDFs,
                                                     uploads) are saved too unless
                                                     --designs-only; drawings and
                                                     electronics are listed as not supported
-                                                    (Fusion cannot export them safely)
+                                                    (Fusion cannot export them safely);
+                                                    --keep-latest-only removes the files this
+                                                    export wrote for each design's older
+                                                    versions once its newest is saved
   autorun.py status OUTPUT                          counts so far (no design names)
   autorun.py check OUTPUT                           check every exported file again (full hashes,
                                                     archives, STEP files); needs no Fusion
@@ -304,7 +308,8 @@ def root_problem(output, name=None):
     return output_root_problem(output, 'win32' if (name or system()) == 'Windows' else 'darwin')
 
 
-def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False, step=True):
+def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False, step=True,
+            keep_latest_only=False):
     """Put the job in place (after updating the add-in when needed); True when the output folder
     was created for it."""
     created = make_output(output)
@@ -333,6 +338,8 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['designs_only'] = True
     if not step:
         config['step'] = False
+    if keep_latest_only:
+        config['keep_latest_only'] = True
     if not memory_guard_wanted():
         config['memory_guard'] = False
     experiment = linked_copies_experiment()
@@ -372,6 +379,11 @@ ACCOUNT_CHANGED_LINE = ("Stopped by itself (account_changed): a design's version
                         "design's version history in Fusion and report it (export.log in the output folder).")
 STEP_OFF_NOTE = 'STEP files were not requested for this export.'  # the add-in's core.STEP_OFF_NOTE
 LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing other programs may speed it up.'
+
+
+def removed_text(versions, files):
+    """'Removed 2 older versions (5 files).' (the add-in's report.removed_text)"""
+    return 'Removed %s (%s).' % (plural(versions, 'older version'), plural(files, 'file'))
 
 
 def count_line(counts):
@@ -438,6 +450,14 @@ def summary(output):
             lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
         if report.get('step') is False:
             lines.append(STEP_OFF_NOTE)
+        removed = report.get('removed') or {}
+        if removed.get('versions'):
+            lines.append(removed_text(removed['versions'], removed.get('files', 0)))
+        if removed.get('kept'):
+            lines.append('Kept: %s changed since %s exported (not removed)'
+                         % (plural(removed['kept'], 'older version'), form(removed['kept'], 'it was', 'they were')))
+        if removed.get('errors'):
+            lines.append('Not removed: %s (the next run tries again)' % plural(removed['errors'], 'older version'))
         if report.get('low_memory') and report.get('stopped_code') != 'memory':
             lines.append('Note: ' + LOW_MEMORY_NOTE)
         if report.get('low_space'):
@@ -469,6 +489,10 @@ def summary(output):
                 statuses[entry.get('status')] = statuses.get(entry.get('status'), 0) + 1
             lines.append('%s: %s %s%s' % (label, plural(len(chosen), 'entry'), json.dumps(statuses, sort_keys=True),
                                                   ', %d bytes' % size if kind is None else ''))
+        gone = [e for e in entries if e.get('status') == 'removed']
+        if gone:
+            lines.append('Removed older versions in this folder: %s (%s)'
+                         % (len(gone), plural(sum(len(e.get('removed_files') or []) for e in gone), 'file')))
         unsupported = sum(1 for e in entries if e.get('status') == 'unsupported' or (
             e.get('status') == 'skipped' and e.get('kind') == 'file'
             and str(e.get('error') or '').startswith('Fusion cannot export this file type')))
@@ -624,7 +648,7 @@ def run_job(args, name, output, installed):
     watching = alive(installed)
     created = install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
                       folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
-                      not getattr(args, 'no_step', False))
+                      not getattr(args, 'no_step', False), getattr(args, 'keep_latest_only', False))
     try:
         status = send(args, name, output, installed, watching)
     except KeyboardInterrupt:
@@ -867,6 +891,9 @@ def check(output, names=False):
           % (plural(totals['done'], 'finished item'), totals['failed_checks'] - totals['failed'],
              plural(totals['missing'], 'missing file'), plural(totals['changed'], 'changed file'),
              plural(totals['solids_differ'], 'STEP file'), totals['failed']))
+    if totals.get('removed'):
+        print('%s removed on purpose (--keep-latest-only): not checked, not a problem.'
+              % plural(totals['removed'], 'older version'))
     print(json.dumps(totals))
     return 0 if not totals['failed_checks'] else 1
 
@@ -903,6 +930,11 @@ def main(argv=None):
             p.add_argument('--no-step', action='store_true',
                            help='save each design as .f3d only, without its STEP file (by default both; '
                                 'STEP opens in almost any CAD program, .f3d only in Fusion)')
+            p.add_argument('--keep-latest-only', action='store_true',
+                           help="once a design's newest version is saved and checked, remove the files this "
+                                'export wrote for its older versions (only those, and only if unchanged since '
+                                'they were exported; entries stay in the manifest as "removed"). Off by default: '
+                                'nothing is ever deleted')
             p.add_argument('--restart-fusion', nargs='?', const='polite', choices=('polite', 'force'),
                            metavar='force',
                            help='closes and reopens Fusion by itself after a memory stop or crash, then carries on; '

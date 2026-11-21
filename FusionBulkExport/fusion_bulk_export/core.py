@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+from stat import S_ISREG
 import sys
 import time
 import traceback
@@ -599,6 +600,26 @@ STEP_FAILED_WARNING = 'Saved, but Fusion could not write its STEP file'
 STEP_OFF_NOTE = 'STEP files were not requested for this export.'
 
 
+# "Keep only each design's newest version" (the dialog's box, the job's "keep_latest_only", off by
+# default): once a design's newest version is in the folder, complete and checked, the files this
+# export wrote for its older versions are removed (Exporter.remove_older_versions). Their entries
+# stay in the manifest with status REMOVED, the date (removed) and what was removed
+# (removed_files), so the folder's history still explains itself.
+REMOVED = 'removed'
+KEPT_CHANGED = 'kept: changed since it was exported'
+KEPT_SHARED = 'kept: another item records the same file'
+KEPT_OUTSIDE = 'kept: not inside the export folder'
+KEPT_NOT_FILE = 'kept: not a plain file'
+
+
+def recorded_files(entry):
+    """Every file a manifest entry records: its files and its thumbnail."""
+    infos = list(entry.get('files') or [])
+    if (entry.get('thumbnail') or {}).get('path'):
+        infos.append(entry['thumbnail'])
+    return infos
+
+
 def has_step(entry):
     """Whether a design entry is meant to record a STEP file (see STEP_OFF, STEP_FAILED)."""
     return entry.get('step') not in (STEP_OFF, STEP_FAILED)
@@ -805,6 +826,9 @@ class Exporter:
         # second archive of an assembly with its linked parts included (FusionAdapter.linked_copy).
         # Set by run() from LINKED_COPIES_ENV or the job's "experiment_linked_copies".
         self.linked_copies = None
+        # Remove the files of each design's older versions once its newest is in the folder (the
+        # dialog's box, the job's "keep_latest_only"); set by run(). Off by default.
+        self.keep_latest_only = False
         # Set when the account guard (export_checked) saw a design change in the account.
         self.alarm = None
         # Fusion's memory, sampled between items (memory.sample inside Fusion; tests set a fake).
@@ -1047,7 +1071,7 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True, linked_copies=None, step=True):
+            on_trouble=None, other_files=True, linked_copies=None, step=True, keep_latest_only=False):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
@@ -1078,6 +1102,10 @@ class Exporter:
         STEP. A design exported with its STEP stays up to date in a run with it off (nothing is
         deleted).
 
+        keep_latest_only: off by default. On, once a design's newest version is in the folder
+        (exported now or already up to date) the files this export recorded for its older versions
+        are removed: see remove_older_versions for exactly which. Off, nothing is ever removed.
+
         linked_copies: testing only, off by default. None reads LINKED_COPIES_ENV from this
         process's environment; a recipe name or a job's value (link_recipe) switches it on, False
         off. When on, a design with linked components also gets an experimental second archive
@@ -1094,14 +1122,17 @@ class Exporter:
         lock.acquire()
         try:
             return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies,
-                             step)
+                             step, keep_latest_only)
         finally:
             lock.release()
 
     def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=None,
-             step=True):
+             step=True, keep_latest_only=False):
         self.other_files = bool(other_files)
         self.step = bool(step)
+        self.keep_latest_only = bool(keep_latest_only)
+        if self.keep_latest_only:
+            self.run_info.update(keep_latest_only=True, removed=dict(versions=0, files=0, kept=0, errors=0))
         self.linked_copies = linked_copies_experiment() if linked_copies is None else link_recipe(linked_copies)
         self.run_info.update(other_files=self.other_files, step=self.step)
         if self.linked_copies:
@@ -1346,6 +1377,7 @@ class Exporter:
             self.log('verified ' + key)
             if self.refreshed:
                 self.record(entry)  # its files' times were recorded now; else nothing to save
+            self.remove_older_versions(entry)
             return 'verified'
         entry = {'key': key, 'kind': kind, 'hub': hub.name, 'project': project.name, 'path': list(folders),
                  'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
@@ -1386,8 +1418,121 @@ class Exporter:
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
             raise trouble  # the run's final save keeps this entry if the disk still allows
-        self.record(entry)
+        self.record(entry)  # recorded before anything older is removed
+        self.remove_older_versions(entry)
         return entry['status']
+
+    def remove_older_versions(self, newest):
+        """With keep_latest_only, after newest (a design's entry for the version in the account)
+        is done: remove what this export wrote for that design's older versions. Removed only:
+        - when newest is a finished design entry, complete (complete()) and without a STEP failure
+          (a STEP Fusion would not write leaves the older versions as they are);
+        - files recorded in the manifest (files and thumbnail) of entries of the same design (cloud
+          id) with a lower version number: never a file the manifest does not list, never another
+          item's, never one another entry also records, never a path outside the export folder;
+        - when every such file of that older entry still matches its record (size and SHA-256;
+          size and modified time when no SHA-256 was recorded); otherwise none of that entry's
+          files are removed and it records kept (KEPT_CHANGED or another reason).
+        The older entry stays in the manifest with status REMOVED, removed (the date) and
+        removed_files. A file that cannot be deleted stays recorded (remove_error says why) and is
+        tried again on the next run; the run goes on."""
+        if not self.keep_latest_only or newest.get('kind', 'design') != 'design' or newest.get('status') != 'done':
+            return
+        if not complete(newest) or newest.get('step') == STEP_FAILED or not isinstance(newest.get('version'), int):
+            return
+        older = [entry for entry in self.manifest['entries']
+                 if entry is not newest and entry.get('kind', 'design') == 'design'
+                 and str(entry.get('id')) == str(newest.get('id'))
+                 and isinstance(entry.get('version'), int) and entry['version'] < newest['version']
+                 and (entry.get('status') == 'done' or (entry.get('status') == REMOVED and recorded_files(entry)))]
+        if not older:
+            return
+        leaving = set(id(entry) for entry in older)
+        protected = set(info.get('path') for entry in self.manifest['entries'] if id(entry) not in leaving
+                        for info in recorded_files(entry))
+        for entry in older:
+            self.remove_version(entry, protected)
+
+    def removable(self, info, protected):
+        """(full path, None) when this recorded file may be removed; (None, None) when it is gone
+        already; (None, reason) when it must be kept."""
+        relative = info.get('path')
+        if not relative or relative in protected:
+            return None, KEPT_SHARED
+        path = Path(os.path.normpath(str(self.root / relative)))
+        if path == self.root or not path.is_relative_to(self.root):
+            return None, KEPT_OUTSIDE
+        try:
+            stat = os.lstat(long_path(path))
+        except FileNotFoundError:
+            return None, None
+        except OSError as error:
+            return None, 'kept: could not be read (%s)' % (error.strerror or type(error).__name__)
+        if not S_ISREG(stat.st_mode):
+            return None, KEPT_NOT_FILE
+        if info.get('bytes') is None or stat.st_size != info['bytes']:
+            return None, KEPT_CHANGED
+        if info.get('sha256'):
+            try:
+                same = checks.file_sha256(path) == info['sha256']
+            except OSError as error:
+                return None, 'kept: could not be read (%s)' % (error.strerror or type(error).__name__)
+        else:
+            same = info.get('mtime_ns') is not None and stat.st_mtime_ns == info['mtime_ns']
+        return (path, None) if same else (None, KEPT_CHANGED)
+
+    def remove_version(self, entry, protected):
+        """Remove one older version's recorded files (see remove_older_versions)."""
+        infos = recorded_files(entry)
+        plan = [(info,) + self.removable(info, protected) for info in infos]
+        kept = next((reason for _, _, reason in plan if reason), None)
+        tally = self.run_info.setdefault('removed', dict(versions=0, files=0, kept=0, errors=0))
+        if kept:
+            tally['kept'] += 1
+            if entry.get('kept') != kept:
+                entry['kept'] = kept
+                self.log('older version %s %s' % (entry.get('key'), kept))
+                self.record(entry)
+            return
+        gone, errors, removed = [], [], 0
+        for info, path, _ in plan:
+            if path is not None:
+                try:
+                    os.unlink(long_path(path))
+                    removed += 1
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    errors.append('%s: %s' % (info.get('path'), error.strerror or type(error).__name__))
+                    continue
+            gone.append(info)
+        if errors and not gone:
+            # Nothing could be removed: the entry stays as it was, and the next run tries again.
+            entry['remove_error'] = errors[0]
+            tally['errors'] += 1
+            self.log('older version %s: could not remove %s' % (entry.get('key'), '; '.join(errors)))
+            self.record(entry)
+            return
+        taken = set(id(info) for info in gone)
+        entry.setdefault('removed_files', []).extend(
+            dict(path=info.get('path'), role=checks.file_role(info), bytes=info.get('bytes')) for info in gone)
+        entry['files'] = [info for info in entry.get('files') or [] if id(info) not in taken]
+        if id(entry.get('thumbnail')) in taken:
+            entry.pop('thumbnail')
+        entry.update(status=REMOVED, removed=now())
+        entry.pop('kept', None)
+        entry.pop('long_path', None)
+        if errors:
+            entry['remove_error'] = errors[0]
+            tally['errors'] += 1
+            self.log('older version %s: could not remove %s' % (entry.get('key'), '; '.join(errors)))
+        else:
+            entry.pop('remove_error', None)
+        if removed:  # (files already gone, as after a run that stopped midway, are not counted)
+            tally['versions'] += 1
+            tally['files'] += removed
+        self.log('removed older version %s (%s)' % (entry.get('key'), plural(removed, 'file')))
+        self.record(entry)
 
     def links(self, file, entry):
         """Record a design's links on its entry: references (the linked designs, by id and name),

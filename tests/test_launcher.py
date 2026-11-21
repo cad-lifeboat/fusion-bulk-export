@@ -481,12 +481,47 @@ class LauncherTests(unittest.TestCase):
             args = NS(command='export', project=None, limit=None, folder=None, designs_only=False, no_step=True,
                       timeout=10)
             launcher.run_job(args, 'Darwin', out, installed)
-        self.assertIs(jobs[0][-1], False)
+        self.assertIs(jobs[0][7], False)
         (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts=dict(exported=1), step=False,
                                                                  errors=[])), encoding='utf-8')
         self.assertIn('STEP files were not requested for this export.', launcher.summary(out))
         from fusion_bulk_export import core
         self.assertEqual(launcher.STEP_OFF_NOTE, core.STEP_OFF_NOTE)
+
+    def test_keep_latest_only_flag_reaches_the_job_and_status_and_check_count_removals(self):
+        installed, out = self.root / 'installed', self.root / 'out'
+        installed.mkdir()
+        job = lambda: json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))
+        with patch.object(launcher.shutil, 'copytree'):
+            launcher.install(installed, out, 'export', keep_latest_only=True)
+            self.assertIs(job()['keep_latest_only'], True)
+            launcher.install(installed, out, 'export')
+            self.assertNotIn('keep_latest_only', job())  # off unless asked for
+        seen = []
+        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.keep_latest_only) or 0):
+            launcher.main(['export', str(out), '--keep-latest-only'])
+            launcher.main(['export', str(out)])
+        self.assertEqual(seen, [True, False])
+        jobs = []
+        with patch.object(launcher, 'install', side_effect=lambda *a: jobs.append(a)), \
+                patch.object(launcher, 'alive', return_value=True), patch.object(launcher, 'wait', return_value=0):
+            args = NS(command='export', project=None, limit=None, folder=None, designs_only=False, no_step=False,
+                      keep_latest_only=True, timeout=10)
+            launcher.run_job(args, 'Darwin', out, installed)
+        self.assertIs(jobs[0][8], True)
+        entries = [dict(kind='design', status='removed', removed='2026-01-01T00:00:00+00:00', files=[],
+                        removed_files=[dict(path='a v1.f3d'), dict(path='a v1.step')]),
+                   dict(kind='design', status='done', files=[dict(path='a v2.f3d', bytes=1)])]
+        (out / 'manifest.json').write_text(json.dumps(dict(schema=2, runs=[], entries=entries)), encoding='utf-8')
+        (out / 'autorun-result.json').write_text(json.dumps(dict(
+            mode='export', counts=dict(exported=1), removed=dict(versions=1, files=2, kept=1, errors=0),
+            errors=[])), encoding='utf-8')
+        lines = launcher.summary(out)
+        self.assertIn('Removed 1 older version (2 files).', lines)
+        self.assertIn('Kept: 1 older version changed since it was exported (not removed)', lines)
+        self.assertIn('Removed older versions in this folder: 1 (2 files)', lines)
+        from fusion_bulk_export import report
+        self.assertEqual(launcher.removed_text(3, 1), report.removed_text(3, 1))
 
     def test_designs_only_flag_reaches_the_job(self):
         installed, out = self.root / 'installed', self.root / 'out'

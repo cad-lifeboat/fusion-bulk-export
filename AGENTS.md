@@ -90,6 +90,9 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
      folders with their subfolders; both repeat. `--designs-only` leaves out the other files.
      Do not pass `--no-step` unless the person asks for it: without the `.step` an assembly's
      full geometry and anything readable outside Fusion are missing.
+     Do not pass `--keep-latest-only` unless the person asks for it: it deletes the files of
+     designs' older versions from the folder (only those the export wrote, and only unchanged
+     ones), which cannot be undone.
      Do not pass `--drawings`: drawing export was removed (it can crash Fusion), and the flag
      only prints a line saying so.
    - Progress: `python3 scripts/autorun.py status OUT` (counts only, including items still

@@ -102,20 +102,27 @@ def show_results(ui, data):
     results.fallback(ui, data)
 
 
-def export(app, selection, output, show=None, other_files=True, drawings=None, linked_copies=None, step=None):
+def export(app, selection, output, show=None, other_files=True, drawings=None, linked_copies=None, step=None,
+           keep_latest_only=None):
     """Export into output with progress, then write the report and hand the summary to show
     (report.summary() data plus its plain "text"; the add-in shows it in the results dialog).
     other_files: also save the files that are not designs (the dialog's checkbox). step: also
     save each design's STEP (the dialog's STEP box); None takes the remembered choice (an entry
-    file loaded before an update does not pass it). drawings and
+    file loaded before an update does not pass it). keep_latest_only: remove the files of each
+    design's older versions once its newest is saved (the dialog's box, off by default); None takes
+    the remembered choice, as for step. drawings and
     linked_copies are ignored: drawings are never exported, and the copies with linked parts are
     a testing-only experiment switched on in Fusion's environment (core.LINKED_COPIES_ENV), never
     from the dialog (both are still accepted from an entry file loaded before an update, until
     Fusion restarts the add-in)."""
     ui = app.userInterface
-    if step is None:
+    if step is None or keep_latest_only is None:
         from . import settings
-        step = settings.load().get('step') is not False
+        remembered = settings.load()
+        if step is None:
+            step = remembered.get('step') is not False
+        if keep_latest_only is None:
+            keep_latest_only = remembered.get('keep_latest_only') is True
     if not has_hubs(app):
         raise errors.no_hubs()
     exporter = open_exporter(output, FusionAdapter(app))
@@ -141,7 +148,7 @@ def export(app, selection, output, show=None, other_files=True, drawings=None, l
 
         try:
             counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
-                                  other_files=other_files, step=step)
+                                  other_files=other_files, step=step, keep_latest_only=bool(keep_latest_only))
         except Exception as error:
             known = errors.friendly(error)
             if known is None:

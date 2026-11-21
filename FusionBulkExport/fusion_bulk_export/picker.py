@@ -22,14 +22,21 @@ STEP_WHY = ('A STEP file opens in almost any CAD program; the .f3d opens only in
 STEP_OFF_NOTE = 'Without STEP you get only .f3d files, which open only in Fusion.'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 OTHER_FILES_WHY = 'PDFs, images and other uploaded files are copied as they are, beside the designs.'
+LATEST = "Keep only each design's newest version"
+LATEST_WHY = ('Off (the default), a design that got a new version since the last export gets its new files '
+              'beside the old ones, and nothing is ever deleted. On, the folder becomes a single, current '
+              'export: once a design\'s newest version is saved and checked, the files this export wrote for '
+              'its older versions are removed. Only those files, and only if they are unchanged since they were '
+              'exported; nothing in your Fusion account is touched.')
+LATEST_NOTE = 'Older versions of a design are removed from this folder after its newest version is saved.'
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
-# 640 high: on a screen 1080 points high every control is in view at first (the tree is last),
-# also the note shown while the STEP box is unticked.
-DIALOG_SIZE = (520, 640)
+# 700 high: on a screen 1080 points high every control is in view at first (the tree is last),
+# also the notes shown while the STEP box is unticked and the newest-version box ticked.
+DIALOG_SIZE = (520, 700)
 DIALOG_MINIMUM = (380, 460)
 # The tree's height in Fusion's units, set explicitly on the HTML input when it is made and again
 # each time it is shown (on macOS, test builds showed the tree collapsed to a ~40-unit strip when
@@ -115,7 +122,7 @@ class Picker:
         self.chosen = {}
         remembered = settings.load()
         number = version()
-        # Top to bottom: version; Save to [Browse…] with the folder and its note; the checkbox;
+        # Top to bottom: version; Save to [Browse…] with the folder and its note; the checkboxes;
         # the Export choice; what is chosen; the tree, last, so that only tree rows can fall below
         # the dialog's first size and every control is in view (the tree scrolls inside itself).
         # Rows without a label span the whole dialog (isFullWidth as well, since the HTML tree
@@ -154,6 +161,13 @@ class Picker:
         self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
                                               remembered.get('other_files') is not False)
         describe(self.files, OTHER_FILES_WHY, trace)
+        # Off unless the user switched it on last time; the note under it shows while it is ticked.
+        self.latest_box = inputs.addBoolValueInput('fbx_latest', LATEST, True, '',
+                                                   remembered.get('keep_latest_only') is True)
+        describe(self.latest_box, LATEST_WHY, trace)
+        self.latest_note = inputs.addTextBoxCommandInput('fbx_latest_note', '', LATEST_NOTE, 1, True)
+        full_width(self.latest_note, trace)
+        self.latest_note.isVisible = bool(self.latest_box.value)
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
@@ -198,6 +212,11 @@ class Picker:
     def step(self):
         """Whether each design's STEP is saved too (the checkbox)."""
         return bool(self.step_box.value)
+
+    @property
+    def keep_latest_only(self):
+        """Whether older versions' files are removed once the newest is saved (the checkbox)."""
+        return bool(self.latest_box.value)
 
     @property
     def drawings(self):
@@ -253,6 +272,8 @@ class Picker:
                     self.browsing = False
         elif changed_input.id == self.step_box.id:
             self.step_note.isVisible = not self.step
+        elif changed_input.id == self.latest_box.id:
+            self.latest_note.isVisible = self.keep_latest_only
         elif changed_input.id == self.mode.id and self.tree is not None:
             self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)
@@ -263,7 +284,8 @@ class Picker:
 
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
-                            else EVERYTHING, other_files=self.other_files, step=self.step),
+                            else EVERYTHING, other_files=self.other_files, step=self.step,
+                            keep_latest_only=self.keep_latest_only),
                        drop=('drawings', 'linked_copies'))
 
     def incoming(self, action, data):
