@@ -28,7 +28,7 @@ LATEST_WHY = ('Off (the default), a design that got a new version since the last
               'export: once a design\'s newest version is saved and checked, the files this export wrote for '
               'its older versions are removed. Only those files, and only if they are unchanged since they were '
               'exported; nothing in your Fusion account is touched.')
-LATEST_NOTE = 'Older versions of a design are removed from this folder after its newest version is saved.'
+LATEST_NOTE = 'Older versions are removed once the newest is saved.'
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '

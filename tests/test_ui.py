@@ -809,7 +809,7 @@ class UItests(UIBase):
         self.assertIn('nothing in your Fusion account is touched', box.tooltip)
         self.assertEqual((note.text, note.isVisible, note.isFullWidth), (picker.LATEST_NOTE, False, True))
         self.assertEqual(note.text,
-                         'Older versions of a design are removed from this folder after its newest version is saved.')
+                         'Older versions are removed once the newest is saved.')
         command.execute.handlers[0].notify(None)  # v3, the box off
         self.assertIs(json.loads(self.settings.read_text(encoding='utf-8'))['keep_latest_only'], False)
         part.versionNumber = 4
