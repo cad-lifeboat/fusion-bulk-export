@@ -34,7 +34,9 @@ SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
 STEP = 'Also save a STEP file for each design'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
-LATEST = "Keep only each design's newest version"
+OLDER = 'Older versions of a design'
+OLDER_CHOICE = 'Move to the Older versions folder'  # the default
+OLDER_NOTE = 'Older versions move to the Older versions folder.'
 EXPORT_LABEL = 'Export'
 CHOOSE = 'Choose projects or folders'
 TREE_HINT = ('Tick what to export. Ticking a folder includes everything inside it. '
@@ -189,7 +191,7 @@ def tree_rows(x, y, w):
 def dialog_svg():
     width, height = 820, 640
     x, y, w = 150, 28, 520
-    label_w = 252                  # Fusion sizes the label column to its longest label
+    label_w = 236                  # Fusion sizes the label column to its longest label
     cx = x + 16 + label_w          # where controls start
     cw = w - 16 - label_w - 16     # control width
     parts = []
@@ -203,11 +205,18 @@ def dialog_svg():
     row += 22
     parts.append(text(x + 16, row + 12, folder_note(), 12, MUTED))
     row += 26
-    for label, ticked in ((STEP, 1), (OTHER_FILES, 1), (LATEST, 0)):
+    for label, ticked in ((STEP, 1), (OTHER_FILES, 1)):
         parts.append(text(x + 16, row + 12, label, 12, MUTED))
         parts.append(checkbox(cx, row + 2, ticked))
         row += 26
     row += 4
+    parts.append(text(x + 16, row + 17, OLDER, 12, MUTED))
+    parts.append(f'<rect x="{cx}" y="{row}" width="{cw}" height="26" rx="3" fill="{FIELD}" stroke="{LINE}"/>')
+    parts.append(text(cx + 8, row + 17, OLDER_CHOICE, 12))
+    parts.append(caret(cx + cw - 14, row + 13, True))
+    row += 32
+    parts.append(text(x + 16, row + 12, OLDER_NOTE, 12, MUTED))
+    row += 26
     parts.append(text(x + 16, row + 17, EXPORT_LABEL, 12, MUTED))
     parts.append(f'<rect x="{cx}" y="{row}" width="{cw}" height="26" rx="3" fill="{FIELD}" stroke="{LINE}"/>')
     parts.append(text(cx + 8, row + 17, CHOOSE, 12))

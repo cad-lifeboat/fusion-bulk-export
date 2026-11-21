@@ -740,7 +740,7 @@ class UItests(UIBase):
         command.execute.handlers[0].notify(None)
         self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8')),
                          dict(output=self.temp.name, mode='Choose projects or folders', other_files=True, step=True,
-                              keep_latest_only=False))
+                              older_versions='move'))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
         self.assertTrue(inputs.find('fbx_tree').isVisible)
@@ -795,51 +795,87 @@ class UItests(UIBase):
         command.execute.handlers[0].notify(None)
         self.assertTrue(list(Path(self.temp.name).rglob('Part v3.step')))
 
-    def test_keep_latest_checkbox_is_off_by_default_with_a_note_when_on_and_remembered(self):
+    def choose_older(self, command, name):
+        dropdown = command.commandInputs.find('fbx_older')
+        dropdown.select(name)
+        self.change(command, dropdown)
+
+    def test_older_versions_choice_moves_by_default_with_a_note_that_follows_it_and_is_remembered(self):
         from fusion_bulk_export import picker
         part = fake.File('Part', 'part')
         self.app.data = fake.data([part])
         command = self.open_dialog()
         inputs = command.commandInputs
-        box, note = inputs.find('fbx_latest'), inputs.find('fbx_latest_note')
-        self.assertEqual(box.name, "Keep only each design's newest version")
-        self.assertLessEqual(len(box.name), 40)
-        self.assertFalse(box.value)
-        self.assertIn('unchanged since they were exported', box.tooltip)
-        self.assertIn('nothing in your Fusion account is touched', box.tooltip)
-        self.assertEqual((note.text, note.isVisible, note.isFullWidth), (picker.LATEST_NOTE, False, True))
-        self.assertEqual(note.text,
-                         'Older versions are removed once the newest is saved.')
-        command.execute.handlers[0].notify(None)  # v3, the box off
-        self.assertIs(json.loads(self.settings.read_text(encoding='utf-8'))['keep_latest_only'], False)
+        dropdown, note = inputs.find('fbx_older'), inputs.find('fbx_older_note')
+        self.assertEqual(dropdown.name, 'Older versions of a design')
+        self.assertEqual([item.name for item in dropdown.listItems],
+                         ['Move to the Older versions folder', 'Keep beside the newest', 'Delete'])
+        self.assertEqual(dropdown.selectedItem.name, 'Move to the Older versions folder')
+        self.assertIn('nothing in your Fusion account is touched', dropdown.tooltip)
+        self.assertIn('cannot be undone', dropdown.tooltip)
+        self.assertEqual((note.text, note.isVisible, note.isFullWidth),
+                         ('Older versions move to the Older versions folder.', True, True))
+        # Each note is one short line: no longer than the STEP note, which fits the dialog's width.
+        for text in picker.OLDER_NOTES.values():
+            self.assertLessEqual(len(text), len(picker.STEP_OFF_NOTE))
+        self.choose_older(command, 'Delete')
+        self.assertEqual(note.text, 'Older versions are deleted once the newest is saved.')
+        self.choose_older(command, 'Keep beside the newest')
+        self.assertEqual(note.text, 'Older versions stay beside the newest.')
+        command.execute.handlers[0].notify(None)  # v3, keep
+        self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8'))['older_versions'], 'keep')
         part.versionNumber = 4
         command = self.open_dialog()
-        box = command.commandInputs.find('fbx_latest')
-        box.value = True
-        self.change(command, box)
-        self.assertTrue(command.commandInputs.find('fbx_latest_note').isVisible)
+        self.assertEqual(command.commandInputs.find('fbx_older').selectedItem.name, 'Keep beside the newest')
+        self.assertEqual(command.commandInputs.find('fbx_older_note').text, 'Older versions stay beside the newest.')
         command.execute.handlers[0].notify(None)
-        self.assertIs(json.loads(self.settings.read_text(encoding='utf-8'))['keep_latest_only'], True)
-        self.assertEqual(sorted(p.name for p in Path(self.temp.name).rglob('Part v*')),
-                         ['Part v4.f3d', 'Part v4.png', 'Part v4.step'])
-        self.assertIn('Removed 1 older version (3 files).', self.results()[1]['notes'])
+        self.assertEqual(len(list(Path(self.temp.name).rglob('Part v*.f3d'))), 2)
+        part.versionNumber = 5
         command = self.open_dialog()
-        box = command.commandInputs.find('fbx_latest')
-        self.assertTrue(box.value)
-        self.assertTrue(command.commandInputs.find('fbx_latest_note').isVisible)
-        box.value = False
-        self.change(command, box)
-        self.assertFalse(command.commandInputs.find('fbx_latest_note').isVisible)
+        self.choose_older(command, 'Move to the Older versions folder')
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8'))['older_versions'], 'move')
+        root = Path(self.temp.name)
+        self.assertEqual(sorted(p.name for p in (root / 'Older versions').rglob('Part v*')),
+                         ['Part v3.f3d', 'Part v3.png', 'Part v3.step', 'Part v4.f3d', 'Part v4.png', 'Part v4.step'])
+        self.assertIn('Moved 2 older versions (6 files) to Older versions.', self.results()[1]['notes'])
+        part.versionNumber = 6
+        command = self.open_dialog()
+        self.choose_older(command, 'Delete')
+        command.execute.handlers[0].notify(None)
+        self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8'))['older_versions'], 'delete')
+        self.assertEqual(sorted(p.name for p in root.rglob('Part v[56].*')),
+                         ['Part v6.f3d', 'Part v6.png', 'Part v6.step'])
+        self.assertIn('Deleted 1 older version (3 files).', self.results()[1]['notes'])
 
-    def test_an_entry_file_that_does_not_pass_keep_latest_uses_the_remembered_choice(self):
+    def test_an_old_or_unknown_remembered_older_versions_value_means_move(self):
+        for remembered in (dict(keep_latest_only=True), dict(keep_latest_only=False), dict(older_versions='trash'),
+                           dict(older_versions=True), dict(older_versions=None)):
+            with self.subTest(remembered=remembered):
+                self.settings.write_text(json.dumps(dict(remembered, output=self.temp.name)))
+                command = self.open_dialog()
+                self.assertEqual(command.commandInputs.find('fbx_older').selectedItem.name,
+                                 'Move to the Older versions folder')
+                command.execute.handlers[0].notify(None)
+                stored = json.loads(self.settings.read_text(encoding='utf-8'))
+                self.assertEqual(stored['older_versions'], 'move')
+                self.assertNotIn('keep_latest_only', stored)  # the test builds' key is dropped
+
+    def test_an_entry_file_that_does_not_pass_older_versions_uses_the_remembered_choice(self):
         from fusion_bulk_export import command as package
         part = fake.File('Part', 'part')
         self.app.data = fake.data([part])
         package.export(self.app, None, self.temp.name, show=lambda data: None)
         part.versionNumber = 4
-        self.settings.write_text(json.dumps(dict(output=self.temp.name, keep_latest_only=True)))
+        self.settings.write_text(json.dumps(dict(output=self.temp.name, older_versions='delete')))
         package.export(self.app, None, self.temp.name, show=lambda data: None)
         self.assertEqual(sorted(p.name for p in Path(self.temp.name).rglob('Part v*.f3d')), ['Part v4.f3d'])
+        part.versionNumber = 5
+        self.settings.write_text(json.dumps(dict(output=self.temp.name, keep_latest_only=True)))  # old key: move
+        package.export(self.app, None, self.temp.name, show=lambda data: None)
+        self.assertEqual(sorted(p.relative_to(self.temp.name).parts[0] + ':' + p.name
+                                for p in Path(self.temp.name).rglob('Part v*.f3d')),
+                         ['Hub:Part v5.f3d', 'Older versions:Part v4.f3d'])
 
     def test_an_entry_file_that_does_not_pass_step_uses_the_remembered_choice(self):
         from fusion_bulk_export import command as package
@@ -1044,7 +1080,7 @@ class FriendlyErrorTests(UIBase):
         # The tree comes last: nothing but tree rows can be pushed below the fold.
         order = [control.id for control in inputs.added]
         self.assertEqual(order, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_step', 'fbx_step_note',
-                                 'fbx_files', 'fbx_latest', 'fbx_latest_note', 'fbx_mode',
+                                 'fbx_files', 'fbx_older', 'fbx_older_note', 'fbx_mode',
                                  'fbx_tip', 'fbx_summary', 'fbx_tree'])
 
     def test_long_output_folder_is_shown_with_its_middle_cut(self):
@@ -1254,13 +1290,13 @@ class TreeLayoutContractTests(UIBase):
         self.choose(command)
         shown = [control.id for control in command.commandInputs.added if control.isVisible]
         self.assertEqual(shown, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_step', 'fbx_files',
-                                 'fbx_latest', 'fbx_mode', 'fbx_summary', 'fbx_tree'])
+                                 'fbx_older', 'fbx_older_note', 'fbx_mode', 'fbx_summary', 'fbx_tree'])
         width, height = picker.DIALOG_SIZE
         self.assertLessEqual(height, 1080 - 200)  # menu bar, dock or taskbar, title bar, margins
         # Rows above the tree at about 30 units each, the OK/Cancel row about 60: the tree's
-        # minimum still fits in the first size, also with the STEP box unticked and the
-        # newest-version box ticked, when both their notes show too.
-        self.assertLessEqual((len(shown) + 2) * 30 + picker.TREE_MIN_HEIGHT + 60, height)
+        # minimum still fits in the first size, also with the STEP box unticked, when its note
+        # shows too.
+        self.assertLessEqual((len(shown) + 1) * 30 + picker.TREE_MIN_HEIGHT + 60, height)
         self.assertLessEqual(picker.DIALOG_MINIMUM[1], height)
 
 

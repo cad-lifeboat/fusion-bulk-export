@@ -5,7 +5,7 @@ import adsk
 import adsk.core
 
 from . import errors, report
-from .core import Exporter
+from .core import Exporter, older_versions_choice
 from .fusion import FusionAdapter
 from .words import plural
 
@@ -103,26 +103,27 @@ def show_results(ui, data):
 
 
 def export(app, selection, output, show=None, other_files=True, drawings=None, linked_copies=None, step=None,
-           keep_latest_only=None):
+           older_versions=None):
     """Export into output with progress, then write the report and hand the summary to show
     (report.summary() data plus its plain "text"; the add-in shows it in the results dialog).
     other_files: also save the files that are not designs (the dialog's checkbox). step: also
     save each design's STEP (the dialog's STEP box); None takes the remembered choice (an entry
-    file loaded before an update does not pass it). keep_latest_only: remove the files of each
-    design's older versions once its newest is saved (the dialog's box, off by default); None takes
-    the remembered choice, as for step. drawings and
+    file loaded before an update does not pass it). older_versions: what happens to the files of
+    each design's older versions once its newest is saved, "move" (the default), "keep" or "delete"
+    (the dialog's choice); None takes the remembered choice, as for step. drawings and
     linked_copies are ignored: drawings are never exported, and the copies with linked parts are
     a testing-only experiment switched on in Fusion's environment (core.LINKED_COPIES_ENV), never
     from the dialog (both are still accepted from an entry file loaded before an update, until
     Fusion restarts the add-in)."""
     ui = app.userInterface
-    if step is None or keep_latest_only is None:
+    if step is None or older_versions is None:
         from . import settings
         remembered = settings.load()
         if step is None:
             step = remembered.get('step') is not False
-        if keep_latest_only is None:
-            keep_latest_only = remembered.get('keep_latest_only') is True
+        if older_versions is None:
+            older_versions = remembered.get('older_versions')
+    older_versions = older_versions_choice(older_versions)
     if not has_hubs(app):
         raise errors.no_hubs()
     exporter = open_exporter(output, FusionAdapter(app))
@@ -148,7 +149,7 @@ def export(app, selection, output, show=None, other_files=True, drawings=None, l
 
         try:
             counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
-                                  other_files=other_files, step=step, keep_latest_only=bool(keep_latest_only))
+                                  other_files=other_files, step=step, older_versions=older_versions)
         except Exception as error:
             known = errors.friendly(error)
             if known is None:

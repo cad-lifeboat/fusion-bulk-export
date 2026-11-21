@@ -234,19 +234,31 @@ class AutorunTests(unittest.TestCase):
         self.assertIs(result['step'], True)
         self.assertTrue(list(self.output.rglob('*.step')))
 
-    def test_a_job_keeping_only_the_newest_version(self):
+    def test_a_jobs_choice_for_older_versions(self):
+        older = self.output / 'Older versions'
+        outside = lambda pattern: sorted(p.name for p in self.output.rglob(pattern) if older not in p.parents)
         result = self.run_with()
         self.files[0].versionNumber = 4
-        result = self.run_with(keep_latest_only=True)
+        result = self.run_with()  # the default: A v3 moves to the Older versions folder
         self.assertEqual(result['errors'], [])
-        self.assertEqual(result['removed'], dict(versions=1, files=3, kept=0, errors=0))
-        self.assertEqual(sorted(p.name for p in self.output.rglob('A v*')), ['A v4.f3d', 'A v4.png', 'A v4.step'])
-        self.files[1].versionNumber = 4
-        result = self.run_with()  # off unless the job asks: B v3 stays beside B v4
+        self.assertEqual(result['older_versions'], 'move')
+        self.assertEqual(result['moved'], dict(versions=1, files=3, kept=0, errors=0))
         self.assertNotIn('removed', result)
-        self.assertEqual(len(list(self.output.rglob('B v*.f3d'))), 2)
-        result = self.run_with(keep_latest_only='yes')
-        self.assertIn('keep_latest_only must be true or false', result['errors'][0]['error'])
+        self.assertEqual(outside('A v*'), ['A v4.f3d', 'A v4.png', 'A v4.step'])
+        self.assertEqual(sorted(p.name for p in older.rglob('A v*')), ['A v3.f3d', 'A v3.png', 'A v3.step'])
+        self.files[1].versionNumber = 4
+        result = self.run_with(older_versions='keep')  # B v3 stays beside B v4
+        self.assertNotIn('moved', result)
+        self.assertEqual(len(outside('B v*.f3d')), 2)
+        self.files[0].versionNumber = 5
+        result = self.run_with(older_versions='delete')
+        self.assertEqual(result['removed']['versions'], 2)  # A v4, and B v3 kept by the run before
+        self.assertEqual(outside('B v*.f3d'), ['B v4.f3d'])
+        self.assertEqual(outside('A v*.f3d'), ['A v5.f3d'])
+        self.assertFalse(list(older.rglob('B v*')))
+        self.assertEqual(len(list(older.rglob('A v3.*'))), 3)  # what was moved is never deleted
+        result = self.run_with(older_versions=True)
+        self.assertIn('older_versions must be one of: move, keep, delete', result['errors'][0]['error'])
 
     def test_designs_only(self):
         result = self.run_with(designs_only=True)

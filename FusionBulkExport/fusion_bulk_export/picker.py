@@ -7,7 +7,7 @@ from pathlib import Path
 import adsk.core
 
 from . import settings
-from .core import Selection, collection
+from .core import OLDER_DELETE, OLDER_KEEP, OLDER_MOVE, Selection, collection, older_versions_choice
 from .names import output_root_problem
 from .words import plural
 
@@ -22,20 +22,27 @@ STEP_WHY = ('A STEP file opens in almost any CAD program; the .f3d opens only in
 STEP_OFF_NOTE = 'Without STEP you get only .f3d files, which open only in Fusion.'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 OTHER_FILES_WHY = 'PDFs, images and other uploaded files are copied as they are, beside the designs.'
-LATEST = "Keep only each design's newest version"
-LATEST_WHY = ('Off (the default), a design that got a new version since the last export gets its new files '
-              'beside the old ones, and nothing is ever deleted. On, the folder becomes a single, current '
-              'export: once a design\'s newest version is saved and checked, the files this export wrote for '
-              'its older versions are removed. Only those files, and only if they are unchanged since they were '
-              'exported; nothing in your Fusion account is touched.')
-LATEST_NOTE = 'Older versions are removed once the newest is saved.'
+# What happens to a design's older versions once its newest is saved (core.OLDER_VERSIONS): a
+# dropdown, Move first and the default. The note under it changes with the choice; like
+# STEP_OFF_NOTE it stays one short line, since a longer one is cut off at the dialog's width.
+OLDER = 'Older versions of a design'
+OLDER_CHOICES = ((OLDER_MOVE, 'Move to the Older versions folder'), (OLDER_KEEP, 'Keep beside the newest'),
+                 (OLDER_DELETE, 'Delete'))
+OLDER_WHY = ('When a design got a new version since the last export, what happens to the files this export '
+             'wrote for its older versions once the newest is saved and checked. Move (the default): they go '
+             'into the "Older versions" folder at the top of the export folder, under the same folder path. '
+             'Keep: they stay beside the newest. Delete: they are deleted, which cannot be undone. Only files '
+             'this export wrote, and only if unchanged since; nothing in your Fusion account is touched.')
+OLDER_NOTES = {OLDER_MOVE: 'Older versions move to the Older versions folder.',
+               OLDER_KEEP: 'Older versions stay beside the newest.',
+               OLDER_DELETE: 'Older versions are deleted once the newest is saved.'}
 SAVE_TO = 'Save to'
 BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
 # 700 high: on a screen 1080 points high every control is in view at first (the tree is last),
-# also the notes shown while the STEP box is unticked and the newest-version box ticked.
+# also the note shown while the STEP box is unticked and the one under the older-versions choice.
 DIALOG_SIZE = (520, 700)
 DIALOG_MINIMUM = (380, 460)
 # The tree's height in Fusion's units, set explicitly on the HTML input when it is made and again
@@ -161,13 +168,16 @@ class Picker:
         self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
                                               remembered.get('other_files') is not False)
         describe(self.files, OTHER_FILES_WHY, trace)
-        # Off unless the user switched it on last time; the note under it shows while it is ticked.
-        self.latest_box = inputs.addBoolValueInput('fbx_latest', LATEST, True, '',
-                                                   remembered.get('keep_latest_only') is True)
-        describe(self.latest_box, LATEST_WHY, trace)
-        self.latest_note = inputs.addTextBoxCommandInput('fbx_latest_note', '', LATEST_NOTE, 1, True)
-        full_width(self.latest_note, trace)
-        self.latest_note.isVisible = bool(self.latest_box.value)
+        # Move unless the user chose otherwise last time (an unknown remembered value is Move too);
+        # the note under it says what the choice does.
+        chosen = older_versions_choice(remembered.get('older_versions'))
+        self.older = inputs.addDropDownCommandInput(
+            'fbx_older', OLDER, adsk.core.DropDownStyles.TextListDropDownStyle)
+        for value, name in OLDER_CHOICES:
+            self.older.listItems.add(name, value == chosen, '')
+        describe(self.older, OLDER_WHY, trace)
+        self.older_note = inputs.addTextBoxCommandInput('fbx_older_note', '', OLDER_NOTES[chosen], 1, True)
+        full_width(self.older_note, trace)
         self.mode = inputs.addDropDownCommandInput(
             'fbx_mode', 'Export', adsk.core.DropDownStyles.TextListDropDownStyle)
         self.mode.listItems.add(EVERYTHING, True, '')
@@ -214,9 +224,11 @@ class Picker:
         return bool(self.step_box.value)
 
     @property
-    def keep_latest_only(self):
-        """Whether older versions' files are removed once the newest is saved (the checkbox)."""
-        return bool(self.latest_box.value)
+    def older_versions(self):
+        """What happens to older versions' files once the newest is saved: 'move', 'keep' or
+        'delete' (the dropdown; nothing chosen is 'move')."""
+        item = self.older.selectedItem
+        return next((value for value, name in OLDER_CHOICES if item is not None and name == item.name), OLDER_MOVE)
 
     @property
     def drawings(self):
@@ -272,8 +284,8 @@ class Picker:
                     self.browsing = False
         elif changed_input.id == self.step_box.id:
             self.step_note.isVisible = not self.step
-        elif changed_input.id == self.latest_box.id:
-            self.latest_note.isVisible = self.keep_latest_only
+        elif changed_input.id == self.older.id:
+            self.older_note.text = OLDER_NOTES[self.older_versions]
         elif changed_input.id == self.mode.id and self.tree is not None:
             self.show_mode()
             self.trace('mode choosing=%s' % self.choosing)
@@ -285,8 +297,8 @@ class Picker:
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
                             else EVERYTHING, other_files=self.other_files, step=self.step,
-                            keep_latest_only=self.keep_latest_only),
-                       drop=('drawings', 'linked_copies'))
+                            older_versions=self.older_versions),
+                       drop=('drawings', 'linked_copies', 'keep_latest_only'))
 
     def incoming(self, action, data):
         """Answer the page; the returned string is handed back to its JavaScript. A request that

@@ -287,10 +287,21 @@ class ExportTests(unittest.TestCase):
         self.run_export(data)
         previous = [info['path'] for info in self.manifest['entries'][0]['files']]
         file.versionNumber = 4
-        self.run_export(data)
+        self.run_export(data, older_versions='keep')
         self.assertEqual(len(self.manifest['entries']), 2)
         self.assertTrue(all((self.root / path).exists() for path in previous))
         self.assertTrue(all(' v4.' in info['path'] for info in self.manifest['entries'][1]['files']))
+
+    def test_new_version_moves_previous_pair_to_older_versions_by_default(self):
+        file = fake.File()
+        data = fake.data([file])
+        self.run_export(data)
+        previous = [info['path'] for info in self.manifest['entries'][0]['files']]
+        file.versionNumber = 4
+        self.run_export(data)
+        self.assertEqual(self.manifest['entries'][0]['status'], 'moved')
+        self.assertFalse(any((self.root / path).exists() for path in previous))
+        self.assertTrue(all((self.root / 'Older versions' / path).is_file() for path in previous))
 
     def test_unreadable_manifest_is_preserved(self):
         manifest = self.root / 'manifest.json'

@@ -10,8 +10,8 @@ adsk), so they also run outside Fusion.
   with no solid bodies at all only a note (see step_verdict(); other differences are only
   recorded).
 - check_folder(): "Check this folder": every finished item of an export folder checked again,
-  with full hashes (older versions removed on purpose, status "removed", are counted, not
-  checked). Used by `autorun.py check` and `verify-export.py`; it needs no Fusion.
+  with full hashes (older versions moved or deleted on purpose, status "moved" or "removed",
+  are counted, not checked). Used by `autorun.py check` and `verify-export.py`; it needs no Fusion.
 """
 import hashlib
 import json
@@ -287,7 +287,7 @@ def read_manifest(root):
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
               'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
               'failed_checks', 'members_not_crc_checked', 'linked_copies', 'step_off', 'step_failed',
-              'hidden_left_out', 'no_solid_bodies', 'removed')
+              'hidden_left_out', 'no_solid_bodies', 'removed', 'moved')
 
 
 def check_folder(root, strict=False, show=None):
@@ -304,10 +304,11 @@ def check_folder(root, strict=False, show=None):
     for number, entry in enumerate(manifest['entries'], 1):
         totals['entries'] += 1
         status = entry.get('status')
-        if status == 'removed':
-            # An older version whose files were removed on purpose ("Keep only each design's
-            # newest version"): nothing to check, and not a problem.
-            totals['removed'] += 1
+        if status in ('removed', 'moved'):
+            # An older version whose files were deleted, or moved into the Older versions folder,
+            # on purpose once its newest version was saved ("Older versions of a design"): not
+            # where it was recorded, nothing to check, and not a problem.
+            totals[status] += 1
             continue
         if status != 'done':
             # A skip is recorded with its reason (not a design, or a file Fusion cannot hand

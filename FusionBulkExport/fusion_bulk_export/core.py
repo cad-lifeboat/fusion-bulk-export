@@ -16,8 +16,8 @@ from datetime import datetime, timezone
 from . import checks, memory
 from .journal import Journal, replay
 from .lock import FolderBusy, FolderLock  # noqa: F401 (FolderBusy: raised by run)
-from .names import (LINKED_SUFFIX, NAME_LIMIT, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, absolute_path, clean,
-                    design_suffixes, long_path, output_root_problem, too_long, windows_length)
+from .names import (LINKED_SUFFIX, NAME_LIMIT, OLDER_FOLDER, WINDOWS_LIMIT, WINDOWS_NAME_LIMIT, Names, absolute_path,
+                    clean, design_suffixes, long_path, output_root_problem, too_long, windows_length)
 from .power import inside_fusion, keep_awake
 from .staging import Staging
 from .words import plural
@@ -600,16 +600,33 @@ STEP_FAILED_WARNING = 'Saved, but Fusion could not write its STEP file'
 STEP_OFF_NOTE = 'STEP files were not requested for this export.'
 
 
-# "Keep only each design's newest version" (the dialog's box, the job's "keep_latest_only", off by
-# default): once a design's newest version is in the folder, complete and checked, the files this
-# export wrote for its older versions are removed (Exporter.remove_older_versions). Their entries
-# stay in the manifest with status REMOVED, the date (removed) and what was removed
-# (removed_files), so the folder's history still explains itself.
+# What happens to a design's older versions once its newest is in the folder, complete and checked
+# (the dialog's "Older versions of a design", the job's "older_versions"; Exporter.tidy_older_versions):
+# OLDER_MOVE (the default) moves the files this export wrote for them into the "Older versions"
+# folder (names.OLDER_FOLDER) at the top of the export folder, under the same relative path; their
+# entries stay in the manifest with status MOVED, the date (moved) and where each file went
+# (moved_files). OLDER_DELETE deletes those files; the entries get status REMOVED, the date
+# (removed) and what was removed (removed_files). OLDER_KEEP leaves them beside the newest.
+OLDER_MOVE, OLDER_KEEP, OLDER_DELETE = 'move', 'keep', 'delete'
+OLDER_VERSIONS = (OLDER_MOVE, OLDER_KEEP, OLDER_DELETE)
 REMOVED = 'removed'
+MOVED = 'moved'
 KEPT_CHANGED = 'kept: changed since it was exported'
 KEPT_SHARED = 'kept: another item records the same file'
 KEPT_OUTSIDE = 'kept: not inside the export folder'
 KEPT_NOT_FILE = 'kept: not a plain file'
+
+
+def older_versions_choice(value):
+    """OLDER_MOVE, OLDER_KEEP or OLDER_DELETE; anything else (a setting from a test build, a
+    typo) is OLDER_MOVE, the default."""
+    return value if isinstance(value, str) and value in OLDER_VERSIONS else OLDER_MOVE
+
+
+def numbered(path, number):
+    """path with " (number)" before its extension: "Part v3 (2).step"."""
+    stem, extension = os.path.splitext(path.name)
+    return path.with_name('%s (%d)%s' % (stem, number, extension))
 
 
 def recorded_files(entry):
@@ -826,9 +843,9 @@ class Exporter:
         # second archive of an assembly with its linked parts included (FusionAdapter.linked_copy).
         # Set by run() from LINKED_COPIES_ENV or the job's "experiment_linked_copies".
         self.linked_copies = None
-        # Remove the files of each design's older versions once its newest is in the folder (the
-        # dialog's box, the job's "keep_latest_only"); set by run(). Off by default.
-        self.keep_latest_only = False
+        # What happens to each design's older versions once its newest is in the folder
+        # (OLDER_VERSIONS; the dialog's choice, the job's "older_versions"); set by run().
+        self.older_versions = OLDER_MOVE
         # Set when the account guard (export_checked) saw a design change in the account.
         self.alarm = None
         # Fusion's memory, sampled between items (memory.sample inside Fusion; tests set a fake).
@@ -1071,7 +1088,7 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True, linked_copies=None, step=True, keep_latest_only=False):
+            on_trouble=None, other_files=True, linked_copies=None, step=True, older_versions=OLDER_MOVE):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         limit: stop once this many designs were exported in this run (designs already up to
@@ -1102,9 +1119,11 @@ class Exporter:
         STEP. A design exported with its STEP stays up to date in a run with it off (nothing is
         deleted).
 
-        keep_latest_only: off by default. On, once a design's newest version is in the folder
-        (exported now or already up to date) the files this export recorded for its older versions
-        are removed: see remove_older_versions for exactly which. Off, nothing is ever removed.
+        older_versions: what happens to the files this export recorded for a design's older
+        versions once its newest is in the folder (exported now or already up to date): OLDER_MOVE
+        (the default) moves them into the "Older versions" folder, OLDER_DELETE deletes them,
+        OLDER_KEEP leaves them where they are. See tidy_older_versions for exactly which files.
+        Only OLDER_DELETE ever deletes a file the export saved.
 
         linked_copies: testing only, off by default. None reads LINKED_COPIES_ENV from this
         process's environment; a recipe name or a job's value (link_recipe) switches it on, False
@@ -1122,17 +1141,19 @@ class Exporter:
         lock.acquire()
         try:
             return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies,
-                             step, keep_latest_only)
+                             step, older_versions)
         finally:
             lock.release()
 
     def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=None,
-             step=True, keep_latest_only=False):
+             step=True, older_versions=OLDER_MOVE):
         self.other_files = bool(other_files)
         self.step = bool(step)
-        self.keep_latest_only = bool(keep_latest_only)
-        if self.keep_latest_only:
-            self.run_info.update(keep_latest_only=True, removed=dict(versions=0, files=0, kept=0, errors=0))
+        self.older_versions = older_versions_choice(older_versions)
+        self.run_info['older_versions'] = self.older_versions
+        if self.older_versions != OLDER_KEEP:
+            self.run_info[MOVED if self.older_versions == OLDER_MOVE else REMOVED] = \
+                dict(versions=0, files=0, kept=0, errors=0)
         self.linked_copies = linked_copies_experiment() if linked_copies is None else link_recipe(linked_copies)
         self.run_info.update(other_files=self.other_files, step=self.step)
         if self.linked_copies:
@@ -1377,7 +1398,7 @@ class Exporter:
             self.log('verified ' + key)
             if self.refreshed:
                 self.record(entry)  # its files' times were recorded now; else nothing to save
-            self.remove_older_versions(entry)
+            self.tidy_older_versions(entry)
             return 'verified'
         entry = {'key': key, 'kind': kind, 'hub': hub.name, 'project': project.name, 'path': list(folders),
                  'name': file.name, 'id': str(file.id), 'version': int(file.versionNumber),
@@ -1418,13 +1439,14 @@ class Exporter:
         self.log(entry['status'] + ' ' + key)
         if trouble is not None:
             raise trouble  # the run's final save keeps this entry if the disk still allows
-        self.record(entry)  # recorded before anything older is removed
-        self.remove_older_versions(entry)
+        self.record(entry)  # recorded before anything older is moved or removed
+        self.tidy_older_versions(entry)
         return entry['status']
 
-    def remove_older_versions(self, newest):
-        """With keep_latest_only, after newest (a design's entry for the version in the account)
-        is done: remove what this export wrote for that design's older versions. Removed only:
+    def tidy_older_versions(self, newest):
+        """Unless older_versions is OLDER_KEEP, after newest (a design's entry for the version in
+        the account) is done: move (OLDER_MOVE) or delete (OLDER_DELETE) what this export wrote
+        for that design's older versions. Only:
         - when newest is a finished design entry, complete (complete()) and without a STEP failure
           (a STEP Fusion would not write leaves the older versions as they are);
         - files recorded in the manifest (files and thumbnail) of entries of the same design (cloud
@@ -1432,11 +1454,15 @@ class Exporter:
           item's, never one another entry also records, never a path outside the export folder;
         - when every such file of that older entry still matches its record (size and SHA-256;
           size and modified time when no SHA-256 was recorded); otherwise none of that entry's
-          files are removed and it records kept (KEPT_CHANGED or another reason).
-        The older entry stays in the manifest with status REMOVED, removed (the date) and
-        removed_files. A file that cannot be deleted stays recorded (remove_error says why) and is
-        tried again on the next run; the run goes on."""
-        if not self.keep_latest_only or newest.get('kind', 'design') != 'design' or newest.get('status') != 'done':
+          files are touched and it records kept (KEPT_CHANGED or another reason).
+        The older entry stays in the manifest: status MOVED with moved (the date) and moved_files
+        (each file's path and moved_to, its new relative path), or status REMOVED with removed and
+        removed_files. A file that cannot be moved or deleted stays recorded (move_error or
+        remove_error says why) and is tried again on the next run; the run goes on. An entry left
+        half done that way is finished the way it was begun, whatever this run's choice."""
+        if self.older_versions == OLDER_KEEP:
+            return
+        if newest.get('kind', 'design') != 'design' or newest.get('status') != 'done':
             return
         if not complete(newest) or newest.get('step') == STEP_FAILED or not isinstance(newest.get('version'), int):
             return
@@ -1444,14 +1470,19 @@ class Exporter:
                  if entry is not newest and entry.get('kind', 'design') == 'design'
                  and str(entry.get('id')) == str(newest.get('id'))
                  and isinstance(entry.get('version'), int) and entry['version'] < newest['version']
-                 and (entry.get('status') == 'done' or (entry.get('status') == REMOVED and recorded_files(entry)))]
+                 and (entry.get('status') == 'done'
+                      or (entry.get('status') in (REMOVED, MOVED) and recorded_files(entry)))]
         if not older:
             return
         leaving = set(id(entry) for entry in older)
         protected = set(info.get('path') for entry in self.manifest['entries'] if id(entry) not in leaving
                         for info in recorded_files(entry))
         for entry in older:
-            self.remove_version(entry, protected)
+            status = entry.get('status')
+            if status == MOVED or (status == 'done' and self.older_versions == OLDER_MOVE):
+                self.move_version(entry, protected)
+            else:
+                self.remove_version(entry, protected)
 
     def removable(self, info, protected):
         """(full path, None) when this recorded file may be removed; (None, None) when it is gone
@@ -1481,18 +1512,96 @@ class Exporter:
             same = info.get('mtime_ns') is not None and stat.st_mtime_ns == info['mtime_ns']
         return (path, None) if same else (None, KEPT_CHANGED)
 
-    def remove_version(self, entry, protected):
-        """Remove one older version's recorded files (see remove_older_versions)."""
-        infos = recorded_files(entry)
-        plan = [(info,) + self.removable(info, protected) for info in infos]
+    def older_plan(self, entry, protected, action):
+        """([(info, full path or None, None), ...], the run's tally for action) for an older
+        version whose recorded files may all be moved or deleted; (None, tally) when one must be
+        kept (the entry then records why: kept)."""
+        plan = [(info,) + self.removable(info, protected) for info in recorded_files(entry)]
         kept = next((reason for _, _, reason in plan if reason), None)
-        tally = self.run_info.setdefault('removed', dict(versions=0, files=0, kept=0, errors=0))
-        if kept:
-            tally['kept'] += 1
-            if entry.get('kept') != kept:
-                entry['kept'] = kept
-                self.log('older version %s %s' % (entry.get('key'), kept))
-                self.record(entry)
+        tally = self.run_info.setdefault(action, dict(versions=0, files=0, kept=0, errors=0))
+        if not kept:
+            return plan, tally
+        tally['kept'] += 1
+        if entry.get('kept') != kept:
+            entry['kept'] = kept
+            self.log('older version %s %s' % (entry.get('key'), kept))
+            self.record(entry)
+        return None, tally
+
+    def older_target(self, relative, info):
+        """(relative path in the Older versions folder, whether the file is there already) for a
+        recorded file: OLDER_FOLDER/<its relative path>, or with " (2)", " (3)"... before the
+        extension when that name is taken by another file. A file there with the recorded size and
+        SHA-256 is this one, moved by a run that stopped before saving its record."""
+        base = self.root / OLDER_FOLDER / relative
+        candidate, number = base, 1
+        while True:
+            try:
+                stat = os.lstat(long_path(candidate))
+            except FileNotFoundError:
+                return candidate.relative_to(self.root).as_posix(), False
+            if (S_ISREG(stat.st_mode) and info.get('sha256') and stat.st_size == info.get('bytes')
+                    and checks.file_sha256(candidate) == info['sha256']):
+                return candidate.relative_to(self.root).as_posix(), True
+            number += 1
+            candidate = numbered(base, number)
+
+    def move_version(self, entry, protected):
+        """Move one older version's recorded files into the Older versions folder (see
+        tidy_older_versions). Moved within the export folder (one disk), never copied."""
+        plan, tally = self.older_plan(entry, protected, MOVED)
+        if plan is None:
+            return
+        gone, errors, moved = [], [], 0
+        for info, path, _ in plan:
+            relative = info.get('path')
+            try:
+                target, there = self.older_target(relative, info)
+                if path is not None:
+                    full = self.root / target
+                    os.makedirs(long_path(full.parent), exist_ok=True)
+                    os.replace(long_path(path), long_path(full))
+                    moved += 1
+                elif not there:
+                    target = None  # gone already, and not in the Older versions folder
+            except OSError as error:
+                errors.append('%s: %s' % (relative, error.strerror or type(error).__name__))
+                continue
+            gone.append((info, target))
+        if errors and not gone:
+            # Nothing could be moved: the entry stays as it was, and the next run tries again.
+            entry['move_error'] = errors[0]
+            tally['errors'] += 1
+            self.log('older version %s: could not move %s' % (entry.get('key'), '; '.join(errors)))
+            self.record(entry)
+            return
+        taken = set(id(info) for info, _ in gone)
+        entry.setdefault('moved_files', []).extend(
+            dict(path=info.get('path'), moved_to=target, role=checks.file_role(info), bytes=info.get('bytes'),
+                 sha256=info.get('sha256'))
+            for info, target in gone)
+        entry['files'] = [info for info in entry.get('files') or [] if id(info) not in taken]
+        if id(entry.get('thumbnail')) in taken:
+            entry.pop('thumbnail')
+        entry.update(status=MOVED, moved=now())
+        entry.pop('kept', None)
+        entry.pop('long_path', None)
+        if errors:
+            entry['move_error'] = errors[0]
+            tally['errors'] += 1
+            self.log('older version %s: could not move %s' % (entry.get('key'), '; '.join(errors)))
+        else:
+            entry.pop('move_error', None)
+        if moved:  # (files moved by a run that stopped before saving its record are not counted)
+            tally['versions'] += 1
+            tally['files'] += moved
+        self.log('moved older version %s to %s (%s)' % (entry.get('key'), OLDER_FOLDER, plural(moved, 'file')))
+        self.record(entry)
+
+    def remove_version(self, entry, protected):
+        """Delete one older version's recorded files (see tidy_older_versions)."""
+        plan, tally = self.older_plan(entry, protected, REMOVED)
+        if plan is None:
             return
         gone, errors, removed = [], [], 0
         for info, path, _ in plan:

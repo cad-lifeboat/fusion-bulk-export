@@ -20,7 +20,9 @@ class ScreensTests(unittest.TestCase):
     def test_dialog_words_match_the_add_in(self):
         self.assertEqual(screens.OTHER_FILES, picker.OTHER_FILES)
         self.assertEqual(screens.STEP, picker.STEP)
-        self.assertEqual(screens.LATEST, picker.LATEST)
+        self.assertEqual(screens.OLDER, picker.OLDER)
+        self.assertEqual(('move', screens.OLDER_CHOICE), picker.OLDER_CHOICES[0])  # the default, first
+        self.assertEqual(screens.OLDER_NOTE, picker.OLDER_NOTES['move'])
         self.assertFalse(hasattr(screens, 'DRAWINGS'))  # drawing export was removed
         self.assertEqual(screens.CHOOSE, picker.CHOOSE)
         self.assertTrue(screens.VERSION.startswith('Fusion Bulk Export '))

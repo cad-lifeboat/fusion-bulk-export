@@ -488,40 +488,54 @@ class LauncherTests(unittest.TestCase):
         from fusion_bulk_export import core
         self.assertEqual(launcher.STEP_OFF_NOTE, core.STEP_OFF_NOTE)
 
-    def test_keep_latest_only_flag_reaches_the_job_and_status_and_check_count_removals(self):
+    def test_older_versions_flag_reaches_the_job_and_status_and_check_count_them(self):
         installed, out = self.root / 'installed', self.root / 'out'
         installed.mkdir()
         job = lambda: json.loads((installed / 'autorun.json').read_text(encoding='utf-8'))
         with patch.object(launcher.shutil, 'copytree'):
-            launcher.install(installed, out, 'export', keep_latest_only=True)
-            self.assertIs(job()['keep_latest_only'], True)
+            launcher.install(installed, out, 'export', older_versions='delete')
+            self.assertEqual(job()['older_versions'], 'delete')
+            launcher.install(installed, out, 'export', older_versions='keep')
+            self.assertEqual(job()['older_versions'], 'keep')
             launcher.install(installed, out, 'export')
-            self.assertNotIn('keep_latest_only', job())  # off unless asked for
+            self.assertNotIn('older_versions', job())  # the add-in's default, move
         seen = []
-        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.keep_latest_only) or 0):
-            launcher.main(['export', str(out), '--keep-latest-only'])
+        with patch.object(launcher, 'start', side_effect=lambda args: seen.append(args.older_versions) or 0):
+            for choice in ('move', 'keep', 'delete'):
+                launcher.main(['export', str(out), '--older-versions', choice])
             launcher.main(['export', str(out)])
-        self.assertEqual(seen, [True, False])
+        self.assertEqual(seen, ['move', 'keep', 'delete', 'move'])
+        with patch('sys.stderr'), self.assertRaises(SystemExit):
+            launcher.main(['export', str(out), '--older-versions', 'trash'])
+        with patch('sys.stderr'), self.assertRaises(SystemExit):
+            launcher.main(['export', str(out), '--keep-latest-only'])  # replaced, never released
         jobs = []
         with patch.object(launcher, 'install', side_effect=lambda *a: jobs.append(a)), \
                 patch.object(launcher, 'alive', return_value=True), patch.object(launcher, 'wait', return_value=0):
             args = NS(command='export', project=None, limit=None, folder=None, designs_only=False, no_step=False,
-                      keep_latest_only=True, timeout=10)
+                      older_versions='delete', timeout=10)
             launcher.run_job(args, 'Darwin', out, installed)
-        self.assertIs(jobs[0][8], True)
+        self.assertEqual(jobs[0][8], 'delete')
         entries = [dict(kind='design', status='removed', removed='2026-01-01T00:00:00+00:00', files=[],
                         removed_files=[dict(path='a v1.f3d'), dict(path='a v1.step')]),
-                   dict(kind='design', status='done', files=[dict(path='a v2.f3d', bytes=1)])]
+                   dict(kind='design', status='moved', moved='2026-01-01T00:00:00+00:00', files=[],
+                        moved_files=[dict(path='a v2.f3d', moved_to='Older versions/a v2.f3d')]),
+                   dict(kind='design', status='done', files=[dict(path='a v3.f3d', bytes=1)])]
         (out / 'manifest.json').write_text(json.dumps(dict(schema=2, runs=[], entries=entries)), encoding='utf-8')
         (out / 'autorun-result.json').write_text(json.dumps(dict(
             mode='export', counts=dict(exported=1), removed=dict(versions=1, files=2, kept=1, errors=0),
-            errors=[])), encoding='utf-8')
+            moved=dict(versions=1, files=1, kept=0, errors=1), errors=[])), encoding='utf-8')
         lines = launcher.summary(out)
-        self.assertIn('Removed 1 older version (2 files).', lines)
-        self.assertIn('Kept: 1 older version changed since it was exported (not removed)', lines)
-        self.assertIn('Removed older versions in this folder: 1 (2 files)', lines)
-        from fusion_bulk_export import report
+        self.assertIn('Deleted 1 older version (2 files).', lines)
+        self.assertIn('Moved 1 older version (1 file) to Older versions.', lines)
+        self.assertIn('Kept: 1 older version changed since it was exported (not deleted)', lines)
+        self.assertIn('Not moved: 1 older version (the next run tries again)', lines)
+        self.assertIn('Older versions deleted from this folder: 1 (2 files)', lines)
+        self.assertIn('Older versions moved to the Older versions folder: 1 (1 file)', lines)
+        from fusion_bulk_export import names, report
         self.assertEqual(launcher.removed_text(3, 1), report.removed_text(3, 1))
+        self.assertEqual(launcher.moved_text(3, 1), report.moved_text(3, 1))
+        self.assertEqual(launcher.OLDER_FOLDER, names.OLDER_FOLDER)
 
     def test_designs_only_flag_reaches_the_job(self):
         installed, out = self.root / 'installed', self.root / 'out'

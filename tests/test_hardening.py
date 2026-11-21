@@ -206,7 +206,8 @@ class OpenDocumentTests(Base):
         self.adapter = FusionAdapter(self.app)  # each run has its own adapter
         part.versionNumber = 4  # a new version: the add-in's own old document is closed and reopened
         self.run_export(fake.data([part, other]))
-        self.assertEqual([e['status'] for e in self.manifest['entries']], ['done', 'done', 'done'])
+        # v3's files went to the Older versions folder (the default) once v4 was saved.
+        self.assertEqual([e['status'] for e in self.manifest['entries']], ['moved', 'done', 'done'])
         self.assertEqual(self.app.documents.items, [])
 
     def test_a_document_left_open_is_exported_from_on_the_second_attempt(self):

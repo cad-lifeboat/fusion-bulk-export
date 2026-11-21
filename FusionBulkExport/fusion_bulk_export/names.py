@@ -23,10 +23,13 @@ WINDOWS_NAME_LIMIT = 64  # on Windows: typical layouts then stay under its 260-c
 NAME_BYTES = 200        # and UTF-8 bytes, since macOS allows 255 bytes per name
 ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 RESERVED = {'CON', 'PRN', 'AUX', 'NUL'} | {'COM%d' % i for i in range(1, 10)} | {'LPT%d' % i for i in range(1, 10)}
+# Where a design's older versions are moved once its newest is saved (core.OLDER_MOVE, the default):
+# a folder at the top of the output folder, holding them under their own relative paths.
+OLDER_FOLDER = 'Older versions'
 # Files the add-in and its command line keep in the output folder: never a hub's folder name.
 ROOT_FILES = ('manifest.json', 'manifest.json.tmp', 'manifest.journal', 'export.log', 'autorun.log',
               'autorun-result.json', 'inventory.json', 'diagnostics.json', 'STOP', '.write-check',
-              'index.html', 'index.csv', '.staging', 'export.lock')
+              'index.html', 'index.csv', '.staging', 'export.lock', OLDER_FOLDER)
 
 WINDOWS_LIMIT = 259     # characters in a full path without the long-path prefix (and Fusion's limit)
 # On Windows the output folder itself may be at most this long: below it the files keep their
