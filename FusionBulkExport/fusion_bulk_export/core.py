@@ -848,6 +848,9 @@ class Exporter:
         self.older_versions = OLDER_MOVE
         # Set when the account guard (export_checked) saw a design change in the account.
         self.alarm = None
+        # Fusion's CAM API (adsk.cam) for the tool libraries; None imports it when they are
+        # exported (toollibs.load_cam). Tests set a fake.
+        self.cam = None
         # Fusion's memory, sampled between items (memory.sample inside Fusion; tests set a fake).
         self.memory_sampler = memory.sample if inside_fusion() else None
         # False switches the memory guard off for this exporter (a job's "memory_guard": false);
@@ -1088,8 +1091,16 @@ class Exporter:
             entries.pop(old['key'], None)
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
-            on_trouble=None, other_files=True, linked_copies=None, step=True, older_versions=OLDER_MOVE):
+            on_trouble=None, other_files=True, linked_copies=None, step=True, older_versions=OLDER_MOVE,
+            tool_libraries=False, designs=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
+
+        tool_libraries: first, before any design, save the user's CAM tool libraries (toollibs.py:
+        one .json file each in "Tool libraries", recorded in manifest["tool_libraries"], this run's
+        tally in run_info["tool_libraries"]). Off unless asked for: the dialog and the job ask for
+        it by default. A Fusion whose CAM API is missing or fails gives a warning there, never a
+        failed run. designs: False exports no designs or other files at all (only the tool
+        libraries: the command line's --tool-libraries-only).
 
         limit: stop once this many designs were exported in this run (designs already up to
         date, failures and other files do not count). Other files are saved in every folder
@@ -1141,12 +1152,12 @@ class Exporter:
         lock.acquire()
         try:
             return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies,
-                             step, older_versions)
+                             step, older_versions, tool_libraries, designs)
         finally:
             lock.release()
 
     def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=None,
-             step=True, older_versions=OLDER_MOVE):
+             step=True, older_versions=OLDER_MOVE, tool_libraries=False, designs=True):
         self.other_files = bool(other_files)
         self.step = bool(step)
         self.older_versions = older_versions_choice(older_versions)
@@ -1156,6 +1167,8 @@ class Exporter:
                 dict(versions=0, files=0, kept=0, errors=0)
         self.linked_copies = linked_copies_experiment() if linked_copies is None else link_recipe(linked_copies)
         self.run_info.update(other_files=self.other_files, step=self.step)
+        if not designs:
+            self.run_info['designs'] = False
         if self.linked_copies:
             self.run_info['experiment_linked_copies'] = self.linked_copies
             self.log('experiment: copies with linked parts on, recipe ' + self.linked_copies)
@@ -1185,6 +1198,17 @@ class Exporter:
         tracker = None
         try:
             self.log('run started')
+            if tool_libraries:
+                stopping = self.export_tool_libraries(cancelled, progress)
+                if stopping is not None:
+                    self.run_info.update(stopped_reason=stopping.reason, stopped_code=stopping.code)
+                    self.log('trouble: ' + stopping.reason + ' ' + (stopping.error or ''))
+                elif cancelled():
+                    self.run_info['cancelled'] = True
+                self.save()  # the libraries are in manifest.json before the first design
+            if not designs or stopping is not None or self.run_info['cancelled']:
+                data = _View()
+                data.dataHubs = Listing([])  # nothing to walk: no design or other file
             numbers = {}
             for hub in collection(data.dataHubs):
                 try:
@@ -1322,6 +1346,28 @@ class Exporter:
                     raise  # with a stop reason, the folder is known to be unusable
             self.log('run finished ' + json.dumps(counts))
         return counts
+
+    def export_tool_libraries(self, cancelled, progress):
+        """The tool library part of the run (toollibs.ToolLibraryExport): the Trouble that stops the
+        run (the output folder cannot be written), else None. Anything else that goes wrong is a
+        warning in run_info["tool_libraries"]: the designs are exported all the same."""
+        from . import toollibs
+
+        def step(number, found):
+            progress(dict(phase='tool_libraries', project=0, projects=0, project_name=None, path=list(found.folder),
+                          design=number, name=found.name, kind=toollibs.KIND, folder_files=None, folder_item=0,
+                          counts=new_counts(), elapsed=0.0, seconds_per_design=None, location=found.location))
+        try:
+            return toollibs.ToolLibraryExport(self).run(self.cam, cancelled, step)
+        except Exception as error:
+            tally = self.run_info.get('tool_libraries')
+            if not isinstance(tally, dict):
+                tally = self.run_info['tool_libraries'] = toollibs.new_tally()
+            tally['warning'] = 'Fusion raised an error while they were read: %s' % (str(error) or type(error).__name__)
+            self.log('tool libraries not exported: ' + (str(error) or type(error).__name__))
+            if self.error_callback:
+                self.error_callback('tool libraries', error)
+            return None
 
     def begin_documents(self):
         """Ask the adapter (when it can) to remember the documents open in Fusion as the run

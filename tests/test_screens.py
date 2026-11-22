@@ -20,6 +20,8 @@ class ScreensTests(unittest.TestCase):
     def test_dialog_words_match_the_add_in(self):
         self.assertEqual(screens.OTHER_FILES, picker.OTHER_FILES)
         self.assertEqual(screens.STEP, picker.STEP)
+        self.assertEqual(screens.TOOL_LIBRARIES, picker.TOOL_LIBRARIES)
+        self.assertEqual(screens.TOOL_LIBRARIES_NOTE, picker.TOOL_LIBRARIES_NOTE)
         self.assertEqual(screens.OLDER, picker.OLDER)
         self.assertEqual(('move', screens.OLDER_CHOICE), picker.OLDER_CHOICES[0])  # the default, first
         self.assertEqual(screens.OLDER_NOTE, picker.OLDER_NOTES['move'])

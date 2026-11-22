@@ -13,6 +13,7 @@ import subprocess
 import sys
 from urllib.parse import quote
 
+from . import toollibs
 from .checks import entry_step, file_role
 from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, MOVED, OLDER_FOLDER, REMOVED,
                    STEP_FAILED,
@@ -376,9 +377,48 @@ def render_html(manifest, run_info, counts):
     out += table_html(designs, 'Designs', 'Design')
     if others:
         out += table_html(others, 'Other files', 'File')
+    out += tool_libraries_html(manifest, run_info)
     out += older_html(manifest, MOVED) + older_html(manifest, REMOVED)
     out.append('</body></html>')
     return '\n'.join(out) + '\n'
+
+
+def tool_libraries_html(manifest, run_info=None):
+    """The "Tool libraries" section: every CAM tool library saved into this folder, with its
+    location, folder, tool count and file, and notes (gone from Fusion, previous copies). Also
+    this run's warning when they could not be read at all. Nothing when there are none."""
+    found = toollibs.entries(manifest)
+    tally = (run_info or {}).get('tool_libraries') or {}
+    if not found and not tally.get('warning') and not tally.get('unreadable'):
+        return []
+    esc = html.escape
+    out = ['<h2>Tool libraries</h2>']
+    if found:
+        out.append('<p class="muted">%s. %s</p>' % (esc(toollibs.count_line(found)), esc(toollibs.IMPORT_HINT)))
+    if tally.get('warning'):
+        out.append('<p class="warn">%s</p>' % esc('Not exported in the last run. ' + tally['warning']))
+    for problem in tally.get('unreadable') or []:
+        out.append('<p class="warn">%s</p>' % esc('Could not be read in %s: %s' % (
+            problem.get('location') or 'Fusion', problem.get('error') or 'unknown reason')))
+    if not found:
+        return out
+    out.append('<table><thead><tr><th>Status</th><th>Location</th><th>Folder</th><th>Library</th><th>Tools</th>'
+               '<th>File</th><th>Notes</th></tr></thead><tbody>')
+    for entry in found:
+        status = entry.get('status') or ''
+        label = 'Saved' if status == 'done' else LABEL.get(status, status)
+        path = entry.get('path') or ''
+        notes = [esc(entry['error'])] if status == 'failed' and entry.get('error') else []
+        if status == 'failed' and path:
+            notes.append('<span class="muted">%s</span>' % esc('The file from the last export that worked is kept.'))
+        notes += ['<span class="muted">%s</span>' % esc(note) for note in toollibs.entry_notes(entry, run_info)]
+        tools = entry.get('tools')
+        out.append('<tr><td class="%s">%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            esc(status), esc(label), esc(str(entry.get('location') or '')), esc('/'.join(entry.get('folder') or [])),
+            esc(str(entry.get('name') or '')), '' if tools is None else esc(str(tools)),
+            '<a href="%s">JSON</a>' % esc(link(path)) if path else '', '<br>'.join(notes)))
+    out.append('</tbody></table>')
+    return out
 
 
 SLOW_NOTE = ('Fusion took over a minute on each of these (a design locked in another team, or a large '
@@ -437,7 +477,8 @@ def render_csv(manifest, run_info):
     writer = csv.writer(stream, lineterminator='\r\n')
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
-                     'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds', 'note'])
+                     'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds', 'note',
+                     'location', 'tools'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         by_role = {}
@@ -463,6 +504,15 @@ def render_csv(manifest, run_info):
                              reason % str(entry.get(OLDER_WORDS[status]['field']) or '')[:10],
                              '', '', '', 'design', '', '', '', '', '', '', '',
                              (label + '; '.join(paths)) if paths else ''])
+    for entry in toollibs.entries(manifest):
+        # One row per tool library (kind tool_library): its location and tool count in the last
+        # two columns, its name in "design", its .json in "file".
+        tools = entry.get('tools')
+        writer.writerow([entry.get('status') or '', '', '', '/'.join(entry.get('folder') or []), entry.get('name') or '',
+                         '', '', '', (entry.get('error') or '') if entry.get('status') == 'failed' else '', '', '', '',
+                         toollibs.KIND, entry.get('path') or '', '', '', '', '', '', '',
+                         '; '.join(toollibs.entry_notes(entry, run_info)), entry.get('location') or '',
+                         '' if tools is None else tools])
     return stream.getvalue()
 
 
@@ -605,6 +655,7 @@ def summary(counts, run_info, manifest, output, page=None):
         from .errors import NEXT_STEP
         if NEXT_STEP.get(run_info['stopped_code']):
             notes.append(NEXT_STEP[run_info['stopped_code']])
+    notes += toollibs.summary_notes(run_info.get('tool_libraries'))
     if run_info.get('low_space'):
         free = run_info.get('free_bytes')
         notes.append('Low disk space: %s free.' % ('%d MB' % (free >> 20) if free is not None else 'little'))

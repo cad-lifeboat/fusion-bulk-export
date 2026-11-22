@@ -88,6 +88,9 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
    - Only part of the account: `--project ID` for whole projects, `--folder ID:Folder/Sub`
      or `--folder ID:id=FOLDER_ID` (ids from `folder_ids` in `inventory.json`) for single
      folders with their subfolders; both repeat. `--designs-only` leaves out the other files.
+     The person's own CAM tool libraries are saved first, one `.json` each in `OUT/Tool libraries`
+     (Autodesk's samples are skipped); `--no-tool-libraries` leaves them out, and
+     `--tool-libraries-only` saves only them (no designs: quick, for someone who only wants their tools).
      Do not pass `--no-step` unless the person asks for it: without the `.step` an assembly's
      full geometry and anything readable outside Fusion are missing.
      By default the files of designs' older versions (only those the export wrote, and only
@@ -104,7 +107,7 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
      computer awake.
 9. **Finish:** run `export` once more to retry any failures, then `check OUT`, then tell
    the person the counts (exported, already up to date (designs), other files saved, other
-   files already up to date, skipped, not supported, failed, total size, slow items, and any link notes from `status`), that `OUT/index.html` lists everything with reasons for any
+   files already up to date, skipped, not supported, failed, total size, slow items, tool libraries, and any link notes from `status`), that `OUT/index.html` lists everything with reasons for any
    failure, and where OUT is.
 
 ## Troubleshooting

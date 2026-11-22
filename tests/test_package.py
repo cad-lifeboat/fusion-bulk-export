@@ -22,6 +22,10 @@ FORBIDDEN = [
     # Document.save(description) always takes an argument; the manifest's own save() takes none.
     ('.save(...)', re.compile(r'\.save\s*\(\s*[^)\s]')),
     ('deleteMe', re.compile(r'deleteMe')),
+    # CAM tool libraries are only read (toollibs.py): nothing that imports, updates, renames or
+    # deletes a library, a library folder or a library asset.
+    ('tool library write', re.compile(r'\.(importToolLibrary|updateToolLibrary|deleteToolLibrary|createFolder|'
+                                      r'deleteFolder|deleteAsset|renameAsset|renameFolder)\s*\(')),
 ]
 # The only deleteMe allowed: removing the add-in's own toolbar button and command on stop.
 UI_DELETE = re.compile(r'^\s*_?(control|definition)\.deleteMe\(\)\s*$')

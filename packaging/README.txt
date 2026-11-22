@@ -46,7 +46,10 @@ design": keep it, since a STEP opens in almost any CAD program and an .f3d only 
 Fusion. "Older versions of a design" says what happens to the files this export
 wrote for a design's older versions once its newest is saved: moved into the "Older
 versions" folder (the default), kept beside the newest, or deleted (only if you pick
-Delete; nothing else the export saved is ever deleted).
+Delete; nothing else the export saved is ever deleted). "Tool libraries" (on by
+default) saves your CAM tool libraries first, one .json file each, in the "Tool
+libraries" folder; to use one again in Fusion: Manufacture > Tool Library,
+right-click a library folder > Import.
 Fusion cannot be used while it exports:
 leave it open and signed in until the summary appears. It gives the counts and the
 paths of the output folder and of index.html, a report of everything saved and

@@ -1,5 +1,7 @@
 """Synthetic documented-API surface, with no real CAD data."""
+import json
 import sys
+from urllib.parse import quote
 import weakref
 from pathlib import Path
 from types import ModuleType, SimpleNamespace as NS
@@ -621,8 +623,132 @@ def install():
                                        WarningIconType=3, CriticalIconType=4)
     adsk.core.FutureStates = NS(ProcessingFutureState=0, FinishedFutureState=1, FailedFutureState=2)
     adsk.core.DialogResults = NS(DialogError=-1, DialogOK=0, DialogCancel=1, DialogNo=2, DialogYes=3)
-    for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion)]:
+    adsk.cam = cam_module(ToolLibraries())  # a Fusion with the CAM API and no tool libraries
+    for name, module in [('adsk', adsk), ('adsk.core', adsk.core), ('adsk.fusion', adsk.fusion),
+                         ('adsk.cam', adsk.cam)]:
         sys.modules[name] = module
+
+
+# The CAM API's tool libraries, as documented: adsk.cam.CAMManager.get().libraryManager.toolLibraries
+# (ToolLibraries) with urlByLocation(LibraryLocations member), childFolderURLs(url), childAssetURLs(url)
+# and toolLibraryAtURL(url); ToolLibrary.toJson(), count and item(). URLs are adsk.core.URL-like
+# (toString(), leafName). Methods that would write to a library raise LibraryWrite.
+LIBRARY_LOCATIONS = ('LocalLibraryLocation', 'CloudLibraryLocation', 'HubLibraryLocation', 'NetworkLibraryLocation',
+                     'ExternalLibraryLocation', 'Fusion360LibraryLocation', 'OnlineSamplesLibraryLocation')
+# As seen on real Fusion (2706, macOS): Network and OnlineSamples gave URLs with no scheme.
+LOCATION_SCHEMES = {'LocalLibraryLocation': 'toollibraryroot', 'CloudLibraryLocation': 'cloud',
+                    'HubLibraryLocation': 'hub', 'NetworkLibraryLocation': '', 'ExternalLibraryLocation': 'custom',
+                    'Fusion360LibraryLocation': 'systemlibraryroot', 'OnlineSamplesLibraryLocation': ''}
+
+
+class LibraryWrite(BaseException):
+    """A tool library would have been changed: never allowed (BaseException, so nothing catches it)."""
+
+
+class CamURL:
+    def __init__(self, text):
+        self.text = text
+
+    def toString(self):
+        return self.text
+
+    @property
+    def leafName(self):
+        from urllib.parse import unquote
+        return unquote(self.text.rstrip('/').rsplit('/', 1)[-1])
+
+
+class ToolLibrary:
+    """tools: how many tools; text: what toJson() gives (default: Fusion's layout, {"data": [...]});
+    error: toJson() raises it."""
+    def __init__(self, tools=2, text=None, error=None, count=True):
+        self.tools, self.text, self.error, self.has_count = tools, text, error, count
+        self.json_calls = 0
+
+    def __getattr__(self, name):
+        if name == 'count' and self.__dict__.get('has_count'):
+            return self.__dict__['tools']
+        if name in ('add', 'remove', 'save', 'deleteMe', 'update'):
+            def write(*args, **kwargs):
+                raise LibraryWrite(name)
+            return write
+        raise AttributeError(name)
+
+    def item(self, index):
+        return NS(description='tool %d' % index)
+
+    def toJson(self):
+        self.json_calls += 1
+        if self.error is not None:
+            raise self.error
+        if self.text is not None:
+            return self.text
+        # As real Fusion writes it: {"data": [tools], "version": 37}, indented with 4 spaces.
+        return json.dumps(dict(data=[dict(type='flat end mill', description='tool %d' % index)
+                                     for index in range(self.tools)], version=37), indent=4)
+
+
+class ToolLibraries:
+    """locations: {LibraryLocations member name: tree}; a tree maps a name to a ToolLibrary (a
+    library, "<name>.json" in its URL) or to another tree (a folder). failing: member names whose
+    urlByLocation raises; unlistable: folder URL texts whose listing raises."""
+    def __init__(self, locations=None, failing=(), unlistable=(), empty=()):
+        self.locations = dict(locations or {})
+        self.failing, self.unlistable, self.empty = set(failing), set(unlistable), set(empty)
+        self.urls = {}  # URL text -> tree or ToolLibrary
+        self.asked = []
+
+    def _url(self, text, value):
+        self.urls[text] = value
+        return CamURL(text)
+
+    def urlByLocation(self, location):
+        member = LIBRARY_LOCATIONS[location]
+        self.asked.append(member)
+        if member in self.failing:
+            raise RuntimeError('3 : location not available')
+        if member in self.empty:  # what real Fusion raised for cloud and hub locations holding nothing
+            raise RuntimeError('3 : Given URL does not point to an existing folder')
+        scheme = LOCATION_SCHEMES[member]
+        return self._url(('%s://root/' % scheme) if scheme else 'root/' + member, self.locations.get(member, {}))
+
+    def _children(self, url, libraries):
+        text = url.toString()
+        if text in self.unlistable:
+            raise RuntimeError('2 : InternalValidationError : folder')
+        tree = self.urls[text]
+        base = text.rstrip('/') + '/'
+        out = []
+        for name, value in tree.items():
+            if isinstance(value, ToolLibrary) == libraries:
+                out.append(self._url(base + quote(name) + ('.json' if libraries else ''), value))
+        return out
+
+    def childFolderURLs(self, url):
+        return self._children(url, False)
+
+    def childAssetURLs(self, url):
+        return self._children(url, True)
+
+    def toolLibraryAtURL(self, url):
+        return self.urls.get(url.toString())
+
+    def __getattr__(self, name):
+        if name.startswith(('import', 'update', 'add', 'delete', 'remove', 'save')):
+            def write(*args, **kwargs):
+                raise LibraryWrite(name)
+            return write
+        raise AttributeError(name)
+
+
+def cam_module(libraries, manager=True):
+    """An adsk.cam module whose CAMManager hands out libraries (ToolLibraries). manager=False: an
+    older Fusion without CAMManager."""
+    cam = ModuleType('adsk.cam')
+    cam.LibraryLocations = NS(**{name: index for index, name in enumerate(LIBRARY_LOCATIONS)})
+    if manager:
+        cam.CAMManager = NS(get=lambda: NS(libraryManager=NS(toolLibraries=libraries)))
+    return cam
 
 
 class ListItems(list):

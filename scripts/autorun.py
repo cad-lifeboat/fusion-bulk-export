@@ -5,6 +5,7 @@
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
                     [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only] [--no-step]
                     [--older-versions {move,keep,delete}]
+                    [--no-tool-libraries | --tool-libraries-only]
                                                     export (rerun the same command to resume);
                                                     each design as .f3d and .step (.f3d only
                                                     with --no-step); other files (PDFs,
@@ -17,7 +18,11 @@
                                                     versions are moved into the "Older
                                                     versions" folder (--older-versions move,
                                                     the default), left beside it (keep) or
-                                                    deleted (delete)
+                                                    deleted (delete); first of all, your CAM
+                                                    tool libraries are saved, one .json each
+                                                    in "Tool libraries" (--no-tool-libraries
+                                                    leaves them out; --tool-libraries-only
+                                                    saves only them, no designs)
   autorun.py status OUTPUT                          counts so far (no design names)
   autorun.py check OUTPUT                           check every exported file again (full hashes,
                                                     archives, STEP files); needs no Fusion
@@ -312,7 +317,7 @@ def root_problem(output, name=None):
 
 
 def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False, step=True,
-            older_versions='move'):
+            older_versions='move', tool_libraries=True):
     """Put the job in place (after updating the add-in when needed); True when the output folder
     was created for it."""
     created = make_output(output)
@@ -343,6 +348,8 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['step'] = False
     if older_versions != 'move':
         config['older_versions'] = older_versions  # the add-in's default is "move"
+    if tool_libraries is not True and mode == 'export':
+        config['tool_libraries'] = tool_libraries  # false, or "only"; the add-in's default is true
     if not memory_guard_wanted():
         config['memory_guard'] = False
     experiment = linked_copies_experiment()
@@ -385,6 +392,31 @@ LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing ot
 
 
 OLDER_FOLDER = 'Older versions'  # the add-in's names.OLDER_FOLDER
+TOOL_FOLDER = 'Tool libraries'   # the add-in's names.TOOL_FOLDER
+TOOL_LIBRARIES_ONLY = 'only'     # the add-in's autorun.TOOL_LIBRARIES_ONLY
+
+
+def tool_library_lines(tally):
+    """The run's tool libraries in words (counts only), from the result's "tool_libraries"."""
+    if not isinstance(tally, dict):
+        return []
+    if tally.get('warning'):
+        return ['Tool libraries: not exported. ' + str(tally['warning'])]
+    parts = []
+    if tally.get('exported'):
+        parts.append('exported %s (%s)' % (plural(tally['exported'], 'tool library'),
+                                           plural(tally.get('tools_exported') or 0, 'tool')))
+    if tally.get('up_to_date'):
+        parts.append('%d already up to date' % tally['up_to_date'])
+    for key, words in (('moved', 'previous %s moved to ' + OLDER_FOLDER), ('kept', 'previous %s kept beside'),
+                       ('removed', 'previous %s replaced')):
+        if tally.get(key):
+            parts.append('%d %s' % (tally[key], words % form(tally[key], 'copy')))
+    if tally.get('failed'):
+        parts.append('%d failed (see the report)' % tally['failed'])
+    if tally.get('unreadable'):
+        parts.append('%s could not be read' % plural(tally['unreadable'], 'location or folder', 'locations or folders'))
+    return ['Tool libraries: ' + (', '.join(parts) if parts else 'none of your own found')]
 
 
 def removed_text(versions, files):
@@ -471,6 +503,7 @@ def summary(output):
                                 verb))
             if tally.get('errors'):
                 lines.append('Not %s: %s (the next run tries again)' % (verb, plural(tally['errors'], 'older version')))
+        lines += tool_library_lines(report.get('tool_libraries'))
         if report.get('low_memory') and report.get('stopped_code') != 'memory':
             lines.append('Note: ' + LOW_MEMORY_NOTE)
         if report.get('low_space'):
@@ -491,7 +524,15 @@ def summary(output):
     manifest = output / 'manifest.json'
     if manifest.is_file():
         # With manifest.journal: the items finished since manifest.json was last written in full.
-        entries = package_checks().read_manifest(output).get('entries', [])
+        whole = package_checks().read_manifest(output)
+        entries = whole.get('entries', [])
+        libraries = [e for e in whole.get('tool_libraries') or [] if isinstance(e, dict)]
+        if libraries:
+            done = [e for e in libraries if e.get('status') == 'done']
+            failed = sum(1 for e in libraries if e.get('status') == 'failed')
+            lines.append('Tool libraries in this folder: %s (%s)%s' % (
+                plural(len(done), 'tool library'), plural(sum(e.get('tools') or 0 for e in done), 'tool'),
+                ', %d failed' % failed if failed else ''))
         size = sum(f.get('bytes', 0) for e in entries if e.get('status') == 'done' for f in e.get('files', []))
         for label, kind in (('Manifest', None), ('Designs', 'design'), ('Other files', 'file')):
             chosen = [e for e in entries if kind is None or (e.get('kind') or 'design') == kind]
@@ -663,7 +704,8 @@ def run_job(args, name, output, installed):
     watching = alive(installed)
     created = install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
                       folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
-                      not getattr(args, 'no_step', False), getattr(args, 'older_versions', 'move'))
+                      not getattr(args, 'no_step', False), getattr(args, 'older_versions', 'move'),
+                      tool_libraries_choice(args))
     try:
         status = send(args, name, output, installed, watching)
     except KeyboardInterrupt:
@@ -678,6 +720,13 @@ def run_job(args, name, output, installed):
     if status == 1 and created:
         drop_new_output(output)
     return status
+
+
+def tool_libraries_choice(args):
+    """The job's "tool_libraries" from the flags: True (the default), False or "only"."""
+    if getattr(args, 'tool_libraries_only', False):
+        return TOOL_LIBRARIES_ONLY
+    return not getattr(args, 'no_tool_libraries', False)
 
 
 def send(args, name, output, installed, watching):
@@ -896,16 +945,23 @@ def check(output, names=False):
     def show(number, entry, line, problems, notes):
         if not (problems or notes):
             return
-        label = entry.get('name') if names else ('file %d' if entry.get('kind') == 'file' else 'design %d') % number
+        kind = entry.get('kind')
+        label = entry.get('name') if names else ('file %d' if kind == 'file' else 'tool library %d'
+                                                 if kind == 'tool_library' else 'design %d') % number
         for problem in problems:
             print('%s: PROBLEM %s' % (label, problem))
         for note in notes:
             print('%s: NOTE %s' % (label, note))
     totals = checks.check_folder(output, show=show)
+    failed = totals['failed'] + totals.get('tool_libraries_failed', 0)
     print('Checked %s: %d with a problem, %s, %s, %s missing bodies, %d not exported yet (failed).'
-          % (plural(totals['done'], 'finished item'), totals['failed_checks'] - totals['failed'],
+          % (plural(totals['done'] + totals.get('tool_libraries', 0), 'finished item'), totals['failed_checks'] - failed,
              plural(totals['missing'], 'missing file'), plural(totals['changed'], 'changed file'),
-             plural(totals['solids_differ'], 'STEP file'), totals['failed']))
+             plural(totals['solids_differ'], 'STEP file'), failed))
+    if totals.get('tool_libraries') or totals.get('tool_libraries_failed'):
+        print('Of them %s (in %s), %d failed in the last export.'
+              % (plural(totals.get('tool_libraries', 0), 'tool library'), TOOL_FOLDER,
+                 totals.get('tool_libraries_failed', 0)))
     if totals.get('moved'):
         print('%s moved to the %s folder on purpose: not checked, not a problem.'
               % (plural(totals['moved'], 'older version'), OLDER_FOLDER))
@@ -961,6 +1017,12 @@ def main(argv=None):
             p.add_argument('--max-restarts', type=int, default=MAX_RESTARTS, metavar='N',
                            help='with --restart-fusion: restart Fusion at most N times (default %d), and never '
                                 'more than once per %d designs exported' % (MAX_RESTARTS, DESIGNS_PER_RESTART))
+            libraries = p.add_mutually_exclusive_group()
+            libraries.add_argument('--no-tool-libraries', action='store_true',
+                                   help='leave out your CAM tool libraries (by default each is saved first, as one '
+                                        '.json file in "Tool libraries" at the top of OUTPUT)')
+            libraries.add_argument('--tool-libraries-only', action='store_true',
+                                   help='save only your CAM tool libraries: no designs, no other files (quick)')
             # Kept for one release so older instructions still run; it only prints DRAWINGS_REMOVED.
             p.add_argument('--drawings', action='store_true', help=argparse.SUPPRESS)
     sub.add_parser('reset', help='clear stale job files (the button is always available)')
@@ -982,6 +1044,12 @@ def main(argv=None):
         return 0
     if getattr(args, 'limit', None) is not None and args.limit < 1:
         parser.error('--limit must be positive')
+    if getattr(args, 'tool_libraries_only', False):
+        chosen = [flag for flag, value in (('--project', args.project), ('--folder', args.folder),
+                                           ('--limit', args.limit), ('--designs-only', args.designs_only))
+                  if value]
+        if chosen:
+            parser.error('--tool-libraries-only exports no designs; leave out ' + ', '.join(chosen))
     try:
         return start(args)
     except KeyboardInterrupt:  # before the job was sent (start handles it once it is)

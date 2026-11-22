@@ -19,6 +19,10 @@ Configuration (all paths absolute):
                                      default) into the "Older versions" folder (status "moved"),
                                      "keep" beside the newest, "delete" (status "removed"; never
                                      set it unless the person asks)
+   "tool_libraries": true,           optional; the CAM tool libraries, saved first, one .json
+                                     file each in "Tool libraries" (toollibs.py): true (the
+                                     default), false (not saved), or "only" (only them: no
+                                     designs and no other files)
    "experiment_linked_copies": "1",  testing only, not for users: the launcher passes on
                                      FUSION_BULK_EXPORT_EXPERIMENT_LINKED_COPIES ("1",
                                      "innermost" or "compute"; see core.LINKED_COPIES_ENV).
@@ -141,13 +145,18 @@ def check_settings(config):
     linked_copies = config.get('experiment_linked_copies')
     if linked_copies is not None and link_recipe(linked_copies) is None:
         raise ValueError('experiment_linked_copies must be one of: ' + ', '.join(sorted(LINK_RECIPES)))
+    tool_libraries = config.get('tool_libraries', True)
+    if not (isinstance(tool_libraries, bool) or tool_libraries == TOOL_LIBRARIES_ONLY):
+        raise ValueError('tool_libraries must be true, false or "only"')
     memory_guard = config.get('memory_guard', True)
     if not isinstance(memory_guard, bool):
         raise ValueError('memory_guard must be true or false')
     # "drawings" (from launchers before drawing export was removed) and "linked_copies" are ignored.
-    return mode, selection, limit, timeout, not designs_only, linked_copies, step, older_versions, memory_guard
+    return (mode, selection, limit, timeout, not designs_only, linked_copies, step, older_versions, tool_libraries,
+            memory_guard)
 
 
+TOOL_LIBRARIES_ONLY = 'only'  # the job's "tool_libraries": only them, no designs
 FIND_LOG_EVERY = 50  # folders listed between progress lines while a folder id is looked for
 
 
@@ -385,7 +394,7 @@ def run_autorun(app, config_path):
         unusable = None
         try:
             (output, mode, selection, limit, timeout, other_files, linked_copies, step, older_versions,
-             memory_guard) = read_config(config_path)
+             tool_libraries, memory_guard) = read_config(config_path)
         except Exception as error:
             output = getattr(error, 'output', None) or beside
             raise
@@ -398,7 +407,9 @@ def run_autorun(app, config_path):
         if unusable is not None:
             raise ValueError(unusable)
         log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
-                          other_files=other_files, step=step, older_versions=older_versions)
+                          other_files=other_files, step=step, older_versions=older_versions,
+                          tool_libraries_choice=('only' if tool_libraries == TOOL_LIBRARIES_ONLY
+                                                 else 'on' if tool_libraries else 'off'))
         log.write('autorun start ' + mode)
         if mode == 'diagnostics':
             report = diagnostics(app)
@@ -434,7 +445,8 @@ def run_autorun(app, config_path):
                 log.result['counts'] = exporter.run(
                     data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
                     selection=selection, other_files=other_files, linked_copies=linked_copies, step=step,
-                    older_versions=older_versions)
+                    older_versions=older_versions, tool_libraries=bool(tool_libraries),
+                    designs=tool_libraries != TOOL_LIBRARIES_ONLY)
             finally:
                 try:
                     write_report(exporter)
@@ -453,6 +465,13 @@ def run_autorun(app, config_path):
             for done in ('moved', 'removed'):
                 if info.get(done):
                     log.result[done] = info[done]
+            if isinstance(info.get('tool_libraries'), dict):
+                tally = info['tool_libraries']
+                # Counts only (the locations' error texts can hold names): what the launcher prints.
+                log.result['tool_libraries'] = dict(
+                    (key, tally.get(key)) for key in ('found', 'exported', 'up_to_date', 'failed', 'tools_exported',
+                                                      'tools_up_to_date', 'moved', 'kept', 'removed', 'warning'))
+                log.result['tool_libraries']['unreadable'] = len(tally.get('unreadable') or [])
             if info.get('experiment_linked_copies'):
                 log.result['experiment_linked_copies'] = info['experiment_linked_copies']
             # For the launcher's --restart-fusion: it closes Fusion only when nothing is open in it

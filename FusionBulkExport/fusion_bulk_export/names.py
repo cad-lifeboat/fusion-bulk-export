@@ -26,10 +26,13 @@ RESERVED = {'CON', 'PRN', 'AUX', 'NUL'} | {'COM%d' % i for i in range(1, 10)} | 
 # Where a design's older versions are moved once its newest is saved (core.OLDER_MOVE, the default):
 # a folder at the top of the output folder, holding them under their own relative paths.
 OLDER_FOLDER = 'Older versions'
+# Where the CAM tool libraries go (toollibs.py): a folder at the top of the output folder, one .json
+# file per library under "<location>/<folders>/". Never a hub's folder name, like OLDER_FOLDER.
+TOOL_FOLDER = 'Tool libraries'
 # Files the add-in and its command line keep in the output folder: never a hub's folder name.
 ROOT_FILES = ('manifest.json', 'manifest.json.tmp', 'manifest.journal', 'export.log', 'autorun.log',
               'autorun-result.json', 'inventory.json', 'diagnostics.json', 'STOP', '.write-check',
-              'index.html', 'index.csv', '.staging', 'export.lock', OLDER_FOLDER)
+              'index.html', 'index.csv', '.staging', 'export.lock', OLDER_FOLDER, TOOL_FOLDER)
 
 WINDOWS_LIMIT = 259     # characters in a full path without the long-path prefix (and Fusion's limit)
 # On Windows the output folder itself may be at most this long: below it the files keep their

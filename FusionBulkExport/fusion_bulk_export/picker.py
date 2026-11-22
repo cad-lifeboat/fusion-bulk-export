@@ -22,6 +22,13 @@ STEP_WHY = ('A STEP file opens in almost any CAD program; the .f3d opens only in
 STEP_OFF_NOTE = 'Without STEP you get only .f3d files, which open only in Fusion.'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 OTHER_FILES_WHY = 'PDFs, images and other uploaded files are copied as they are, beside the designs.'
+# The CAM tool libraries (toollibs.py), saved once per export, at its start. The note under the box is
+# always shown and, like STEP_OFF_NOTE, stays one short line.
+TOOL_LIBRARIES = 'Tool libraries'
+TOOL_LIBRARIES_NOTE = 'Your CAM tool libraries, one .json file each.'
+TOOL_LIBRARIES_WHY = ('Your own tool libraries from Manufacture > Tool Library (local, cloud and hub ones; not '
+                      "Autodesk's sample libraries) go into the Tool libraries folder, ready to import into Fusion "
+                      'again. Nothing in Fusion is changed.')
 # What happens to a design's older versions once its newest is saved (core.OLDER_VERSIONS): a
 # dropdown, Move first and the default. The note under it changes with the choice; like
 # STEP_OFF_NOTE it stays one short line, since a longer one is cut off at the dialog's width.
@@ -41,9 +48,11 @@ BROWSE = 'Browse…'
 OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion to get it). '
               'This one can export everything.')
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
-# 700 high: on a screen 1080 points high every control is in view at first (the tree is last),
-# also the note shown while the STEP box is unticked and the one under the older-versions choice.
-DIALOG_SIZE = (520, 700)
+# 740 high: on a screen 1080 points high every control is in view at first (the tree is last),
+# also the note shown while the STEP box is unticked, the one under the tool libraries box and the one
+# under the older-versions choice (each row about 30 units: the controls above the tree come to about
+# 420, with the tree's 260 and the OK row below them).
+DIALOG_SIZE = (520, 740)
 DIALOG_MINIMUM = (380, 460)
 # The tree's height in Fusion's units, set explicitly on the HTML input when it is made and again
 # each time it is shown (on macOS, test builds showed the tree collapsed to a ~40-unit strip when
@@ -168,6 +177,12 @@ class Picker:
         self.files = inputs.addBoolValueInput('fbx_files', OTHER_FILES, True, '',
                                               remembered.get('other_files') is not False)
         describe(self.files, OTHER_FILES_WHY, trace)
+        # On unless the user switched it off last time.
+        self.tools_box = inputs.addBoolValueInput('fbx_tools', TOOL_LIBRARIES, True, '',
+                                                  remembered.get('tool_libraries') is not False)
+        describe(self.tools_box, TOOL_LIBRARIES_WHY, trace)
+        self.tools_note = inputs.addTextBoxCommandInput('fbx_tools_note', '', TOOL_LIBRARIES_NOTE, 1, True)
+        full_width(self.tools_note, trace)
         # Move unless the user chose otherwise last time (an unknown remembered value is Move too);
         # the note under it says what the choice does.
         chosen = older_versions_choice(remembered.get('older_versions'))
@@ -217,6 +232,11 @@ class Picker:
     def other_files(self):
         """Whether files that are not designs are saved too (the checkbox)."""
         return bool(self.files.value)
+
+    @property
+    def tool_libraries(self):
+        """Whether the CAM tool libraries are saved too (the checkbox)."""
+        return bool(self.tools_box.value)
 
     @property
     def step(self):
@@ -297,7 +317,7 @@ class Picker:
     def remember(self):
         settings.store(dict(output=self.output, mode=self.mode.selectedItem.name if self.mode.selectedItem
                             else EVERYTHING, other_files=self.other_files, step=self.step,
-                            older_versions=self.older_versions),
+                            older_versions=self.older_versions, tool_libraries=self.tool_libraries),
                        drop=('drawings', 'linked_copies', 'keep_latest_only'))
 
     def incoming(self, action, data):

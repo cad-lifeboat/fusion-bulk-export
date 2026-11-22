@@ -219,7 +219,8 @@ class Execute(adsk.core.CommandEventHandler):
             try:
                 _code['export'](app, selection, _picker.output, show=show_results,
                                 other_files=_picker.other_files, step=getattr(_picker, 'step', None),
-                                older_versions=getattr(_picker, 'older_versions', None))
+                                older_versions=getattr(_picker, 'older_versions', None),
+                                tool_libraries=getattr(_picker, 'tool_libraries', None))
             finally:
                 _busy['by'] = None
         except Exception:

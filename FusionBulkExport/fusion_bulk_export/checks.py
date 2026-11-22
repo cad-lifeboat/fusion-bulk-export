@@ -11,7 +11,8 @@ adsk), so they also run outside Fusion.
   recorded).
 - check_folder(): "Check this folder": every finished item of an export folder checked again,
   with full hashes (older versions moved or deleted on purpose, status "moved" or "removed",
-  are counted, not checked). Used by `autorun.py check` and `verify-export.py`; it needs no Fusion.
+  are counted, not checked; CAM tool libraries, manifest["tool_libraries"], are checked by size
+  and SHA-256). Used by `autorun.py check` and `verify-export.py`; it needs no Fusion.
 """
 import hashlib
 import json
@@ -287,7 +288,7 @@ def read_manifest(root):
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
               'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
               'failed_checks', 'members_not_crc_checked', 'linked_copies', 'step_off', 'step_failed',
-              'hidden_left_out', 'no_solid_bodies', 'removed', 'moved')
+              'hidden_left_out', 'no_solid_bodies', 'removed', 'moved', 'tool_libraries', 'tool_libraries_failed')
 
 
 def check_folder(root, strict=False, show=None):
@@ -421,5 +422,25 @@ def check_folder(root, strict=False, show=None):
         if show:
             show(number, entry, line, problems, notes)
         if problems:
+            totals['failed_checks'] += 1
+    # The CAM tool libraries (toollibs.py): each recorded file there with its size and SHA-256. A
+    # library that failed in its last export is counted as failed, as a design is; the file of its
+    # last good export, when there is one, is checked all the same.
+    from .toollibs import check_entry
+    for number, entry in enumerate(manifest.get('tool_libraries') or [], 1):
+        if not isinstance(entry, dict):
+            continue
+        problems, line = check_entry(root, entry)
+        if entry.get('status') == 'failed':
+            totals['tool_libraries_failed'] += 1
+            totals['failed_checks'] += 1
+            line = 'status failed' + ('' if not entry.get('path') else ', earlier file: ' + line)
+        else:
+            totals['tool_libraries'] += 1
+        totals['missing'] += sum(1 for problem in problems if problem.startswith('file missing'))
+        totals['changed'] += sum(1 for problem in problems if problem.startswith('file changed'))
+        if show:
+            show(number, entry, line, problems, [])
+        if problems and entry.get('status') != 'failed':
             totals['failed_checks'] += 1
     return totals

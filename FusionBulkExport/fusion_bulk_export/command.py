@@ -42,6 +42,9 @@ def duration(seconds):
 
 def describe(state):
     """Progress text: where it is, what it is doing, and time, rate and failures so far."""
+    if state['phase'] == 'tool_libraries':  # at the start of the run, before any design
+        where = ' / '.join([state.get('location') or ''] + list(state['path']))
+        return ('Tool library %d: %s\n%s' % (state['design'], state['name'], where)).replace('%', '%%')
     where = ' / '.join([state['project_name'] or ''] + list(state['path']))
     head = 'Project %d of %d' % (state['project'], state['projects'])
     if state['phase'] == 'listing':
@@ -103,24 +106,28 @@ def show_results(ui, data):
 
 
 def export(app, selection, output, show=None, other_files=True, drawings=None, linked_copies=None, step=None,
-           older_versions=None):
+           older_versions=None, tool_libraries=None):
     """Export into output with progress, then write the report and hand the summary to show
     (report.summary() data plus its plain "text"; the add-in shows it in the results dialog).
     other_files: also save the files that are not designs (the dialog's checkbox). step: also
     save each design's STEP (the dialog's STEP box); None takes the remembered choice (an entry
     file loaded before an update does not pass it). older_versions: what happens to the files of
     each design's older versions once its newest is saved, "move" (the default), "keep" or "delete"
-    (the dialog's choice); None takes the remembered choice, as for step. drawings and
+    (the dialog's choice); None takes the remembered choice, as for step. tool_libraries: also save
+    the CAM tool libraries first (the dialog's box); None takes the remembered choice (on unless
+    switched off), as for step. drawings and
     linked_copies are ignored: drawings are never exported, and the copies with linked parts are
     a testing-only experiment switched on in Fusion's environment (core.LINKED_COPIES_ENV), never
     from the dialog (both are still accepted from an entry file loaded before an update, until
     Fusion restarts the add-in)."""
     ui = app.userInterface
-    if step is None or older_versions is None:
+    if step is None or older_versions is None or tool_libraries is None:
         from . import settings
         remembered = settings.load()
         if step is None:
             step = remembered.get('step') is not False
+        if tool_libraries is None:
+            tool_libraries = remembered.get('tool_libraries') is not False
         if older_versions is None:
             older_versions = remembered.get('older_versions')
     older_versions = older_versions_choice(older_versions)
@@ -149,7 +156,8 @@ def export(app, selection, output, show=None, other_files=True, drawings=None, l
 
         try:
             counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
-                                  other_files=other_files, step=step, older_versions=older_versions)
+                                  other_files=other_files, step=step, older_versions=older_versions,
+                                  tool_libraries=bool(tool_libraries))
         except Exception as error:
             known = errors.friendly(error)
             if known is None:
