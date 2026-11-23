@@ -23,7 +23,7 @@ import zipfile
 
 from .journal import Journal, replay
 from .names import long_path
-from .words import plural
+from .words import form, plural
 
 SOLID = re.compile(rb'=\s*(MANIFOLD_SOLID_BREP|BREP_WITH_VOIDS)\s*\(')
 CHUNK = 1 << 20
@@ -283,6 +283,101 @@ def read_manifest(root):
     if pending:
         replay(manifest, pending)
     return manifest
+
+
+def design_identity(entry):
+    """What tells one design from another across its versions: its cloud id (its key, or the
+    entry itself, for an entry written without one)."""
+    return str(entry.get('id') or entry.get('key') or id(entry))
+
+
+def newest_designs(manifest):
+    """The newest exported version of every design in the folder (status "done"), each once,
+    in manifest order."""
+    newest = {}
+    for entry in manifest.get('entries') or []:
+        if not isinstance(entry, dict) or (entry.get('kind') or 'design') != 'design' or entry.get('status') != 'done':
+            continue
+        identity = design_identity(entry)
+        known = newest.get(identity)
+        if known is None or (entry.get('version') or 0) >= (known.get('version') or 0):
+            newest[identity] = entry
+    return list(newest.values())
+
+
+def archive_paths(manifest):
+    """{design id: the relative path of its newest exported .f3d in this folder}."""
+    archives = {}
+    for entry in newest_designs(manifest):
+        archive = next((info.get('path') for info in entry.get('files') or [] if file_role(info) == 'archive'), None)
+        if archive and entry.get('id') is not None:
+            archives[str(entry['id'])] = archive
+    return archives
+
+
+def inserted_designs(manifest):
+    """The assemblies of an export folder: designs whose newest exported version records at least
+    one design inserted from another design (its manifest "references"), each design once,
+    whether exported in this run or an earlier one. [{'entry': the entry, 'inserted': [{'id',
+    'name', 'path'}]}], by project, folder and name. path is the inserted design's newest
+    exported .f3d here, or None when it is not in this export; worked out from the folder now,
+    so a folder from an older version (references without paths, or paths of an earlier run)
+    reads the same."""
+    archives = archive_paths(manifest)
+    found = []
+    for entry in newest_designs(manifest):
+        inserted, seen = [], set()
+        for reference in entry.get('references') or []:
+            if isinstance(reference, dict):
+                identity, name = reference.get('id'), reference.get('name')
+            elif isinstance(reference, str) and reference:
+                identity, name = reference, None
+            else:
+                continue
+            identity = None if identity is None else str(identity)
+            if identity is not None and (identity in seen or identity == str(entry.get('id'))):
+                continue
+            seen.add(identity)
+            inserted.append(dict(id=identity, name=None if name is None else str(name),
+                                 path=archives.get(identity) if identity is not None else None))
+        if inserted:
+            found.append(dict(entry=entry, inserted=inserted))
+    found.sort(key=lambda item: (str(item['entry'].get('project') or '').casefold(),
+                                 '/'.join(item['entry'].get('path') or []).casefold(),
+                                 str(item['entry'].get('name') or '').casefold()))
+    return found
+
+
+def inserted_note(assemblies):
+    """The plain note about the assemblies of inserted_designs() (counts only, never names), or
+    None when there are none: their .f3d holds only links to the designs inserted into them."""
+    count = len(assemblies)
+    if not count:
+        return None
+    its = 'its' if count == 1 else 'their'
+    without_step = sum(1 for item in assemblies
+                       if not any(file_role(info) == 'step' for info in item['entry'].get('files') or []))
+    missing_ids, unnamed = set(), 0
+    for item in assemblies:
+        for inserted in item['inserted']:
+            if inserted['path'] is None:
+                if inserted['id'] is None:
+                    unnamed += 1
+                else:
+                    missing_ids.add(inserted['id'])
+    missing = len(missing_ids) + unnamed
+    clauses = []
+    if without_step < count:
+        clauses.append('the full geometry is in %s .step%s' % (
+            its, ' (%d without one)' % without_step if without_step else ''))
+    if missing:
+        clauses.append('the inserted designs are in this folder too, except %s not in this export'
+                       % plural(missing, 'design'))
+    else:
+        clauses.append('every inserted design is in this folder too')
+    return ('%s %s designs inserted from other designs. %s .f3d holds only links to them; %s. For a single file '
+            'with everything, export the assembly as .f3z from File > Export in Fusion.'
+            % (plural(count, 'assembly'), form(count, 'uses'), its.capitalize(), ', and '.join(clauses)))
 
 
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',

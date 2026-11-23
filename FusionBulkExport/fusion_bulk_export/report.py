@@ -14,7 +14,7 @@ import sys
 from urllib.parse import quote
 
 from . import toollibs
-from .checks import entry_step, file_role
+from .checks import entry_step, file_role, inserted_designs, inserted_note
 from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, MOVED, OLDER_FOLDER, REMOVED,
                    STEP_FAILED,
                    STEP_OFF, STEP_NOT_REQUESTED, STEP_OFF_NOTE)
@@ -91,6 +91,7 @@ def items(manifest, run_info=None):
     moved or deleted on purpose (status "moved" or "removed") are not items: older_versions()
     lists them."""
     result = []
+    assemblies = {id(item['entry']): item['inserted'] for item in inserted_designs(manifest)}
     for entry in manifest.get('entries', []):
         status = shown_status(entry)
         if status in (REMOVED, MOVED):
@@ -114,7 +115,7 @@ def items(manifest, run_info=None):
                            links_unreadable=bool(entry.get('references_unreadable')),
                            fusion_error=entry.get('fusion_error') or '', slow_seconds=entry.get('slow_seconds'),
                            roles=roles, account_changed=bool(entry.get('account_changed')),
-                           kept=older_kept_text(entry)))
+                           kept=older_kept_text(entry), inserted=assemblies.get(id(entry)) or []))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
@@ -122,7 +123,8 @@ def items(manifest, run_info=None):
                            name='(folder)', version=None, files=[], reason=problem.get('error') or '',
                            next_step=next_step('unreadable', problem.get('error')), warnings=[], note='',
                            thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
-                           fusion_error='', slow_seconds=None, roles=[], account_changed=False, kept=''))
+                           fusion_error='', slow_seconds=None, roles=[], account_changed=False, kept='',
+                           inserted=[]))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
@@ -357,6 +359,9 @@ def render_html(manifest, run_info, counts):
     unread = links_unreadable(manifest)
     if unread:
         line += '; %d whose links could not be read (exported all the same)' % unread
+    assemblies = inserted_designs(manifest)
+    if assemblies:
+        line += '; %s with inserted designs' % plural(len(assemblies), 'assembly')
     out.append('<div class="muted">%s.</div>' % esc(line))
     if (run_info or {}).get('step') is False:
         out.append('<p class="muted">Note: %s</p>' % esc(STEP_OFF_NOTE))
@@ -374,6 +379,7 @@ def render_html(manifest, run_info, counts):
     if manifest.get('older_layout'):
         out.append('<p class="muted">Note: %s</p>' % esc(OLDER_LAYOUT))
     out += slow_html(rows)
+    out += assemblies_html(assemblies)
     out += table_html(designs, 'Designs', 'Design')
     if others:
         out += table_html(others, 'Other files', 'File')
@@ -381,6 +387,47 @@ def render_html(manifest, run_info, counts):
     out += older_html(manifest, MOVED) + older_html(manifest, REMOVED)
     out.append('</body></html>')
     return '\n'.join(out) + '\n'
+
+
+NOT_IN_EXPORT = 'not in this export'
+
+
+def inserted_text(design):
+    """An inserted design in words, for the CSV: its .f3d here, or its name and why there is none."""
+    if design['path']:
+        return design['path']
+    return '%s (%s)' % (design['name'] or 'a design', NOT_IN_EXPORT)
+
+
+def assemblies_html(assemblies):
+    """The "Assemblies with inserted designs" section: each assembly (checks.inserted_designs) by
+    name, with a link to its folder and its files, and the designs inserted into it, each linked
+    to its own exported .f3d (or "not in this export"). Nothing when there are none."""
+    if not assemblies:
+        return []
+    esc = html.escape
+    out = ['<h2>Assemblies with inserted designs</h2><p class="muted">%s</p><ul>' % esc(inserted_note(assemblies))]
+    for item in assemblies:
+        entry = item['entry']
+        files = [info for info in entry.get('files') or [] if info.get('path')]
+        archive = next((info['path'] for info in files if file_role(info) == 'archive'), None)
+        where = ' / '.join(part for part in (entry.get('project') or '', '/'.join(entry.get('path') or [])) if part)
+        if archive and '/' in archive:
+            where = '<a href="%s/">%s</a>' % (esc(link(archive.rsplit('/', 1)[0])), esc(where or 'folder'))
+        else:
+            where = esc(where)
+        own = ' '.join('<a href="%s">%s</a>' % (esc(link(info['path'])), esc(ROLE_LABEL[file_role(info)]))
+                       for info in files if file_role(info) in ('archive', 'step'))
+        version = ' v%s' % entry['version'] if entry.get('version') is not None else ''
+        inserted = []
+        for design in item['inserted']:
+            name = esc(design['name'] or 'a design')
+            inserted.append('<a href="%s">%s</a>' % (esc(link(design['path'])), name) if design['path']
+                            else '%s <span class="muted">(%s)</span>' % (name, NOT_IN_EXPORT))
+        out.append('<li><b>%s</b> <span class="muted">(%s)</span>%s<br>Inserted: %s</li>' % (
+            esc(str(entry.get('name') or '') + version), where, ' ' + own if own else '', ', '.join(inserted)))
+    out.append('</ul>')
+    return out
 
 
 def tool_libraries_html(manifest, run_info=None):
@@ -478,7 +525,7 @@ def render_csv(manifest, run_info):
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
                      'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds', 'note',
-                     'location', 'tools'])
+                     'location', 'tools', 'inserted_designs'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         by_role = {}
@@ -492,7 +539,8 @@ def render_csv(manifest, run_info):
                          '' if design else (row['files'][0] if row['files'] else ''),
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
                          row['fusion_error'], 'yes' if row['links_unreadable'] else '',
-                         row['slow_seconds'] or '', row.get('note') or row.get('kept') or ''])
+                         row['slow_seconds'] or '', row.get('note') or row.get('kept') or '', '', '',
+                         '; '.join(inserted_text(design) for design in row['inserted'])])
     for status, reason, label in ((MOVED, 'Older version moved to the %s folder on %%s' % OLDER_FOLDER, 'Moved: '),
                                   (REMOVED, 'Older version deleted from this folder on %s', 'Deleted: ')):
         # One row per moved or deleted older version: its status, and its files in note.
@@ -512,7 +560,7 @@ def render_csv(manifest, run_info):
                          '', '', '', (entry.get('error') or '') if entry.get('status') == 'failed' else '', '', '', '',
                          toollibs.KIND, entry.get('path') or '', '', '', '', '', '', '',
                          '; '.join(toollibs.entry_notes(entry, run_info)), entry.get('location') or '',
-                         '' if tools is None else tools])
+                         '' if tools is None else tools, ''])
     return stream.getvalue()
 
 
@@ -677,6 +725,9 @@ def summary(counts, run_info, manifest, output, page=None):
     if stale:
         notes.append('%s %s older versions of linked designs (a note, not a failure).'
                      % (plural(stale, 'design'), form(stale, 'uses')))
+    assemblies = inserted_note(inserted_designs(manifest))
+    if assemblies:
+        notes.append(assemblies)
     if run_info.get('upgraded_schema'):
         notes.append(OLDER_LAYOUT)
     slow = run_info.get('slow') or 0  # this run's; the report lists every one in the folder

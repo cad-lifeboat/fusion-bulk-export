@@ -582,6 +582,9 @@ def summary(output):
         if stale:
             lines.append('Note: %s with out-of-date links (exported as %s, not a failure)'
                          % (plural(stale, 'design'), form(stale, 'it is', 'they are')))
+        assemblies = assemblies_line(whole)
+        if assemblies:
+            lines.append(assemblies)
     log = output / 'autorun.log'
     if log.is_file():
         # Only known counter lines: error lines can carry project or design names.
@@ -920,6 +923,14 @@ def package_checks():
     return checks
 
 
+def assemblies_line(manifest):
+    """The note about the folder's assemblies with designs inserted from other designs (counts
+    only, never names), or None when there are none."""
+    checks = package_checks()
+    note = checks.inserted_note(checks.inserted_designs(manifest))
+    return 'Note: ' + note if note else None
+
+
 def reset(installed):
     """Kept for old instructions: clears a job file that was never picked up. The toolbar button
     is always there. A running job finishes first."""
@@ -968,6 +979,9 @@ def check(output, names=False):
     if totals.get('removed'):
         print('%s deleted on purpose (--older-versions delete): not checked, not a problem.'
               % plural(totals['removed'], 'older version'))
+    assemblies = assemblies_line(checks.read_manifest(output))
+    if assemblies:
+        print(assemblies)  # a note about the folder, never a problem
     print(json.dumps(totals))
     return 0 if not totals['failed_checks'] else 1
 

@@ -661,20 +661,11 @@ def link_paths(manifest):
     design's exported archive in this folder (its newest exported version), or None when it is not
     exported here. Run at the end of every run, since a linked design is often exported after the
     assembly that uses it."""
-    archives = {}
-    for entry in manifest.get('entries') or []:
-        if entry.get('kind', 'design') != 'design' or entry.get('status') != 'done':
-            continue
-        archive = next((info.get('path') for info in entry.get('files') or []
-                        if checks.file_role(info) == ROLE_ARCHIVE), None)
-        known = archives.get(str(entry.get('id')))
-        if archive and (known is None or (entry.get('version') or 0) >= known[0]):
-            archives[str(entry.get('id'))] = (entry.get('version') or 0, archive)
+    archives = checks.archive_paths(manifest)
     for entry in manifest.get('entries') or []:
         for reference in entry.get('references') or []:
             if isinstance(reference, dict):
-                found = archives.get(str(reference.get('id')))
-                reference['path'] = found[1] if found else None
+                reference['path'] = archives.get(str(reference.get('id')))
 
 
 def free_bytes(path):
@@ -1338,6 +1329,7 @@ class Exporter:
             self.finish_documents()
             self.staging.clean()
             link_paths(self.manifest)  # every link to its exported file, now that the run's exports are known
+            self.log_assemblies()
             self.run_info.update(finished=now(), counts=counts, found=found)
             try:
                 self.save()
@@ -1346,6 +1338,21 @@ class Exporter:
                     raise  # with a stop reason, the folder is known to be unusable
             self.log('run finished ' + json.dumps(counts))
         return counts
+
+    def log_assemblies(self):
+        """One export.log line per assembly in the folder (checks.inserted_designs): its key and
+        name, and how many designs are inserted into it (how many of them are not in this export).
+        Never raises: the log is a convenience."""
+        try:
+            for item in checks.inserted_designs(self.manifest):
+                entry, inserted = item['entry'], item['inserted']
+                missing = sum(1 for design in inserted if design['path'] is None)
+                self.log('assembly with inserted designs %s %s: %s%s' % (
+                    entry.get('key'), json.dumps(str(entry.get('name') or ''), ensure_ascii=False),
+                    plural(len(inserted), 'inserted design'),
+                    ', %d not in this export' % missing if missing else ''))
+        except Exception as error:
+            self.log('could not list the assemblies: ' + (str(error) or type(error).__name__))
 
     def export_tool_libraries(self, cancelled, progress):
         """The tool library part of the run (toollibs.ToolLibraryExport): the Trouble that stops the

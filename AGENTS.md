@@ -107,7 +107,7 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
      computer awake.
 9. **Finish:** run `export` once more to retry any failures, then `check OUT`, then tell
    the person the counts (exported, already up to date (designs), other files saved, other
-   files already up to date, skipped, not supported, failed, total size, slow items, tool libraries, and any link notes from `status`), that `OUT/index.html` lists everything with reasons for any
+   files already up to date, skipped, not supported, failed, total size, slow items, tool libraries, and any link notes from `status`, including how many assemblies use designs inserted from other designs), that `OUT/index.html` lists everything with reasons for any
    failure, and where OUT is.
 
 ## Troubleshooting
@@ -170,6 +170,8 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 - **An assembly's `.f3d` looks nearly empty** (one screw) in the person's other tool: that
   `.f3d` holds the assembly's own bodies and its links. Point them to the assembly's `.step`
   (full geometry) and to the linked designs' own `.f3d` files in the same OUT
-  (`manifest.json` `references[].path` maps each link to its file).
+  (`manifest.json` `references[].path` maps each link to its file). `OUT/index.html` lists
+  every such assembly under "Assemblies with inserted designs" with links to those files; for
+  one self-contained file they can export the assembly as `.f3z` from File > Export in Fusion.
 - **Warnings** (a STEP with no bodies, or fewer solids than the distinct bodies Fusion showed): the
   `.f3d` archive is still the complete copy; report the count.
