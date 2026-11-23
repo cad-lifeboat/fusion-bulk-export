@@ -282,7 +282,7 @@ class ToolLibraryTests(unittest.TestCase):
         # A run that stopped after writing but before recording: the next one does not add "~1a2b".
         target = self.root / 'Tool libraries/Cloud/Router bits.json'
         target.parent.mkdir(parents=True)
-        target.write_text(self.locations['CloudLibraryLocation']['Router bits'].toJson(), encoding='utf-8')
+        target.write_bytes(self.locations['CloudLibraryLocation']['Router bits'].toJson().encode('utf-8'))
         mine = self.root / 'Tool libraries/Local/Mills.json'
         mine.parent.mkdir(parents=True)
         mine.write_text('my own file', encoding='utf-8')
