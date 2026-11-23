@@ -740,7 +740,7 @@ class UItests(UIBase):
         command.execute.handlers[0].notify(None)
         self.assertEqual(json.loads(self.settings.read_text(encoding='utf-8')),
                          dict(output=self.temp.name, mode='Choose projects or folders', other_files=True, step=True,
-                              older_versions='move', tool_libraries=True))
+                              older_versions='move', tool_libraries=True, f3z_bundles=False))
         inputs = self.open_dialog().commandInputs
         self.assertEqual(inputs.find('fbx_mode').selectedItem.name, 'Choose projects or folders')
         self.assertTrue(inputs.find('fbx_tree').isVisible)
@@ -1080,7 +1080,8 @@ class FriendlyErrorTests(UIBase):
         # The tree comes last: nothing but tree rows can be pushed below the fold.
         order = [control.id for control in inputs.added]
         self.assertEqual(order, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_step', 'fbx_step_note',
-                                 'fbx_files', 'fbx_tools', 'fbx_tools_note', 'fbx_older', 'fbx_older_note', 'fbx_mode',
+                                 'fbx_files', 'fbx_tools', 'fbx_tools_note', 'fbx_f3z', 'fbx_f3z_note', 'fbx_older',
+                                 'fbx_older_note', 'fbx_mode',
                                  'fbx_tip', 'fbx_summary', 'fbx_tree'])
 
     def test_long_output_folder_is_shown_with_its_middle_cut(self):
@@ -1290,7 +1291,8 @@ class TreeLayoutContractTests(UIBase):
         self.choose(command)
         shown = [control.id for control in command.commandInputs.added if control.isVisible]
         self.assertEqual(shown, ['fbx_version', 'fbx_browse', 'fbx_folder', 'fbx_note', 'fbx_step', 'fbx_files',
-                                 'fbx_tools', 'fbx_tools_note', 'fbx_older', 'fbx_older_note', 'fbx_mode', 'fbx_summary', 'fbx_tree'])
+                                 'fbx_tools', 'fbx_tools_note', 'fbx_f3z', 'fbx_f3z_note', 'fbx_older', 'fbx_older_note',
+                                 'fbx_mode', 'fbx_summary', 'fbx_tree'])
         width, height = picker.DIALOG_SIZE
         self.assertLessEqual(height, 1080 - 200)  # menu bar, dock or taskbar, title bar, margins
         # Rows above the tree at about 30 units each, the OK/Cancel row about 60: the tree's

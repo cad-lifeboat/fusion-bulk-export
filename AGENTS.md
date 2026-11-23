@@ -6,8 +6,9 @@ You are helping a person back up **their own** Fusion account to **their own com
 (PDFs, uploads) beside them. Drawings and electronics are not supported (exporting a
 drawing through the API crashed Fusion): they are listed as such, never opened. Links
 between designs are mapped in the manifest (`references`, each with the `path` of the
-linked design's exported `.f3d`, or null). Fusion's API cannot write `.f3z` bundles. It
-only reads from the account. Work on the person's machine, in a terminal, with them nearby.
+linked design's exported `.f3d`, or null). Fusion's API cannot write `.f3z` bundles; on
+request the tool builds an .f3z-style bundle beside each assembly from the exported `.f3d`
+files (never changing them). It only reads from the account. Work on the person's machine, in a terminal, with them nearby.
 
 ## Rules
 
@@ -98,6 +99,11 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
      the person so. `--older-versions keep` leaves them beside the newest. Do not pass
      `--older-versions delete` unless the person asks for it: it deletes them, which cannot be
      undone.
+     `--f3z` also builds an `.f3z` beside each assembly's `.f3d` at the end, from the exported
+     files (pass it when the person wants one file per assembly; it is not Fusion's own File >
+     Export `.f3z`). For a folder already exported: `python3 scripts/autorun.py bundle OUT`
+     (no Fusion; Python 3.14 or newer also adds the links' neutronRole). The `.f3d` files are
+     never changed.
      Do not pass `--drawings`: drawing export was removed (it can crash Fusion), and the flag
      only prints a line saying so.
    - Progress: `python3 scripts/autorun.py status OUT` (counts only, including items still
@@ -107,7 +113,7 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
      computer awake.
 9. **Finish:** run `export` once more to retry any failures, then `check OUT`, then tell
    the person the counts (exported, already up to date (designs), other files saved, other
-   files already up to date, skipped, not supported, failed, total size, slow items, tool libraries, and any link notes from `status`, including how many assemblies use designs inserted from other designs), that `OUT/index.html` lists everything with reasons for any
+   files already up to date, skipped, not supported, failed, total size, slow items, tool libraries, and any link notes from `status`, including how many assemblies use designs inserted from other designs and how many .f3z were built or could not be), that `OUT/index.html` lists everything with reasons for any
    failure, and where OUT is.
 
 ## Troubleshooting
@@ -172,6 +178,7 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
   (full geometry) and to the linked designs' own `.f3d` files in the same OUT
   (`manifest.json` `references[].path` maps each link to its file). `OUT/index.html` lists
   every such assembly under "Assemblies with inserted designs" with links to those files; for
-  one self-contained file they can export the assembly as `.f3z` from File > Export in Fusion.
+  one file per assembly, run `python3 scripts/autorun.py bundle OUT` (no Fusion) or export
+  again with `--f3z`. An `.f3z` "not built" has its reason in `OUT/index.html`; report the count.
 - **Warnings** (a STEP with no bodies, or fewer solids than the distinct bodies Fusion showed): the
   `.f3d` archive is still the complete copy; report the count.

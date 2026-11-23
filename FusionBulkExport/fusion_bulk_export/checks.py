@@ -348,9 +348,11 @@ def inserted_designs(manifest):
     return found
 
 
-def inserted_note(assemblies):
+def inserted_note(assemblies, bundles=None, on=False):
     """The plain note about the assemblies of inserted_designs() (counts only, never names), or
-    None when there are none: their .f3d holds only links to the designs inserted into them."""
+    None when there are none: their .f3d holds only links to the designs inserted into them, and
+    how to build an .f3z beside each, or how many were built (f3z.note: bundles is
+    f3z.folder_counts(), on whether this run built them)."""
     count = len(assemblies)
     if not count:
         return None
@@ -375,15 +377,30 @@ def inserted_note(assemblies):
                        % plural(missing, 'design'))
     else:
         clauses.append('every inserted design is in this folder too')
-    return ('%s %s designs inserted from other designs. %s .f3d holds only links to them; %s. For a single file '
-            'with everything, export the assembly as .f3z from File > Export in Fusion.'
-            % (plural(count, 'assembly'), form(count, 'uses'), its.capitalize(), ', and '.join(clauses)))
+    from .f3z import note
+    return ('%s %s designs inserted from other designs. %s .f3d holds only links to them; %s. %s'
+            % (plural(count, 'assembly'), form(count, 'uses'), its.capitalize(), ', and '.join(clauses),
+               note(count, bundles, on)))
+
+
+def assemblies_note(manifest, on=False):
+    """inserted_note() for a folder's manifest, with the state of the assemblies' .f3z files."""
+    from .f3z import folder_counts
+    assemblies = inserted_designs(manifest)
+    return inserted_note(assemblies, folder_counts(manifest, assemblies), on) if assemblies else None
+
+
+def bundle_info(entry):
+    """The .f3z built beside an assembly's .f3d (f3z.py), as recorded on its entry, or None."""
+    record = (entry or {}).get('f3z')
+    return record if isinstance(record, dict) and record.get('path') else None
 
 
 NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipped', 'unsupported', 'failed',
               'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
               'failed_checks', 'members_not_crc_checked', 'linked_copies', 'step_off', 'step_failed',
-              'hidden_left_out', 'no_solid_bodies', 'removed', 'moved', 'tool_libraries', 'tool_libraries_failed')
+              'hidden_left_out', 'no_solid_bodies', 'removed', 'moved', 'tool_libraries', 'tool_libraries_failed',
+              'f3z_bundles', 'f3z_not_built')
 
 
 def check_folder(root, strict=False, show=None):
@@ -512,6 +529,26 @@ def check_folder(root, strict=False, show=None):
                         '' if expected is None else ' (Fusion: %d)' % expected,
                         ', and an experimental copy with linked parts' if any(file_role(f) == 'archive_with_linked_parts'
                                                                              for f in files) else '')
+            # The .f3z built beside an assembly (f3z.py): there unchanged, and an archive that opens
+            # with every member readable and its Manifest.json; one that could not be built is a note.
+            bundle = bundle_info(entry)
+            if bundle is not None:
+                totals['f3z_bundles'] += 1
+                path = root / bundle['path']
+                if not os.path.isfile(long_path(path)):
+                    problems.append('file missing: ' + bundle['path'])
+                    totals['missing'] += 1
+                elif (os.stat(long_path(path)).st_size != bundle.get('bytes')
+                      or file_sha256(path) != bundle.get('sha256')):
+                    problems.append('file changed since it was built: ' + bundle['path'])
+                    totals['changed'] += 1
+                else:
+                    bundle_problems, _, _ = archive_facts(path)
+                    problems += ['.f3z: ' + problem for problem in bundle_problems]
+                line += ', and its .f3z'
+            if entry.get('f3z_not_built'):
+                totals['f3z_not_built'] += 1
+                notes.append('.f3z not built: ' + str(entry['f3z_not_built']))
         if entry_step(entry)['warnings']:
             totals['warnings'] += 1
         if show:

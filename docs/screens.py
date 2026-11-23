@@ -5,7 +5,7 @@
 
 They follow the real dialogs: the inputs picker.py adds, in its order (version line, Save to
 with Browse…, the folder and its note, the Export choice, the tree across the whole dialog, what
-is chosen, the checkboxes with the tool libraries' note), the tree page (ui/tree.html and
+is chosen, the checkboxes with the notes of the tool libraries and .f3z boxes), the tree page (ui/tree.html and
 ui/tree.js: hint, filter box, hubs, projects and folders with tri-state boxes, file counts and
 "N exported" marks), the progress text of command.describe() and the results dialog at the end
 (results.py with ui/summary.html: the data of report.summary(), Open report and Open folder on the
@@ -36,6 +36,8 @@ STEP = 'Also save a STEP file for each design'
 OTHER_FILES = 'Also save other files (PDFs, uploads)'
 TOOL_LIBRARIES = 'Tool libraries'
 TOOL_LIBRARIES_NOTE = 'Your CAM tool libraries, one .json file each.'
+F3Z = 'Also build .f3z for assemblies'  # off by default
+F3Z_NOTE = 'A single file with its inserted designs, beside the .f3d.'
 OLDER = 'Older versions of a design'
 OLDER_CHOICE = 'Move to the Older versions folder'  # the default
 OLDER_NOTE = 'Older versions move to the Older versions folder.'
@@ -212,6 +214,11 @@ def dialog_svg():
         parts.append(checkbox(cx, row + 2, ticked))
         row += 26
     parts.append(text(x + 16, row + 12, TOOL_LIBRARIES_NOTE, 12, MUTED))
+    row += 26
+    parts.append(text(x + 16, row + 12, F3Z, 12, MUTED))
+    parts.append(checkbox(cx, row + 2, 0))
+    row += 26
+    parts.append(text(x + 16, row + 12, F3Z_NOTE, 12, MUTED))
     row += 26
     row += 4
     parts.append(text(x + 16, row + 17, OLDER, 12, MUTED))

@@ -14,7 +14,7 @@ import sys
 from urllib.parse import quote
 
 from . import toollibs
-from .checks import entry_step, file_role, inserted_designs, inserted_note
+from .checks import bundle_info, entry_step, file_role, inserted_designs, inserted_note
 from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, MOVED, OLDER_FOLDER, REMOVED,
                    STEP_FAILED,
                    STEP_OFF, STEP_NOT_REQUESTED, STEP_OFF_NOTE)
@@ -45,7 +45,8 @@ LINKS_OUT_OF_DATE = ('Some of its links are out of date: a linked design has a n
                      'if you want the newer ones.')
 # The file roles of a design (checks.file_role). The experimental copy with linked parts exists only
 # in folders exported with the testing switch core.LINKED_COPIES_ENV on.
-ROLE_LABEL = {'archive': 'F3D', 'step': 'STEP', 'archive_with_linked_parts': 'F3D with linked parts (experimental)'}
+ROLE_LABEL = {'archive': 'F3D', 'step': 'STEP', 'archive_with_linked_parts': 'F3D with linked parts (experimental)',
+              'f3z_bundle': 'F3Z'}
 ACCOUNT_CHANGED_NOTE = ("This design's version or date in the Fusion account changed while it was exported "
                         "with its linked parts; the export stopped. Check its version history in Fusion.")
 
@@ -115,7 +116,8 @@ def items(manifest, run_info=None):
                            links_unreadable=bool(entry.get('references_unreadable')),
                            fusion_error=entry.get('fusion_error') or '', slow_seconds=entry.get('slow_seconds'),
                            roles=roles, account_changed=bool(entry.get('account_changed')),
-                           kept=older_kept_text(entry), inserted=assemblies.get(id(entry)) or []))
+                           kept=older_kept_text(entry), inserted=assemblies.get(id(entry)) or [],
+                           f3z=bundle_text(entry) if status == 'done' else ''))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
@@ -124,7 +126,7 @@ def items(manifest, run_info=None):
                            next_step=next_step('unreadable', problem.get('error')), warnings=[], note='',
                            thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
                            fusion_error='', slow_seconds=None, roles=[], account_changed=False, kept='',
-                           inserted=[]))
+                           inserted=[], f3z=''))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
@@ -379,7 +381,7 @@ def render_html(manifest, run_info, counts):
     if manifest.get('older_layout'):
         out.append('<p class="muted">Note: %s</p>' % esc(OLDER_LAYOUT))
     out += slow_html(rows)
-    out += assemblies_html(assemblies)
+    out += assemblies_html(assemblies, manifest, run_info)
     out += table_html(designs, 'Designs', 'Design')
     if others:
         out += table_html(others, 'Other files', 'File')
@@ -399,14 +401,36 @@ def inserted_text(design):
     return '%s (%s)' % (design['name'] or 'a design', NOT_IN_EXPORT)
 
 
-def assemblies_html(assemblies):
+def bundle_text(entry):
+    """An assembly's .f3z in words, for the CSV: its path, or why none could be built (with the
+    path of an earlier one, when there is one)."""
+    bundle = bundle_info(entry)
+    reason = entry.get('f3z_not_built')
+    if reason:
+        return '%s(%s: %s)' % (bundle['path'] + ' ' if bundle else '', F3Z_NOT_BUILT, reason)
+    return bundle['path'] if bundle else ''
+
+
+F3Z_NOT_BUILT = '.f3z not built'
+F3Z_EARLIER = 'the .f3z beside it is from an earlier build'
+
+
+def assemblies_note(assemblies, manifest, run_info=None):
+    """The assemblies note (checks.inserted_note) with the state of their .f3z files."""
+    from .f3z import folder_counts
+    return inserted_note(assemblies, folder_counts(manifest, assemblies), bool((run_info or {}).get('f3z_bundles')))
+
+
+def assemblies_html(assemblies, manifest=None, run_info=None):
     """The "Assemblies with inserted designs" section: each assembly (checks.inserted_designs) by
-    name, with a link to its folder and its files, and the designs inserted into it, each linked
-    to its own exported .f3d (or "not in this export"). Nothing when there are none."""
+    name, with a link to its folder and its files (its .f3z too, when one was built beside it, or
+    why none could be), and the designs inserted into it, each linked to its own exported .f3d (or
+    "not in this export"). Nothing when there are none."""
     if not assemblies:
         return []
     esc = html.escape
-    out = ['<h2>Assemblies with inserted designs</h2><p class="muted">%s</p><ul>' % esc(inserted_note(assemblies))]
+    note = assemblies_note(assemblies, manifest if manifest is not None else dict(entries=[]), run_info)
+    out = ['<h2>Assemblies with inserted designs</h2><p class="muted">%s</p><ul>' % esc(note)]
     for item in assemblies:
         entry = item['entry']
         files = [info for info in entry.get('files') or [] if info.get('path')]
@@ -418,6 +442,12 @@ def assemblies_html(assemblies):
             where = esc(where)
         own = ' '.join('<a href="%s">%s</a>' % (esc(link(info['path'])), esc(ROLE_LABEL[file_role(info)]))
                        for info in files if file_role(info) in ('archive', 'step'))
+        bundle = bundle_info(entry)
+        if bundle:
+            own += (' ' if own else '') + '<a href="%s">%s</a>' % (esc(link(bundle['path'])), ROLE_LABEL['f3z_bundle'])
+        if entry.get('f3z_not_built'):
+            own += (' ' if own else '') + '<span class="warn">(%s: %s%s)</span>' % (
+                F3Z_NOT_BUILT, esc(str(entry['f3z_not_built'])), '; ' + F3Z_EARLIER if bundle else '')
         version = ' v%s' % entry['version'] if entry.get('version') is not None else ''
         inserted = []
         for design in item['inserted']:
@@ -525,7 +555,7 @@ def render_csv(manifest, run_info):
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
                      'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds', 'note',
-                     'location', 'tools', 'inserted_designs'])
+                     'location', 'tools', 'inserted_designs', 'f3z'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         by_role = {}
@@ -540,7 +570,7 @@ def render_csv(manifest, run_info):
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
                          row['fusion_error'], 'yes' if row['links_unreadable'] else '',
                          row['slow_seconds'] or '', row.get('note') or row.get('kept') or '', '', '',
-                         '; '.join(inserted_text(design) for design in row['inserted'])])
+                         '; '.join(inserted_text(design) for design in row['inserted']), row['f3z']])
     for status, reason, label in ((MOVED, 'Older version moved to the %s folder on %%s' % OLDER_FOLDER, 'Moved: '),
                                   (REMOVED, 'Older version deleted from this folder on %s', 'Deleted: ')):
         # One row per moved or deleted older version: its status, and its files in note.
@@ -551,7 +581,7 @@ def render_csv(manifest, run_info):
                              '' if entry.get('version') is None else entry['version'], '', '',
                              reason % str(entry.get(OLDER_WORDS[status]['field']) or '')[:10],
                              '', '', '', 'design', '', '', '', '', '', '', '',
-                             (label + '; '.join(paths)) if paths else ''])
+                             (label + '; '.join(paths)) if paths else '', '', '', '', ''])
     for entry in toollibs.entries(manifest):
         # One row per tool library (kind tool_library): its location and tool count in the last
         # two columns, its name in "design", its .json in "file".
@@ -560,7 +590,7 @@ def render_csv(manifest, run_info):
                          '', '', '', (entry.get('error') or '') if entry.get('status') == 'failed' else '', '', '', '',
                          toollibs.KIND, entry.get('path') or '', '', '', '', '', '', '',
                          '; '.join(toollibs.entry_notes(entry, run_info)), entry.get('location') or '',
-                         '' if tools is None else tools, ''])
+                         '' if tools is None else tools, '', ''])
     return stream.getvalue()
 
 
@@ -725,9 +755,10 @@ def summary(counts, run_info, manifest, output, page=None):
     if stale:
         notes.append('%s %s older versions of linked designs (a note, not a failure).'
                      % (plural(stale, 'design'), form(stale, 'uses')))
-    assemblies = inserted_note(inserted_designs(manifest))
+    assemblies = inserted_designs(manifest)
     if assemblies:
-        notes.append(assemblies)
+        notes.append(assemblies_note(assemblies, manifest, run_info))
+    notes += bundle_notes(run_info.get('f3z'))
     if run_info.get('upgraded_schema'):
         notes.append(OLDER_LAYOUT)
     slow = run_info.get('slow') or 0  # this run's; the report lists every one in the folder
@@ -741,6 +772,24 @@ def summary(counts, run_info, manifest, output, page=None):
                 more=max(len(failed) - FAILURES_SHOWN, 0),
                 retry=('Run again to retry the %d failed.' % counts['failed']) if counts.get('failed') else '',
                 notes=notes, output=str(output), report=str(page) if page else '')
+
+
+def bundle_notes(tally):
+    """The summary's lines about the previous .f3z files this run replaced, and a pass that
+    stopped (the assemblies note says how many were built)."""
+    if not isinstance(tally, dict):
+        return []
+    notes = []
+    changed = []
+    for key, words in (('moved', 'moved to ' + OLDER_FOLDER), ('kept', 'kept beside the new one'),
+                       ('removed', 'replaced')):
+        if tally.get(key):
+            changed.append('%s %s' % (plural(tally[key], 'previous .f3z file'), words))
+    if changed:
+        notes.append('Rebuilt .f3z files: %s.' % ', '.join(changed))
+    if tally.get('error'):
+        notes.append('Building the .f3z files stopped (%s); export again to build the rest.' % tally['error'])
+    return notes
 
 
 def text_of(data):

@@ -5,7 +5,7 @@
   autorun.py export OUTPUT [--project ID ...] [--folder ID:Folder/Sub ...]
                     [--folder ID:id=FOLDER_ID ...] [--limit N] [--designs-only] [--no-step]
                     [--older-versions {move,keep,delete}]
-                    [--no-tool-libraries | --tool-libraries-only]
+                    [--no-tool-libraries | --tool-libraries-only] [--f3z]
                                                     export (rerun the same command to resume);
                                                     each design as .f3d and .step (.f3d only
                                                     with --no-step); other files (PDFs,
@@ -22,7 +22,14 @@
                                                     tool libraries are saved, one .json each
                                                     in "Tool libraries" (--no-tool-libraries
                                                     leaves them out; --tool-libraries-only
-                                                    saves only them, no designs)
+                                                    saves only them, no designs); --f3z
+                                                    also builds an .f3z beside each
+                                                    assembly's .f3d at the end
+  autorun.py bundle OUTPUT [--older-versions {move,keep,delete}]
+                                                    build an .f3z beside each assembly's
+                                                    .f3d in a folder already exported,
+                                                    from its .f3d files; needs no Fusion
+                                                    (the .f3d files are never changed)
   autorun.py status OUTPUT                          counts so far (no design names)
   autorun.py check OUTPUT                           check every exported file again (full hashes,
                                                     archives, STEP files); needs no Fusion
@@ -317,7 +324,7 @@ def root_problem(output, name=None):
 
 
 def install(installed, output, mode, projects=None, limit=None, folders=None, designs_only=False, step=True,
-            older_versions='move', tool_libraries=True):
+            older_versions='move', tool_libraries=True, f3z_bundles=False):
     """Put the job in place (after updating the add-in when needed); True when the output folder
     was created for it."""
     created = make_output(output)
@@ -350,6 +357,8 @@ def install(installed, output, mode, projects=None, limit=None, folders=None, de
         config['older_versions'] = older_versions  # the add-in's default is "move"
     if tool_libraries is not True and mode == 'export':
         config['tool_libraries'] = tool_libraries  # false, or "only"; the add-in's default is true
+    if f3z_bundles and mode == 'export':
+        config['f3z_bundles'] = True  # the add-in's default is false
     if not memory_guard_wanted():
         config['memory_guard'] = False
     experiment = linked_copies_experiment()
@@ -504,6 +513,8 @@ def summary(output):
             if tally.get('errors'):
                 lines.append('Not %s: %s (the next run tries again)' % (verb, plural(tally['errors'], 'older version')))
         lines += tool_library_lines(report.get('tool_libraries'))
+        if isinstance(report.get('f3z'), dict):
+            lines += package_module('f3z').tally_lines(report['f3z'])
         if report.get('low_memory') and report.get('stopped_code') != 'memory':
             lines.append('Note: ' + LOW_MEMORY_NOTE)
         if report.get('low_space'):
@@ -708,7 +719,7 @@ def run_job(args, name, output, installed):
     created = install(installed, output, args.command, getattr(args, 'project', None), getattr(args, 'limit', None),
                       folder_map(getattr(args, 'folder', None)), getattr(args, 'designs_only', False),
                       not getattr(args, 'no_step', False), getattr(args, 'older_versions', 'move'),
-                      tool_libraries_choice(args))
+                      tool_libraries_choice(args), getattr(args, 'f3z', False))
     try:
         status = send(args, name, output, installed, watching)
     except KeyboardInterrupt:
@@ -916,19 +927,47 @@ def withdraw_job(installed):
 
 def package_checks():
     """The add-in's checks module (stdlib only), from this checkout."""
+    return package_module('checks')
+
+
+def package_module(name):
+    """One of the add-in's stdlib-only modules (checks, f3z), from this checkout."""
     package = REPO / 'FusionBulkExport'
     if str(package) not in sys.path:
         sys.path.insert(0, str(package))
-    from fusion_bulk_export import checks
-    return checks
+    return importlib.import_module('fusion_bulk_export.' + name)
 
 
 def assemblies_line(manifest):
-    """The note about the folder's assemblies with designs inserted from other designs (counts
-    only, never names), or None when there are none."""
-    checks = package_checks()
-    note = checks.inserted_note(checks.inserted_designs(manifest))
+    """The note about the folder's assemblies with designs inserted from other designs and their
+    .f3z files (counts only, never names), or None when there are none."""
+    note = package_checks().assemblies_note(manifest)
     return 'Note: ' + note if note else None
+
+
+def bundle(output, older_versions='move'):
+    """Build an .f3z beside each assembly's .f3d in an export folder, without Fusion (f3z.py):
+    counts only. 0 when done (also when some could not be built: the report says why), 1 when
+    the folder cannot be used now."""
+    f3z = package_module('f3z')
+    lock = package_module('lock')
+    if not (output / 'manifest.json').is_file():
+        print('Nothing to bundle: no manifest.json in ' + str(output))
+        return 1
+    try:
+        tally = f3z.bundle_folder(output, older_versions)
+    except lock.FolderBusy:
+        print('Another export is using this folder; run this again once it has finished.')
+        return 1
+    except (OSError, ValueError) as error:
+        print('Could not build the .f3z files: %s' % (getattr(error, 'strerror', None) or type(error).__name__))
+        return 1
+    for line in f3z.tally_lines(tally):
+        print(line)
+    if not tally.get('assemblies'):
+        print('No assemblies with inserted designs in this folder: nothing to build.')
+    print('The .f3d files Fusion wrote are unchanged. Report: ' + str(output / 'index.html'))
+    return 0
 
 
 def reset(installed):
@@ -997,12 +1036,17 @@ Run on Startup); 77 Fusion closed or crashed before the export finished (open it
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
-    for command in ('inventory', 'export', 'diagnostics', 'status', 'stop', 'check'):
+    for command in ('inventory', 'export', 'diagnostics', 'status', 'stop', 'check', 'bundle'):
         p = sub.add_parser(command, **(dict(epilog=EXPORT_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
                                        if command == 'export' else {}))
         p.add_argument('output')
         if command == 'check':
             p.add_argument('--names', action='store_true', help='show design names (private) in problem lines')
+        if command == 'bundle':
+            p.add_argument('--older-versions', choices=('move', 'keep', 'delete'), default='move',
+                           help='what happens to an .f3z built earlier that is replaced because a design in it '
+                                'changed (only if unchanged since it was built): move (the default) to the "Older '
+                                'versions" folder, keep beside the new one, delete')
         if command == 'export':
             p.add_argument('--project', action='append', help='project id from inventory.json (repeatable)')
             p.add_argument('--folder', action='append', metavar='ID:PATH',
@@ -1037,6 +1081,10 @@ def main(argv=None):
                                         '.json file in "Tool libraries" at the top of OUTPUT)')
             libraries.add_argument('--tool-libraries-only', action='store_true',
                                    help='save only your CAM tool libraries: no designs, no other files (quick)')
+            p.add_argument('--f3z', action='store_true',
+                           help="also build an .f3z beside each assembly's .f3d at the end: the assembly with every "
+                                'design inserted into it, in one file, from the .f3d files of this export (the .f3d '
+                                'files Fusion wrote are never changed)')
             # Kept for one release so older instructions still run; it only prints DRAWINGS_REMOVED.
             p.add_argument('--drawings', action='store_true', help=argparse.SUPPRESS)
     sub.add_parser('reset', help='clear stale job files (the button is always available)')
@@ -1050,6 +1098,8 @@ def main(argv=None):
         return 0
     if args.command == 'check':
         return check(check_output(args.output), args.names)
+    if args.command == 'bundle':
+        return bundle(check_output(args.output), args.older_versions)
     if args.command == 'stop':
         output = check_output(args.output)
         output.mkdir(parents=True, exist_ok=True)
@@ -1060,7 +1110,8 @@ def main(argv=None):
         parser.error('--limit must be positive')
     if getattr(args, 'tool_libraries_only', False):
         chosen = [flag for flag, value in (('--project', args.project), ('--folder', args.folder),
-                                           ('--limit', args.limit), ('--designs-only', args.designs_only))
+                                           ('--limit', args.limit), ('--designs-only', args.designs_only),
+                                           ('--f3z', args.f3z))
                   if value]
         if chosen:
             parser.error('--tool-libraries-only exports no designs; leave out ' + ', '.join(chosen))

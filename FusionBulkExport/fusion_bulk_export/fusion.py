@@ -60,13 +60,24 @@ class FusionAdapter:
         self.clock = time.monotonic
 
     def references(self, data_file):
-        """Designs this one references (linked components, derives), by cloud id and name.
+        """Designs this one references (linked components, derives), by cloud id, name and the
+        version it uses (versionNumber of the DataFile Fusion lists; left out when unreadable).
 
         The Fusion API can only write a design's own archive (.f3d), never a .f3z bundle with
         its references, so the links are recorded instead; each referenced design in the
         account is exported in its own right.
         """
-        return [dict(id=str(child.id), name=child.name) for child in collection(data_file.childReferences)]
+        found = []
+        for child in collection(data_file.childReferences):
+            reference = dict(id=str(child.id), name=child.name)
+            try:
+                version = child.versionNumber  # the version of it this design uses (f3z.py matches by it)
+                if isinstance(version, int) and not isinstance(version, bool):
+                    reference['version'] = version
+            except Exception:
+                pass  # unknown: an .f3z built later takes the newest exported version
+            found.append(reference)
+        return found
 
     def observe(self, design, data_file):
         """Called with each opened design before export; records facts for the manifest."""

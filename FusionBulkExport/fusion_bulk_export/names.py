@@ -91,8 +91,9 @@ def fold(name):
 LINKED_PARTS = ' (with linked parts, experimental)'
 LINKED_SUFFIX = LINKED_PARTS + '.f3d'
 # A design's files: "<stem> v<version>" plus these. All are claimed together, so an uploaded
-# "Bracket v3.step" or "Bracket v3.png" and a design's export can never share a path.
-DESIGN_SUFFIXES = ('.f3d', '.step', '.png', LINKED_SUFFIX)
+# "Bracket v3.step" or "Bracket v3.png" and a design's export can never share a path. ".f3z" is the
+# file built beside an assembly when asked for (f3z.py).
+DESIGN_SUFFIXES = ('.f3d', '.step', '.png', LINKED_SUFFIX, '.f3z')
 
 
 def design_suffixes(version):
@@ -104,7 +105,9 @@ def entry_names(entry):
     files and thumbnail, and those its base name stands for (also for a failed entry)."""
     location = entry.get('location')
     names = []
-    for info in list(entry.get('files') or []) + [entry.get('thumbnail') or {}]:
+    older = [dict(path=record.get('kept_as')) for record in entry.get('f3z_older') or [] if isinstance(record, dict)]
+    bundle = entry.get('f3z') if isinstance(entry.get('f3z'), dict) else {}
+    for info in list(entry.get('files') or []) + [entry.get('thumbnail') or {}, bundle] + older:
         folder, _, name = str(info.get('path') or '').rpartition('/')
         if name and folder == location:
             names.append(name)

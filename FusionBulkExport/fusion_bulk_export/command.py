@@ -45,6 +45,9 @@ def describe(state):
     if state['phase'] == 'tool_libraries':  # at the start of the run, before any design
         where = ' / '.join([state.get('location') or ''] + list(state['path']))
         return ('Tool library %d: %s\n%s' % (state['design'], state['name'], where)).replace('%', '%%')
+    if state['phase'] == 'f3z':  # at the end of the run: the .f3z beside each assembly (f3z.py)
+        return ('Building .f3z %d of %d: %s\n%s' % (state['design'], state.get('designs') or 0, state['name'] or '',
+                                                     ' / '.join(state['path']))).replace('%', '%%')
     where = ' / '.join([state['project_name'] or ''] + list(state['path']))
     head = 'Project %d of %d' % (state['project'], state['projects'])
     if state['phase'] == 'listing':
@@ -65,6 +68,8 @@ def bar(state):
     """(maximum, value) of the progress bar. Each project is one slice; within it the bar
     moves through the current folder when its file count is known, so a single-project
     export moves too."""
+    if state['phase'] == 'f3z':
+        return max(state.get('designs') or 1, 1), max(state['design'] - 1, 0)
     projects = max(state['projects'], 1)
     done = 0.0
     files = state.get('folder_files')
@@ -106,7 +111,7 @@ def show_results(ui, data):
 
 
 def export(app, selection, output, show=None, other_files=True, drawings=None, linked_copies=None, step=None,
-           older_versions=None, tool_libraries=None):
+           older_versions=None, tool_libraries=None, f3z_bundles=None):
     """Export into output with progress, then write the report and hand the summary to show
     (report.summary() data plus its plain "text"; the add-in shows it in the results dialog).
     other_files: also save the files that are not designs (the dialog's checkbox). step: also
@@ -115,19 +120,23 @@ def export(app, selection, output, show=None, other_files=True, drawings=None, l
     each design's older versions once its newest is saved, "move" (the default), "keep" or "delete"
     (the dialog's choice); None takes the remembered choice, as for step. tool_libraries: also save
     the CAM tool libraries first (the dialog's box); None takes the remembered choice (on unless
-    switched off), as for step. drawings and
+    switched off), as for step. f3z_bundles: at the end, build an .f3z beside each assembly's .f3d
+    (the dialog's "Also build .f3z for assemblies", f3z.py); None takes the remembered choice (off
+    unless switched on). drawings and
     linked_copies are ignored: drawings are never exported, and the copies with linked parts are
     a testing-only experiment switched on in Fusion's environment (core.LINKED_COPIES_ENV), never
     from the dialog (both are still accepted from an entry file loaded before an update, until
     Fusion restarts the add-in)."""
     ui = app.userInterface
-    if step is None or older_versions is None or tool_libraries is None:
+    if step is None or older_versions is None or tool_libraries is None or f3z_bundles is None:
         from . import settings
         remembered = settings.load()
         if step is None:
             step = remembered.get('step') is not False
         if tool_libraries is None:
             tool_libraries = remembered.get('tool_libraries') is not False
+        if f3z_bundles is None:
+            f3z_bundles = remembered.get('f3z_bundles') is True
         if older_versions is None:
             older_versions = remembered.get('older_versions')
     older_versions = older_versions_choice(older_versions)
@@ -157,7 +166,7 @@ def export(app, selection, output, show=None, other_files=True, drawings=None, l
         try:
             counts = exporter.run(app.data, cancelled, update, selection=selection, on_trouble=trouble,
                                   other_files=other_files, step=step, older_versions=older_versions,
-                                  tool_libraries=bool(tool_libraries))
+                                  tool_libraries=bool(tool_libraries), f3z_bundles=bool(f3z_bundles))
         except Exception as error:
             known = errors.friendly(error)
             if known is None:

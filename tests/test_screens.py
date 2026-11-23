@@ -22,6 +22,8 @@ class ScreensTests(unittest.TestCase):
         self.assertEqual(screens.STEP, picker.STEP)
         self.assertEqual(screens.TOOL_LIBRARIES, picker.TOOL_LIBRARIES)
         self.assertEqual(screens.TOOL_LIBRARIES_NOTE, picker.TOOL_LIBRARIES_NOTE)
+        self.assertEqual(screens.F3Z, picker.F3Z)
+        self.assertEqual(screens.F3Z_NOTE, picker.F3Z_NOTE)
         self.assertEqual(screens.OLDER, picker.OLDER)
         self.assertEqual(('move', screens.OLDER_CHOICE), picker.OLDER_CHOICES[0])  # the default, first
         self.assertEqual(screens.OLDER_NOTE, picker.OLDER_NOTES['move'])

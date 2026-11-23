@@ -171,7 +171,7 @@ class ExportTests(unittest.TestCase):
         # Root has one solid (plus one surface body); a visible part holds one hidden solid.
         self.assertTrue(all(entry['solid_bodies'] == 2 for entry in self.manifest['entries']))
         self.assertTrue(all(entry['visible_solid_bodies'] == 1 for entry in self.manifest['entries']))
-        self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part', path=None)])
+        self.assertEqual(self.manifest['entries'][1]['references'], [dict(id='linked-assembly', name='Linked part', version=3, path=None)])
         self.assertTrue(all(doc.closed for file in [a, b] for doc in file.documents))
 
     def test_each_step_is_checked_inline_and_warnings_stored(self):

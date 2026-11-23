@@ -630,10 +630,13 @@ def numbered(path, number):
 
 
 def recorded_files(entry):
-    """Every file a manifest entry records: its files and its thumbnail."""
+    """Every file a manifest entry records: its files, its thumbnail and the .f3z built beside an
+    assembly (f3z.py)."""
     infos = list(entry.get('files') or [])
     if (entry.get('thumbnail') or {}).get('path'):
         infos.append(entry['thumbnail'])
+    if checks.bundle_info(entry) is not None:
+        infos.append(entry['f3z'])
     return infos
 
 
@@ -997,7 +1000,7 @@ class Exporter:
         """Record that entry's cloud file holds these relative paths (default: its recorded files
         and thumbnail)."""
         if paths is None:
-            paths = [info.get('path') for info in list(entry.get('files') or []) + [entry.get('thumbnail') or {}]]
+            paths = [info.get('path') for info in recorded_files(entry)]
         for path in paths:
             if path:
                 self.holders.setdefault(path, set()).add(str(entry.get('id')))
@@ -1083,7 +1086,7 @@ class Exporter:
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
             on_trouble=None, other_files=True, linked_copies=None, step=True, older_versions=OLDER_MOVE,
-            tool_libraries=False, designs=True):
+            tool_libraries=False, designs=True, f3z_bundles=False):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         tool_libraries: first, before any design, save the user's CAM tool libraries (toollibs.py:
@@ -1134,6 +1137,10 @@ class Exporter:
         version or date changes meanwhile (which must never happen) stops the run at once,
         without asking on_trouble: stopped_code 'account_changed'.
 
+        f3z_bundles: at the end of the run (unless it was cancelled or stopped), build an .f3z
+        beside each assembly's .f3d from the .f3d files in the folder (f3z.py; run_info["f3z"] is
+        the tally). Off unless asked for. The files Fusion wrote are never changed.
+
         Drawings (.f2d) are never opened: they are recorded as unsupported (DRAWING_REASON).
 
         The output folder is locked (export.lock) for the run: FolderBusy is raised when another
@@ -1143,13 +1150,14 @@ class Exporter:
         lock.acquire()
         try:
             return self._run(data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies,
-                             step, older_versions, tool_libraries, designs)
+                             step, older_versions, tool_libraries, designs, f3z_bundles)
         finally:
             lock.release()
 
     def _run(self, data, cancelled, progress, limit, selection, on_trouble, other_files, linked_copies=None,
-             step=True, older_versions=OLDER_MOVE, tool_libraries=False, designs=True):
+             step=True, older_versions=OLDER_MOVE, tool_libraries=False, designs=True, f3z_bundles=False):
         self.other_files = bool(other_files)
+        self.run_info['f3z_bundles'] = bool(f3z_bundles) and bool(designs)
         self.step = bool(step)
         self.older_versions = older_versions_choice(older_versions)
         self.run_info['older_versions'] = self.older_versions
@@ -1329,6 +1337,9 @@ class Exporter:
             self.finish_documents()
             self.staging.clean()
             link_paths(self.manifest)  # every link to its exported file, now that the run's exports are known
+            if (self.run_info.get('f3z_bundles') and stopping is None and not self.run_info.get('cancelled')
+                    and 'error' not in self.run_info):
+                self.build_bundles(cancelled, progress)
             self.log_assemblies()
             self.run_info.update(finished=now(), counts=counts, found=found)
             try:
@@ -1338,6 +1349,25 @@ class Exporter:
                     raise  # with a stop reason, the folder is known to be unusable
             self.log('run finished ' + json.dumps(counts))
         return counts
+
+    def build_bundles(self, cancelled, progress):
+        """The .f3z beside each assembly (f3z.Builder), once the run's exports are known;
+        run_info["f3z"] is the tally. Never raises: the designs are exported all the same."""
+        from . import f3z
+
+        def step(number, total, entry):
+            progress(dict(phase='f3z', project=0, projects=0, project_name=None, path=list(entry.get('path') or []),
+                          design=number, designs=total, name=entry.get('name'), kind='design', folder_files=None,
+                          folder_item=0, counts=new_counts(), elapsed=0.0, seconds_per_design=None))
+        builder = f3z.Builder(self.root, self.manifest, self.older_versions, self.log)
+        try:
+            builder.run(cancelled, step)
+        except Exception as error:
+            builder.tally['error'] = str(error) or type(error).__name__
+            self.log('f3z: stopped: ' + builder.tally['error'])
+            if self.error_callback:
+                self.error_callback('f3z', error)
+        self.run_info['f3z'] = builder.tally
 
     def log_assemblies(self):
         """One export.log line per assembly in the folder (checks.inserted_designs): its key and
@@ -1460,8 +1490,12 @@ class Exporter:
         # Fusion dateModified is a Unix timestamp, retained without conversion.
         owned = set()  # paths this item's earlier record held: it may write over them
         if key in entries:
-            owned = {info.get('path') for info in list(entries[key].get('files') or [])
-                     + [entries[key].get('thumbnail') or {}] if info.get('path')}
+            owned = {info.get('path') for info in recorded_files(entries[key]) if info.get('path')}
+            # The .f3z built beside this version (f3z.py) stays its own: rebuilt, or found up to
+            # date, at the end of a run that builds them.
+            for fact in ('f3z', 'f3z_older', 'f3z_not_built'):
+                if entries[key].get(fact):
+                    entry[fact] = entries[key][fact]
             self.manifest['entries'].remove(entries[key])
         self.manifest['entries'].append(entry)
         entries[key] = entry
@@ -1636,6 +1670,8 @@ class Exporter:
         entry['files'] = [info for info in entry.get('files') or [] if id(info) not in taken]
         if id(entry.get('thumbnail')) in taken:
             entry.pop('thumbnail')
+        if id(entry.get('f3z')) in taken:
+            entry.pop('f3z')
         entry.update(status=MOVED, moved=now())
         entry.pop('kept', None)
         entry.pop('long_path', None)
@@ -1681,6 +1717,8 @@ class Exporter:
         entry['files'] = [info for info in entry.get('files') or [] if id(info) not in taken]
         if id(entry.get('thumbnail')) in taken:
             entry.pop('thumbnail')
+        if id(entry.get('f3z')) in taken:
+            entry.pop('f3z')
         entry.update(status=REMOVED, removed=now())
         entry.pop('kept', None)
         entry.pop('long_path', None)
