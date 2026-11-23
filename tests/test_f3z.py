@@ -513,3 +513,14 @@ class DialogTests(UIBase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ModeTests(Base):
+    @unittest.skipIf(os.name == 'nt', 'POSIX file modes')
+    def test_the_bundle_gets_the_usual_mode_not_owner_only(self):
+        mask = os.umask(0o022)
+        self.addCleanup(os.umask, mask)
+        asm = self.bracket()
+        self.folder.save()
+        self.build()
+        path = self.root / asm['f3z']['path']
+        self.assertEqual(os.stat(str(path)).st_mode & 0o777, 0o644)

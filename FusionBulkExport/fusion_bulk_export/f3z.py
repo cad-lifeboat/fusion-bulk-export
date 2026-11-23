@@ -452,6 +452,7 @@ class Builder:
             else:
                 if there is not None:
                     self.set_aside(entry, record, target)
+                self.usual_mode(temporary)
                 os.replace(temporary, long_path(target))
                 self.set_time(target, members[0])
         except OSError as error:
@@ -466,6 +467,18 @@ class Builder:
                             mtime_ns=stat.st_mtime_ns, built=now(), format=FORMAT, roles=roles is not None,
                             members=[dict(name=member['name'], id=member['id'], version=member['version'],
                                           sha256=member['sha256'], pinned=member['pinned']) for member in members])
+
+    @staticmethod
+    def usual_mode(path):
+        """mkstemp makes the file readable by its owner only; give it the mode a new file normally gets."""
+        if os.name == 'nt':
+            return
+        mask = os.umask(0)
+        os.umask(mask)
+        try:
+            os.chmod(long_path(path), 0o666 & ~mask)
+        except OSError:
+            pass
 
     def set_time(self, target, top):
         """The .f3z gets the modified time of the assembly's .f3d (the design's date)."""
