@@ -1479,7 +1479,12 @@ class Exporter:
         if entry and self.valid(entry):
             counts[count_key(entry, 'verified')] += 1
             self.log('verified ' + key)
-            if self.refreshed:
+            if self.links_without_versions(entry):
+                # Recorded by an earlier version, without the version each link uses (an .f3z
+                # needs it): read them again from the cloud file in hand; nothing is opened.
+                self.links(file, entry)
+                self.record(entry)
+            elif self.refreshed:
                 self.record(entry)  # its files' times were recorded now; else nothing to save
             self.tidy_older_versions(entry)
             return 'verified'
@@ -1733,6 +1738,14 @@ class Exporter:
             tally['files'] += removed
         self.log('removed older version %s (%s)' % (entry.get('key'), plural(removed, 'file')))
         self.record(entry)
+
+    @staticmethod
+    def links_without_versions(entry):
+        """Whether a design entry records links but not the version each one uses (written
+        before links recorded their version)."""
+        references = entry.get('references')
+        return (entry.get('kind') == 'design' and bool(references)
+                and any(isinstance(link, dict) and link.get('version') is None for link in references))
 
     def links(self, file, entry):
         """Record a design's links on its entry: references (the linked designs, by id and name),

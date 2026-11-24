@@ -407,6 +407,30 @@ class ExportTests(Base):
         exporter.run(data, f3z_bundles=True)
         self.assertEqual(exporter.run_info['f3z']['up_to_date'], 1)
 
+    def test_a_folder_from_an_earlier_version_gets_link_versions_on_the_next_run(self):
+        # Links recorded before they carried a version: the next run reads them again for designs
+        # that are up to date (nothing re-exported), so an .f3z can then match exact versions.
+        adapter = FusionAdapter(NS(documents=fake.Documents()))
+        assembly = fake.File('Box', 'asm', references=1)
+        part = assembly.childReferences.items[0]
+        data = fake.data([part, assembly])
+        Exporter(self.root, adapter).run(data)
+        path = self.root / 'manifest.json'
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+        box = [entry for entry in manifest['entries'] if entry['name'] == 'Box'][0]
+        self.assertIsNotNone(box['references'][0].get('version'))
+        for link in box['references']:
+            link.pop('version', None)
+        path.write_bytes(json.dumps(manifest).encode('utf-8'))
+        archives = {item: item.read_bytes() for item in self.root.rglob('*.f3d')}
+        exporter = Exporter(self.root, adapter)
+        counts = exporter.run(data, f3z_bundles=True)
+        self.assertEqual(counts['exported'], 0)
+        box = [entry for entry in exporter.manifest['entries'] if entry['name'] == 'Box'][0]
+        self.assertIsNotNone(box['references'][0].get('version'))
+        self.assertEqual(exporter.run_info['f3z']['built'], 1)
+        self.assertEqual({item: item.read_bytes() for item in self.root.rglob('*.f3d')}, archives)
+
     def test_not_built_is_in_the_report_and_summary(self):
         self.asm = self.folder.design('asm', 'Box', references=[ref('gone', 'Gone')])
         self.build()
