@@ -125,7 +125,7 @@ never changes, renames or deletes it.
 | `id` | string | required | Equal to the file name without `.json`. |
 | `requested` | string | required | When the job was written (ISO 8601). Jobs run in this order. |
 | `requester` | string | `""` | Free text naming the requesting program, for the person's eyes (shown in the log). At most 200 characters. |
-| `action` | string | `"export"` | `"export"`, or `"inventory"`: list every hub, project and design with ids and versions into `output_dir/inventory.json`, opening nothing (gives the ids a design list needs). |
+| `action` | string | `"export"` | `"export"`, or `"inventory"`: list every hub, project and design with ids and versions into `output_dir/inventory.json`, opening nothing (gives the ids a design list needs; its fields: [inventory-schema.md](inventory-schema.md)). |
 | `output_dir` | string | required | Absolute path of the export folder. The same folder resumes an earlier export. |
 | `designs` | `"all"` or array | `"all"` | `"all"`: everything the account holds, narrowed by `hubs`, `projects`, `folders`. Or a list of design ids (lineage URNs, as in `manifest.json` `entries[].id` and `inventory.json`): only those designs (their current version). |
 | `include_references` | boolean | `true` | With a design list: also export every design those link to, and theirs, each once (so assemblies are complete and their `.f3z` can be built). Each linked design is exported at its current version, as an export of everything does; the version a link names is in `manifest.json` `references[].version`. Ignored with `"all"`. |
@@ -171,16 +171,71 @@ STEP and counts it as "f3d not requested".
    straight away with state `failed`.
 4. Valid jobs are `queued` and run **one at a time**, in order of `requested` (then file time,
    then id). A job waits while an export from the toolbar button or from `autorun.json` runs;
-   the status message says so.
-5. Before running, the add-in checks `output_dir/export.lock`. If another export holds it (another
-   Fusion, the button into the same folder, the command line), the job **fails at once** with
-   reason `folder_busy`; it is never run into a folder in use, and nothing in that folder is
-   touched. (It never waits: the other export may run for hours. The requester submits a new job
+   the status message says so. **`queued` may never be seen**: on an idle add-in a job is claimed
+   as `queued` and set `running` in the same step, usually before the requester's next look. A
+   requester must not wait for `queued`; it waits for any state, and then for a final one.
+   A second job into the same folder as a queued or running one **queues behind it** (it is never
+   refused for that): see step 5.
+5. Before running, the add-in checks `output_dir/export.lock` (see [export.lock](#exportlock)).
+   If another export holds it (another Fusion, the button into the same folder, the command line),
+   the job **fails at once** with reason `folder_busy`; it is never run into a folder in use, and
+   nothing in that folder is touched. (It never waits: the other export may run for hours. The requester submits a new job
    later.) Two jobs of this add-in into the same folder are not a clash: jobs run one at a time,
    so the second simply waits its turn in the queue and then carries on in that folder.
 6. The job runs exactly as an `autorun.json` job does (same export code, same `manifest.json`,
    `index.html`, `autorun.log` and `autorun-result.json` in `output_dir`), while the add-in keeps
    `<id>.status.json` up to date.
+
+### export.lock
+
+Every export takes `export.lock` in its output folder for the whole run (from its first file to
+the `.f3z` files at the end), whoever started it: the toolbar button, an `autorun.json` job from
+the command line, a protocol export job, and `python3 scripts/autorun.py bundle` (which builds the
+`.f3z` files without Fusion). An inventory never takes it. It is removed when the run ends, also
+when it fails or is cancelled; a crash leaves it behind.
+
+```json
+{"pid": 41237, "host": "someones-laptop.local", "started": 1795431063.512}
+```
+
+| Field | Meaning |
+|---|---|
+| `pid` | Process id of the export: Fusion's (or, for `bundle`, the Python running it). |
+| `host` | The computer's name (Python's `socket.gethostname()`). |
+| `started` | When the lock was taken, **seconds since 1970** (UTC, a number), not an ISO time. |
+
+It is created exclusively (`O_CREAT | O_EXCL`), then written: for an instant after it appears it
+can be empty. It is one line of JSON, not indented.
+
+**Stale rule.** The add-in, the command line and `bundle` all use the same rule (`lock.py`). A
+lock is **stale** (left behind, taken over) when, in this order:
+1. it cannot be read, or is not a JSON object: stale;
+2. `started` is not a number, or is more than **12 hours** old: stale;
+3. `host` is not this computer's name (another computer exporting into a shared folder): **held**
+   (only the 12 hours make it stale);
+4. `pid` is the reader's own process: stale unless that process holds it now (left by an earlier
+   run in the same Fusion);
+5. otherwise: stale when no process with `pid` runs on this computer, held while one does (on
+   Windows, a process that cannot be asked counts as running).
+
+An export that finds a held lock does not start; one that finds a stale lock deletes it and takes
+its own. A recycled process id can make a lock look held until it is 12 hours old. A program
+reading a folder (for [a complete export](manifest-schema.md#detecting-a-complete-export)) applies
+the same rule; it should read an empty or unreadable lock again a second later before calling it
+stale.
+
+**When a job gets `folder_busy`.** A protocol job (export or inventory) fails with `folder_busy`:
+- when it starts (after its path is checked) and `output_dir/export.lock` exists
+  and is held by the rule above: nothing in the folder is touched;
+- or, rarely, when another export takes the lock between that check and the export's own start:
+  the same reason, with `autorun.log` and `autorun-result.json` already written in the folder.
+
+Never for another job of this add-in: jobs run one at a time, so a job into the same folder waits
+in the queue (`queued`, or not yet claimed) and checks the lock only when its turn comes, after
+the earlier job has released it. A job never waits on a held lock: it fails at once, because the
+other export may run for hours. A command-line export into a held folder fails the same way
+(`reason` `folder_busy` in `autorun-result.json`); the button says "Another export is using this
+folder". An inventory from the command line does not check the lock.
 
 ### The status file
 
@@ -237,7 +292,7 @@ When finished:
 
 | Field | Meaning |
 |---|---|
-| `state` | `queued`, `running`, `done`, `failed`, `cancelled`. The last three are final: the file does not change again. |
+| `state` | `queued`, `running`, `done`, `failed`, `cancelled`. The last three are final: the file does not change again. A job can go from claimed to `running` (or straight to `failed` when invalid) without `queued` ever being seen. |
 | `reason` | `null` for `done`; else a code (below). |
 | `message` | One line in plain words. Counts only: never a design, project or hub name. |
 | `claimed`, `started`, `updated`, `finished` | Times; `started`/`finished` are `null` until then. |
@@ -261,7 +316,7 @@ Reason codes:
 |---|---|---|---|
 | `invalid_job` | failed | The job file is not valid; `message` says which field. | Fix and submit a new job. |
 | `unsupported_protocol` | failed | `protocol` is not in the agent's `protocols`. | Use a protocol the agent lists, or update the add-in. |
-| `folder_busy` | failed | Another export holds `output_dir/export.lock`. | Submit again later. |
+| `folder_busy` | failed | Another export holds `output_dir/export.lock` (see [export.lock](#exportlock)). | Submit again later. |
 | `output_unusable` | failed | Fusion cannot create or write `output_dir` (a network drive not connected in Fusion's session, no permission). | Use another folder. |
 | `not_found` | failed | A hub, project, folder or design id the job names is not in the account. (A linked design that cannot be found is no failure: it is left out, and the assembly's link has `path: null`.) | Fix the ids (run an `inventory` job). |
 | `not_signed_in` | failed | No hubs appeared within `hub_timeout_seconds`. | Ask the person to sign in to Fusion. |
@@ -403,4 +458,6 @@ minus reading `autorun.json`).
 - A job written for a newer protocol than the add-in knows fails with `unsupported_protocol`
   (written in the protocol-1 status format, which every version can read).
 - The export folder's format is versioned separately: `manifest.json` `schema_id`
-  (`cad-export-manifest/1`; see [manifest-schema.md](manifest-schema.md)).
+  (`cad-export-manifest/1`; see [manifest-schema.md](manifest-schema.md)), and an inventory's
+  `inventory.json` `schema_id` (`cad-export-inventory/1`; see
+  [inventory-schema.md](inventory-schema.md)).

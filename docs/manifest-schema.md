@@ -268,12 +268,14 @@ current state, read `manifest.json`, then for each journal line replace the entr
 `key` (or append it). Ignore a last line that does not parse (cut off by a crash).
 
 `export.lock` is `{"pid", "host", "started"}` (`started` in seconds since 1970). It belongs to a
-running export unless its process is gone on this computer, or it is older than 12 hours.
+running export unless it is stale: unreadable, older than 12 hours, or (written on this computer)
+its process is gone. The exact rule is in [job-protocol.md, export.lock](job-protocol.md#exportlock).
 
 ## Detecting a complete export
 
 An export folder is complete and settled when all of these hold:
-1. There is no `export.lock`, or it is stale (above).
+1. There is no `export.lock`, or it is stale by the rule in
+   [job-protocol.md, export.lock](job-protocol.md#exportlock).
 2. `manifest.journal` is absent or empty.
 3. The last item of `runs` has `finished` set, `cancelled: false`, `stopped_code: null`, no
    `error`, and `limit_reached` absent.
@@ -281,8 +283,8 @@ An export folder is complete and settled when all of these hold:
    reader cares about has `status: "failed"`.
 
 This says the export covered everything **it was asked for and found**. Items never visited
-(another project, a run with a limit) have no entry at all; compare with `inventory.json` to
-check against the whole account. `python3 scripts/autorun.py check <folder>` re-checks every
+(another project, a run with a limit) have no entry at all; compare with `inventory.json`
+([inventory-schema.md](inventory-schema.md)) to check against the whole account. `python3 scripts/autorun.py check <folder>` re-checks every
 file's size and SHA-256 and that each archive and STEP opens.
 
 ## Reading an export: the common questions
