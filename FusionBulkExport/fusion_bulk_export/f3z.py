@@ -426,7 +426,7 @@ class Builder:
     def build(self, entry):
         target_relative = target_path(entry)
         members = plan(self.archives, entry)
-        roles = self.roles(members) if self.roles_readable else None
+        roles = self.roles(members)  # None when a member's Manifest.dat can't be read by this Python
         target = self.root / target_relative
         record = recorded(entry)
         ours = record is not None and record['path'] == target_relative
