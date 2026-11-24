@@ -10,5 +10,6 @@ FusionBulkExport/trace
 FusionBulkExport/trace.log
 FusionBulkExport/autorun.alive
 FusionBulkExport/startup-error.txt
+FusionBulkExport/jobs-error.txt
 .DS_Store
 FusionBulkExport/install-stamp.json

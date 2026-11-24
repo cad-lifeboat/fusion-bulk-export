@@ -133,6 +133,35 @@ def data(files=(), folders=()):
     return NS(dataHubs=Collection(hub))
 
 
+def with_parents(data, extra=()):
+    """Give a synthetic account the documented parent properties and Data.findFileById: each
+    DataFile its parentFolder and parentProject, each DataFolder its parentFolder (None at the
+    root) and isRoot, each DataProject its parentHub; data.findFileById(id) finds a file anywhere
+    in the account (and the files in extra, placed nowhere), None for an unknown id. Returns data."""
+    index = {}
+    for hub in data.dataHubs.items:
+        for project in hub.dataProjects.items:
+            project.parentHub = hub
+
+            def place(folder, parent):
+                folder.parentFolder, folder.isRoot = parent, parent is None
+                for file in folder.dataFiles.items:
+                    file.parentFolder, file.parentProject = folder, project
+                    index[file.id] = file
+                for child in folder.dataFolders.items:
+                    place(child, folder)
+            place(project.rootFolder, None)
+    for file in extra:
+        index.setdefault(file.id, file)
+    data.found = []  # the ids asked for, in order
+
+    def find(identity):
+        data.found.append(identity)
+        return index.get(identity)
+    data.findFileById = find
+    return data
+
+
 class Weak:
     """A document held weakly (as Fusion's API objects do not keep a closed document alive): no
     reference cycle keeps a document in memory after the add-in lets go of it."""

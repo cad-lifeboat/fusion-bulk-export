@@ -71,11 +71,16 @@ import traceback
 import adsk
 import adsk.core
 
-from .core import (LINK_RECIPES, OLDER_MOVE, OLDER_VERSIONS, Exporter, Listing, Selection, atomic_write, collection,
-                   link_recipe, now, reference_facts, select_projects, walk)
+from .core import (LINK_RECIPES, OLDER_MOVE, OLDER_VERSIONS, Exporter, FolderPath, Listing, Selection, atomic_write,
+                   collection, link_recipe, now, reference_facts, select_projects, walk)
 from .fusion import FusionAdapter
+from .lock import FolderBusy
 from .report import memory_line, write as write_report
 from .words import plural
+
+
+class NotFound(ValueError):
+    """A hub, project, folder or design id the job names is not in the account."""
 
 
 class Log:
@@ -212,7 +217,7 @@ def resolve_folder_ids(data, selection, log=None):
     projects = {str(project.id): project for hub in collection(data.dataHubs) for project in collection(hub.dataProjects)}
     for project_id, identities in wanted.items():
         if project_id not in projects:
-            raise ValueError('Project %s was not found' % project_id)
+            raise NotFound('Project %s was not found' % project_id)
         if selection.projects.get(project_id, []) is None:
             continue  # the whole project is chosen anyway
         for identity in identities:
@@ -221,7 +226,7 @@ def resolve_folder_ids(data, selection, log=None):
                     log.write('finding folder: %d folders listed' % count)
             path = find_folder(projects[project_id].rootFolder, identity, listed=listed)
             if path is None:
-                raise ValueError('Folder id %s was not found in project %s' % (identity, project_id))
+                raise NotFound('Folder id %s was not found in project %s' % (identity, project_id))
             selection.projects.setdefault(project_id, []).append(path)
 
 
@@ -232,6 +237,141 @@ def wait_for_hubs(app, timeout, log):
             raise TimeoutError('No hubs appeared; is Fusion signed in?')
         adsk.doEvents()
         time.sleep(0.5)
+
+
+def select_hubs(data, hubs):
+    """Data view holding only the hubs with these ids (all their projects); NotFound when one is
+    not in the account."""
+    wanted = [str(hub) for hub in hubs]
+    present = set(str(hub.id) for hub in collection(data.dataHubs))
+    missing = [hub for hub in wanted if hub not in present]
+    if missing:
+        raise NotFound('%d of %d hub ids were not found' % (len(missing), len(wanted)))
+    return select_projects(data, lambda hub, project: str(hub.id) in wanted)
+
+
+class _Folder:
+    """A folder of a design list's data view: only the chosen files, below the real folders' names
+    and ids (walk() and the Exporter see the account's own layout)."""
+    def __init__(self, name=None, identity=None):
+        self.name, self.id = name, identity
+        self.files, self.children = [], {}
+
+    @property
+    def dataFiles(self):
+        return Listing(self.files)
+
+    @property
+    def dataFolders(self):
+        return Listing(self.children.values())
+
+
+def newest(file):
+    """The current version of a cloud file: the file itself, or its latestVersion when Fusion
+    handed out an older one (a link names the version it uses)."""
+    try:
+        latest = getattr(file, 'latestVersion', None)
+        if latest is not None and int(getattr(file, 'latestVersionNumber', 0) or 0) > int(file.versionNumber):
+            return latest
+    except Exception:
+        pass
+    return file
+
+
+def find_design(data, identity):
+    """The current version of the cloud file with this lineage id (Data.findFileById), or None
+    when the account has none (or Fusion raises on it)."""
+    try:
+        file = data.findFileById(identity)
+    except Exception:
+        return None
+    return newest(file) if file else None
+
+
+def place_of(data, file):
+    """(hub, project, FolderPath) of a cloud file, from its parents: DataFile.parentFolder up to the
+    project's root folder (DataFolder.parentFolder, isRoot), DataFile.parentProject and
+    DataProject.parentHub (else the hub listing that project). Raises when Fusion cannot say."""
+    project = file.parentProject
+    hub = getattr(project, 'parentHub', None)
+    if hub is None:
+        hub = next((h for h in collection(data.dataHubs)
+                    if any(str(p.id) == str(project.id) for p in collection(h.dataProjects))), None)
+        if hub is None:
+            raise NotFound('The hub of a design was not found')
+    names, ids = [], []
+    folder = file.parentFolder
+    while folder is not None and not getattr(folder, 'isRoot', False):
+        parent = getattr(folder, 'parentFolder', None)
+        if parent is None:
+            break  # the root folder itself (a Fusion without isRoot)
+        names.insert(0, folder.name)
+        ids.insert(0, None if getattr(folder, 'id', None) is None else str(folder.id))
+        folder = parent
+    return hub, project, FolderPath(names, ids)
+
+
+def design_list(data, identities, include_references=True, log=None):
+    """A data view holding exactly the designs with these lineage ids (their current version), in
+    their own hub, project and folders, so the export lands in the usual layout; with
+    include_references also every design they link to (DataFile.childReferences, recursively, each
+    once, at its current version). Returns (view, number of designs). NotFound when a listed id is
+    not in the account; a linked design that cannot be found is left out (the assembly records
+    the link, with no exported file)."""
+    requested = [str(identity) for identity in identities]
+    queue = list(requested)
+    seen, missing, unreadable, linked_missing = set(), [], 0, 0
+    hubs = {}  # hub id -> (hub, {project id: (project, root _Folder)})
+    count = 0
+    while queue:
+        identity = queue.pop(0)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        adsk.doEvents()
+        file = find_design(data, identity)
+        if file is None:
+            if identity in requested:
+                missing.append(identity)
+            else:
+                linked_missing += 1
+            continue
+        seen.add(str(file.id))
+        hub, project, path = place_of(data, file)
+        projects = hubs.setdefault(str(hub.id), (hub, {}))[1]
+        folder = projects.setdefault(str(project.id), (project, _Folder()))[1]
+        for name, folder_id in zip(path, path.ids):
+            folder = folder.children.setdefault(folder_id or ('name:' + name), _Folder(name, folder_id))
+        folder.files.append(file)
+        count += 1
+        if include_references:
+            try:
+                queue.extend(str(child.id) for child in collection(file.childReferences))
+            except Exception:
+                unreadable += 1  # recorded on the design's own entry as its export reads them
+    if missing:
+        raise NotFound('%d of %d design ids were not found' % (len(missing), len(requested)))
+    if log is not None:
+        log.write('design list: %s (%d listed, %d linked designs not found, %d with links not read)'
+                  % (plural(count, 'design'), len(requested), linked_missing, unreadable))
+    views = []
+    for hub, projects in hubs.values():
+        hub_view = _View()
+        hub_view.id, hub_view.name = hub.id, hub.name
+        project_views = []
+        for project, root in projects.values():
+            project_view = _View()
+            project_view.id, project_view.name, project_view.rootFolder = project.id, project.name, root
+            project_views.append(project_view)
+        hub_view.dataProjects = Listing(project_views)
+        views.append(hub_view)
+    view = _View()
+    view.dataHubs = Listing(views)
+    return view, count
+
+
+class _View:
+    pass
 
 
 DIAGNOSTIC_CLASSES = [('core', 'DataFile'), ('core', 'Document'), ('core', 'DataFolder'),
@@ -403,14 +543,53 @@ def run_autorun(app, config_path):
     in the output folder, or in autorun-output beside the add-in when the job cannot be read or
     the output folder cannot be used."""
     config_path = Path(config_path)
-    beside = config_path.parent / 'autorun-output'
+    return run_settings(app, lambda: read_config(config_path), config_path.parent / 'autorun-output')
+
+
+# Why a job ended without running to its end (result["reason"]; a protocol job's status reason,
+# jobs.py), by the error that ended it.
+REASON_UNUSABLE, REASON_NOT_SIGNED_IN, REASON_NOT_FOUND, REASON_BUSY, REASON_INVALID, REASON_ERROR = (
+    'output_unusable', 'not_signed_in', 'not_found', 'folder_busy', 'invalid_job', 'error')
+
+
+def reason_of(error):
+    if isinstance(error, NotFound):
+        return REASON_NOT_FOUND
+    if isinstance(error, TimeoutError):
+        return REASON_NOT_SIGNED_IN
+    if isinstance(error, FolderBusy):
+        return REASON_BUSY
+    return REASON_ERROR
+
+
+class Hooks:
+    """What a job from another program (jobs.py) adds to a run: more ways to cancel, progress
+    reports, a hub filter and a design list. The defaults change nothing (autorun.json jobs)."""
+    hubs = None          # hub ids: only their projects (with designs "all")
+    designs = None       # lineage ids: exactly these designs (and, with include_references, theirs)
+    include_references = True
+    total = None         # set to the design list's size once it is known
+
+    def cancelled(self):
+        return False
+
+    def progress(self, state):
+        pass
+
+
+def run_settings(app, settings, beside, hooks=None):
+    """Run a job: settings() gives (output,) + check_settings(...) (raising with .output set when
+    the job names its folder but is not valid). The result (autorun-result.json, also returned)
+    goes into the output folder, or into beside when the job cannot be read or its folder cannot
+    be used. result["reason"] says why a job ended with an error (reason_of); hooks: see Hooks."""
+    hooks = hooks or Hooks()
     log = None
     started = time.monotonic()
     try:
         unusable = None
         try:
             (output, mode, selection, limit, timeout, other_files, linked_copies, step, archive, older_versions,
-             tool_libraries, f3z_bundles, memory_guard) = read_config(config_path)
+             tool_libraries, f3z_bundles, memory_guard) = settings()
         except Exception as error:
             output = getattr(error, 'output', None) or beside
             raise
@@ -435,6 +614,12 @@ def run_autorun(app, config_path):
             return log.result
         wait_for_hubs(app, timeout, log)
         data = app.data
+
+        def cancelled():
+            return (output / 'STOP').exists() or hooks.cancelled()
+        if hooks.hubs:
+            data = select_hubs(data, hooks.hubs)
+            log.result['hubs_matched'] = data.dataHubs.count
         resolve_folder_ids(data, selection, log)
         log.result['selection'] = selection.describe()
         if not selection.everything:
@@ -442,12 +627,16 @@ def run_autorun(app, config_path):
             data = select_projects(data, selection.keeps_project)
             log.result['projects_matched'] = sum(view.dataProjects.count for view in collection(data.dataHubs))
             if log.result['projects_matched'] != len(wanted):
-                raise ValueError('Only %d of %d requested projects were found'
-                                 % (log.result['projects_matched'], len(wanted)))
+                raise NotFound('Only %d of %d requested projects were found'
+                               % (log.result['projects_matched'], len(wanted)))
+        if hooks.designs is not None:
+            data, hooks.total = design_list(app.data, hooks.designs, hooks.include_references, log)
+            log.result.update(selection='%s by id' % plural(hooks.total, 'design'), designs_listed=hooks.total)
         if mode == 'inventory':
-            listing = inventory(data, log, stop=lambda: (output / 'STOP').exists(), output=output)
+            listing = inventory(data, log, stop=cancelled, output=output)
             atomic_write(output / 'inventory.json', listing)
             log.result['counts'] = listing['counts']
+            log.result['cancelled'] = bool(listing.get('stopped'))
         else:
             exporter = Exporter(output, FusionAdapter(app), error_callback=log.error)
             exporter.memory_guard = memory_guard
@@ -455,11 +644,12 @@ def run_autorun(app, config_path):
             def progress(state):
                 if state['phase'] == 'design':  # counts only: names stay out of the log
                     log.write('project %d/%d design %d' % (state['project'], state['projects'], state['design']))
+                hooks.progress(state)
                 adsk.doEvents()
 
             try:
                 log.result['counts'] = exporter.run(
-                    data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
+                    data, cancelled=cancelled, progress=progress, limit=limit,
                     selection=selection, other_files=other_files, linked_copies=linked_copies, step=step,
                     older_versions=older_versions, tool_libraries=bool(tool_libraries),
                     designs=tool_libraries != TOOL_LIBRARIES_ONLY, f3z_bundles=f3z_bundles, archive=archive)
@@ -502,6 +692,8 @@ def run_autorun(app, config_path):
     except Exception as error:
         if log is not None:
             log.error('autorun', error)
+            log.result['reason'] = REASON_UNUSABLE if unusable is not None else reason_of(error)
+            log.result['error_type'] = type(error).__name__
             if unusable is not None:  # the line says it all; the traceback adds nothing
                 log.result['errors'][-1].update(error=unusable, traceback='')
     finally:

@@ -1127,7 +1127,7 @@ class Exporter:
         progress(state) is called while listing and before each item, with a dict:
         phase ('listing' or 'design'), project and projects (position among the chosen projects),
         project_name, path (folder names), design (items found so far: designs and other files),
-        name and kind ('design', or 'file' for another file); also
+        name, id (its cloud id) and kind ('design', or 'file' for another file); also
         folder_files (the current folder's file count, or None when not known), folder_item
         (position of this design in that folder), counts (a copy of the run's counts so far),
         elapsed (seconds since the run started) and seconds_per_design (average time of the
@@ -1250,7 +1250,7 @@ class Exporter:
             started = self.clock()
             timing = dict(seconds=0.0, designs=0)
             state = dict(phase='listing', project=0, projects=len(numbers), project_name=None,
-                         path=[], design=0, name=None, kind=None, folder_files=None, folder_item=0)
+                         path=[], design=0, name=None, id=None, kind=None, folder_files=None, folder_item=0)
 
             def report(phase):
                 state['phase'] = phase
@@ -1269,7 +1269,7 @@ class Exporter:
                     files = int(folder.dataFiles.count)  # known without listing the files
                 except Exception:
                     files = None
-                state.update(name=None, folder_files=files, folder_item=0)
+                state.update(name=None, id=None, folder_files=files, folder_item=0)
                 report('listing')
 
             entries = {entry['key']: entry for entry in self.manifest['entries']}
@@ -1297,7 +1297,7 @@ class Exporter:
                             continue  # left for the next run
                     found += 1
                     place(hub, project, folders)
-                    state.update(design=found, name=file.name, folder_item=state['folder_item'] + 1,
+                    state.update(design=found, name=file.name, id=str(file.id), folder_item=state['folder_item'] + 1,
                                  kind=self.item_kind(file))
                     report('design')
                     if cancelled():

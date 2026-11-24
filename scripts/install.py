@@ -37,8 +37,8 @@ RUNTIME_DIRS = ('__pycache__', 'autorun-output')
 # The stamp an installation carries (see stamp()). Never copied from a source folder: it is
 # written for exactly the files installed.
 STAMP = 'install-stamp.json'
-RUNTIME_FILES = ('autorun.json', 'autorun.json.last', 'autorun.alive', 'startup-error.txt', 'errors.log',
-                 'trace', 'trace.log', '.DS_Store', STAMP)
+RUNTIME_FILES = ('autorun.json', 'autorun.json.last', 'autorun.alive', 'startup-error.txt', 'jobs-error.txt',
+                 'errors.log', 'trace', 'trace.log', '.DS_Store', STAMP)
 RUNTIME_SUFFIXES = ('.pyc', '.pyo')
 
 

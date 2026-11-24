@@ -15,9 +15,10 @@ if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
 
 
-# One export at a time: None, 'button' (the dialog's export) or 'job' (an autorun.json job).
-# Kept in this file, not the package, so it survives the package being reloaded.
-_busy = {'by': None}
+# One export at a time: by is None, 'button' (the dialog's export) or 'job' (an autorun.json job, or
+# a job from another program: then job is its id, see jobs.py). Kept in this file, not the package,
+# so it survives the package being reloaded.
+_busy = {'by': None, 'job': None}
 
 
 def forget_package():
@@ -54,6 +55,12 @@ _custom_event = None
 _RESULTS_ID = 'FusionBulkExportResults'
 _RESULTS_EVENT = 'FusionBulkExportShowResults'
 _results = {'definition': None, 'event': None, 'data': None, 'view': None, 'last': None}
+# Jobs from other programs (job protocol 1, fusion_bulk_export/jobs.py, docs/job-protocol.md): the
+# service (agent file, job folder) made at start, and the custom event that runs jobs on Fusion's
+# main thread. home: the folder holding .cad-export; None is the user's home. The synthetic test
+# API starts no service unless a test gives a home (False: none).
+_JOBS_EVENT = 'FusionBulkExportJobs'
+_jobs = {'service': None, 'event': None, 'home': False if getattr(adsk, '_synthetic', False) else None}
 
 
 class AutorunEvent(adsk.core.CustomEventHandler):
@@ -100,8 +107,30 @@ def answer_job(text):
         pass
 
 
+class JobsEvent(adsk.core.CustomEventHandler):
+    """Claims and runs jobs from other programs on Fusion's main thread (jobs.Service.handle)."""
+    def notify(self, args):
+        service = _jobs['service']
+        if service is None:
+            return
+        try:
+            service.handle(adsk.core.Application.get(), _busy)
+        except Exception:
+            jobs_error(traceback.format_exc())
+
+
+def jobs_error(text):
+    """A problem of the job service (never shown in a dialog: no one may be at the computer)."""
+    try:
+        (_HERE / 'jobs-error.txt').write_text(text, encoding='utf-8')
+    except OSError:
+        pass
+
+
 class Watcher(threading.Thread):
-    """Background poll: keeps autorun.alive fresh and signals new autorun.json files."""
+    """Background poll: keeps autorun.alive and the job protocol's agent file fresh, and signals
+    new autorun.json files and jobs. Only files and fireCustomEvent here: the Fusion API is used
+    on the main thread, in the event handlers."""
     def __init__(self, interval=3):
         super().__init__(daemon=True)
         self.interval = interval
@@ -114,6 +143,14 @@ class Watcher(threading.Thread):
                                            encoding='utf-8')
         if (_HERE / 'autorun.json').is_file() and _busy['by'] != 'job':
             adsk.core.Application.get().fireCustomEvent(_EVENT, '')
+        service = _jobs['service']
+        if service is not None:
+            try:
+                service.beat(_busy)  # the agent file's heartbeat (about every 10 s)
+            except Exception:
+                pass
+            if service.wants_attention(_busy):
+                adsk.core.Application.get().fireCustomEvent(_JOBS_EVENT, '')
 
     def run(self):
         while not self.stopped.is_set():
@@ -132,9 +169,52 @@ def start_watching():
     handler = AutorunEvent()
     _custom_event.add(handler)
     _handlers.append(handler)
+    start_jobs()
     _watcher = Watcher()
     _watcher.start()
     handler.notify(None)
+
+
+def start_jobs():
+    """Jobs from other programs: the folders in ~/.cad-export, jobs a Fusion that is gone left
+    behind, the agent file and the custom event. A failure here leaves the button and autorun.json
+    working; it is written to jobs-error.txt."""
+    if _jobs['home'] is False:
+        return
+    try:
+        from fusion_bulk_export import checks, jobs
+        app = adsk.core.Application.get()
+        try:
+            fusion_version = str(app.version)
+        except Exception:
+            fusion_version = None
+        service = jobs.Service(checks.exporter_version(), fusion_version, home=_jobs['home'])
+        service.setup()
+        service.recover(_busy)
+        service.write_agent(_busy)
+        try:
+            app.unregisterCustomEvent(_JOBS_EVENT)  # left over by a run that did not stop cleanly
+        except Exception:
+            pass
+        event = app.registerCustomEvent(_JOBS_EVENT)
+        handler = JobsEvent()
+        event.add(handler)
+        _handlers.append(handler)
+        _jobs.update(service=service, event=event)
+    except Exception:
+        jobs_error(traceback.format_exc())
+
+
+def stop_jobs():
+    service, event = _jobs['service'], _jobs['event']
+    _jobs.update(service=None, event=None)
+    if service is not None:
+        service.remove_agent()
+    if event is not None:
+        try:
+            adsk.core.Application.get().unregisterCustomEvent(_JOBS_EVENT)
+        except Exception:
+            pass
 
 
 _picker = None
@@ -643,10 +723,11 @@ def run(context):
 def stop(context):
     global _control, _definition, _watcher, _custom_event, _picker
     _picker = None
-    _busy['by'] = None
+    _busy.update(by=None, job=None)
     if _watcher:
         _watcher.stopped.set()
         _watcher = None
+    stop_jobs()
     if _custom_event:
         adsk.core.Application.get().unregisterCustomEvent(_EVENT)
         _custom_event = None
