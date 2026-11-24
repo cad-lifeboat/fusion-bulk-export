@@ -397,6 +397,8 @@ ACCOUNT_CHANGED_LINE = ("Stopped by itself (account_changed): a design's version
                         "changed while it was exported with its linked parts. Do not run again; check the "
                         "design's version history in Fusion and report it (export.log in the output folder).")
 STEP_OFF_NOTE = 'STEP files were not requested for this export.'  # the add-in's core.STEP_OFF_NOTE
+# The add-in's core.ARCHIVE_OFF_NOTE.
+ARCHIVE_OFF_NOTE = 'Only STEP files were requested for this export: no .f3d files were written.'
 LOW_MEMORY_NOTE = 'This computer was low on memory during the export; closing other programs may speed it up.'
 
 
@@ -502,6 +504,8 @@ def summary(output):
             lines.append('Stopped by itself (%s); run export again to carry on.' % report.get('stopped_code'))
         if report.get('step') is False:
             lines.append(STEP_OFF_NOTE)
+        if report.get('archive') is False:
+            lines.append(ARCHIVE_OFF_NOTE)
         for key, text, verb in (('moved', moved_text, 'moved'), ('removed', removed_text, 'deleted')):
             tally = report.get(key) or {}
             if tally.get('versions'):

@@ -599,6 +599,14 @@ STEP_NOT_REQUESTED = 'STEP not requested'
 STEP_FAILED_WARNING = 'Saved, but Fusion could not write its STEP file'
 STEP_OFF_NOTE = 'STEP files were not requested for this export.'
 
+# A design entry's "archive": absent when its .f3d was written; ARCHIVE_OFF when the run asked for
+# the STEP only (a protocol job's formats ["step"], autorun.json's "archive": false): its files then
+# hold the STEP and no archive. A design exported earlier with its .f3d keeps it (written again
+# when exported again), and a STEP-only design is exported again by a run that wants the .f3d.
+ARCHIVE_OFF = 'off'
+ARCHIVE_NOT_REQUESTED = '.f3d not requested'
+ARCHIVE_OFF_NOTE = 'Only STEP files were requested for this export: no .f3d files were written.'
+
 
 # What happens to a design's older versions once its newest is in the folder, complete and checked
 # (the dialog's "Older versions of a design", the job's "older_versions"; Exporter.tidy_older_versions):
@@ -645,18 +653,27 @@ def has_step(entry):
     return entry.get('step') not in (STEP_OFF, STEP_FAILED)
 
 
+def has_archive(entry):
+    """Whether a design entry is meant to record its .f3d (see ARCHIVE_OFF)."""
+    return entry.get('archive') != ARCHIVE_OFF
+
+
 def complete(entry):
     """Whether a finished entry records the files its kind needs: another file one file; a
-    design its archive and its STEP (none when it was not requested or Fusion would not write
-    it), plus at most a copy with linked parts. By role, and for entries written before roles
-    existed by extension (checks.file_role), in any order."""
+    design its archive (none when only its STEP was requested) and its STEP (none when it was not
+    requested or Fusion would not write it; always one without the archive), plus at most a copy
+    with linked parts. By role, and for entries written before roles existed by extension
+    (checks.file_role), in any order."""
     files = entry.get('files') or []
     if entry.get('kind') == 'file':
         return len(files) == 1
     roles = [checks.file_role(info) for info in files]
+    archives = 1 if has_archive(entry) else 0
     steps = 1 if has_step(entry) else 0
-    return (roles.count(ROLE_ARCHIVE) == 1 and roles.count(ROLE_STEP) == steps
-            and roles.count(ROLE_LINKED) <= 1 and len(roles) == 1 + steps + roles.count(ROLE_LINKED))
+    if not archives and not steps:
+        return False
+    return (roles.count(ROLE_ARCHIVE) == archives and roles.count(ROLE_STEP) == steps
+            and roles.count(ROLE_LINKED) <= archives and len(roles) == archives + steps + roles.count(ROLE_LINKED))
 
 
 def link_paths(manifest):
@@ -834,6 +851,8 @@ class Exporter:
         self.other_files = True
         # Also write each design's STEP (the dialog's box, the job's "step"); set by run().
         self.step = True
+        # Write each design's .f3d (False: the STEP only, a job's formats ["step"]); set by run().
+        self.archive = True
         # Testing only, off (None) by default: the recipe (LINK_RECIPES) for the experimental
         # second archive of an assembly with its linked parts included (FusionAdapter.linked_copy).
         # Set by run() from LINKED_COPIES_ENV or the job's "experiment_linked_copies".
@@ -913,6 +932,8 @@ class Exporter:
             return False
         if self.step and entry.get('kind') != 'file' and not has_step(entry):
             return False  # its STEP is wanted now (not requested then, or Fusion would not write it)
+        if self.archive and entry.get('kind') != 'file' and not has_archive(entry):
+            return False  # its .f3d is wanted now (only its STEP was requested then)
         copy = entry.get('linked_copy') or {}
         if self.linked_copies and copy.get('retry'):
             return False  # the experimental copy was left out for now (the design was open)
@@ -1088,7 +1109,7 @@ class Exporter:
 
     def run(self, data, cancelled=lambda: False, progress=lambda state: None, limit=None, selection=None,
             on_trouble=None, other_files=True, linked_copies=None, step=True, older_versions=OLDER_MOVE,
-            tool_libraries=False, designs=True, f3z_bundles=False):
+            tool_libraries=False, designs=True, f3z_bundles=False, archive=True):
         """Export as designs are found: each folder is listed, its designs exported, then the next.
 
         tool_libraries: first, before any design, save the user's CAM tool libraries (toollibs.py:
@@ -1126,6 +1147,12 @@ class Exporter:
         STEP. A design exported with its STEP stays up to date in a run with it off (nothing is
         deleted).
 
+        archive: also write each design's .f3d (on by default). Off (the STEP only; step must then
+        be on), a design gets its STEP and thumbnail, its entry records archive: "off", and a STEP
+        Fusion would not write fails the design. A design exported earlier with its .f3d stays up
+        to date (and gets its .f3d again when it is exported again); a run with it on re-exports
+        the STEP-only designs to add the .f3d.
+
         older_versions: what happens to the files this export recorded for a design's older
         versions once its newest is in the folder (exported now or already up to date): OLDER_MOVE
         (the default) moves them into the "Older versions" folder, OLDER_DELETE deletes them,
@@ -1148,6 +1175,9 @@ class Exporter:
         The output folder is locked (export.lock) for the run: FolderBusy is raised when another
         export is using it.
         """
+        if not archive and not step:
+            raise ValueError('Each design needs its .f3d, its STEP or both.')
+        self.archive = bool(archive)
         lock = FolderLock(self.root)
         lock.acquire()
         try:
@@ -1167,7 +1197,7 @@ class Exporter:
             self.run_info[MOVED if self.older_versions == OLDER_MOVE else REMOVED] = \
                 dict(versions=0, files=0, kept=0, errors=0)
         self.linked_copies = linked_copies_experiment() if linked_copies is None else link_recipe(linked_copies)
-        self.run_info.update(other_files=self.other_files, step=self.step)
+        self.run_info.update(other_files=self.other_files, step=self.step, archive=self.archive)
         if not designs:
             self.run_info['designs'] = False
         if self.linked_copies:
@@ -1496,8 +1526,10 @@ class Exporter:
                  'attempts': 0}
         # Fusion dateModified is a Unix timestamp, retained without conversion.
         owned = set()  # paths this item's earlier record held: it may write over them
+        had_archive = False  # its earlier record holds an .f3d: written again, even in a STEP-only run
         if key in entries:
             owned = {info.get('path') for info in recorded_files(entries[key]) if info.get('path')}
+            had_archive = any(checks.file_role(info) == ROLE_ARCHIVE for info in entries[key].get('files') or [])
             # The .f3z built beside this version (f3z.py) stays its own: rebuilt, or found up to
             # date, at the end of a run that builds them.
             for fact in ('f3z', 'f3z_older', 'f3z_not_built'):
@@ -1521,7 +1553,7 @@ class Exporter:
             else:
                 entry['error'] = 'Not a Fusion design: ' + file.fileExtension
         else:
-            trouble = self.export_design(hub, project, folders, file, entry, key, owned)
+            trouble = self.export_design(hub, project, folders, file, entry, key, owned, had_archive)
         took = self.clock() - began
         if took > SLOW_SECONDS:
             entry['slow_seconds'] = int(round(took))
@@ -1769,20 +1801,23 @@ class Exporter:
             entry.update(references_unreadable=True, references_error=problems[0])
             self.log('could not read the links of ' + entry['key'] + ': ' + problems[0])
 
-    def export_design(self, hub, project, folders, file, entry, key, owned=()):
+    def export_design(self, hub, project, folders, file, entry, key, owned=(), had_archive=False):
         """Write a design's .f3d and (when self.step) its STEP (two attempts); the Trouble that stops the
-        run, or None. A STEP Fusion would not write leaves the .f3d done, with a warning.
+        run, or None. A STEP Fusion would not write leaves the .f3d done, with a warning. Without
+        self.archive only the STEP is written (and must be: else the design failed), unless
+        had_archive (its earlier record holds an .f3d, which is never left behind unrecorded).
 
         A design with links (see links()) that fails to open or export gets the plain reason
         link_reason() in error, and Fusion's own message in fusion_error: the usual cause is a
         linked design that was deleted, moved or cannot be read. The export is attempted as
         for any design; only the reason differs."""
         self.links(file, entry)
+        self.design_archive = bool(self.archive or had_archive)
         for attempt in range(2):
             entry['attempts'] = attempt + 1
             began = self.clock()
             for fact in ('linked_occurrences', 'linked_copy', 'links_broken', 'step', 'step_error', 'step_note',
-                         'step_includes_hidden', 'step_hidden_error', 'surface_bodies', 'mesh_bodies'):
+                         'step_includes_hidden', 'step_hidden_error', 'surface_bodies', 'mesh_bodies', 'archive'):
                 entry.pop(fact, None)  # an earlier attempt's (or run's)
             try:
                 stem, facts = self.destination(hub, project, folders, file, owned=owned)
@@ -1817,6 +1852,10 @@ class Exporter:
                             facts['step_note'] = more['step_note']
                 elif self.step and step_error is None:
                     step_error = 'Fusion wrote no STEP file'
+                if not self.design_archive:
+                    if not steps:  # nothing to show for it: the design failed (tried again)
+                        raise StepNotWritten('Fusion could not write the STEP file: %s' % step_error)
+                    facts['archive'] = ARCHIVE_OFF
                 paths = archives + steps
                 if not self.step:
                     facts['step'] = STEP_OFF
@@ -1858,7 +1897,7 @@ class Exporter:
                 trouble = self.trouble(error)
                 if trouble is not None:
                     return trouble  # a second attempt cannot succeed either
-                if entry.get('has_references') and not isinstance(error, (OpenInFusion, ValueError)):
+                if entry.get('has_references') and not isinstance(error, (OpenInFusion, ValueError, StepNotWritten)):
                     entry.update(error=link_reason(len(entry.get('references') or [])), fusion_error=str(error))
                 if self.clock() - began > NO_RETRY_SECONDS:
                     # Another attempt would block Fusion as long again; the next run tries again.
@@ -1877,9 +1916,10 @@ class Exporter:
         before and after) must be the same; if not, the entry gets account_changed: true, the log
         an error, and self.alarm the Trouble that stops the run. Nothing is ever saved, so this
         should never happen; if it does, the run must not go on."""
-        for name in ('linked_copies', 'step'):
+        for name, value in (('linked_copies', self.linked_copies), ('step', self.step),
+                            ('archive', getattr(self, 'design_archive', self.archive))):
             try:
-                setattr(self.adapter, name, getattr(self, name))
+                setattr(self.adapter, name, value)
             except AttributeError:
                 pass
         before = cloud_state(file)
@@ -1959,6 +1999,11 @@ class NonDesign(Exception):
 class OpenInFusion(RuntimeError):
     """The design is open in Fusion in a way that stops its export (unsaved edits,
     another version); the message says what to do. Not a link problem."""
+
+
+class StepNotWritten(RuntimeError):
+    """Only the STEP was asked for and Fusion did not write it: the design has nothing to show
+    for it and fails (a reason about the design itself, never about its links)."""
 
 
 class NotSaved(Exception):

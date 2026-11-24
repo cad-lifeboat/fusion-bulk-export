@@ -7,7 +7,7 @@ import time
 import adsk.core
 import adsk.fusion
 from .core import (DRAWING_REASON, RECIPE_BOTH, RECIPE_COMPUTE, RECIPE_INNERMOST, UNSUPPORTED, native_reason,
-                   NonDesign, NotSaved, OpenInFusion, collection, disk_full, is_drawing)
+                   NonDesign, NotSaved, OpenInFusion, StepNotWritten, collection, disk_full, is_drawing)
 from .names import LINKED_SUFFIX, fusion_path, long_path
 from .staging import Staging
 
@@ -57,6 +57,8 @@ class FusionAdapter:
         self.linked_copies = None
         # Write <stem>.step too (the dialog's STEP box, the job's "step"; set by the Exporter).
         self.step = True
+        # Write <stem>.f3d (False: the STEP only, which must then be written; set by the Exporter).
+        self.archive = True
         self.clock = time.monotonic
 
     def references(self, data_file):
@@ -401,10 +403,12 @@ class FusionAdapter:
         # Fusion hangs on long paths: it writes to short staging paths, then the files move.
         staging = self.stage()
         staged_archive, staged_step = staging.path('.f3d'), staging.path('.step')
-        if not manager.execute(manager.createFusionArchiveExportOptions(fusion_path(staged_archive))):
-            raise RuntimeError('Fusion archive export returned false')
-        if not os.path.isfile(long_path(staged_archive)):
-            raise RuntimeError('Fusion reported a successful archive export but wrote no file')
+        with_archive = self.archive or not self.step
+        if with_archive:
+            if not manager.execute(manager.createFusionArchiveExportOptions(fusion_path(staged_archive))):
+                raise RuntimeError('Fusion archive export returned false')
+            if not os.path.isfile(long_path(staged_archive)):
+                raise RuntimeError('Fusion reported a successful archive export but wrote no file')
         # The STEP is not wanted, or Fusion would not write it: the archive stands on its own (the
         # exporter records why; a STEP that failed is tried again on the next run). A full disk
         # still stops the run.
@@ -421,8 +425,16 @@ class FusionAdapter:
                 if disk_full(error):
                     raise
                 problem = str(error) or type(error).__name__
-        staging.place(staged_archive, archive)
-        written = [archive]
+        if not with_archive and problem is not None:
+            try:
+                os.unlink(long_path(staged_step))
+            except OSError:
+                pass
+            raise StepNotWritten('Fusion could not write the STEP file: ' + problem)  # nothing else was asked for
+        written = []
+        if with_archive:
+            staging.place(staged_archive, archive)
+            written.append(archive)
         if self.step and problem is None:
             staging.place(staged_step, step)
             written.append(step)
@@ -432,6 +444,8 @@ class FusionAdapter:
                 os.unlink(long_path(staged_step))
             except OSError:
                 pass
+        if not with_archive:
+            return written  # (the experimental copy with linked parts is an archive too)
         # Only now, after the design's own files are written: from here on the document in memory
         # is no longer the design as it is in the account.
         return written + self.linked_copy(document, opened, design, stem)

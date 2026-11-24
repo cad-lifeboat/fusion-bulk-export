@@ -13,6 +13,9 @@ Configuration (all paths absolute):
    "step": true,                     optional; false: each design's .f3d only, no STEP
                                      (entries record step: "off"; a later job with STEP adds
                                      them by exporting those designs again)
+   "archive": true,                  optional; false: each design's STEP only, no .f3d (entries
+                                     record archive: "off"; needs "step"; not with f3z_bundles).
+                                     A protocol job's formats ["step"] (jobs.py)
    "older_versions": "move",         optional; what happens to the files this export wrote
                                      for a design's older versions once its newest is saved and
                                      checked (only unchanged ones; entries stay): "move" (the
@@ -142,6 +145,11 @@ def check_settings(config):
     step = config.get('step', True)
     if not isinstance(step, bool):
         raise ValueError('step must be true or false')
+    archive = config.get('archive', True)
+    if not isinstance(archive, bool):
+        raise ValueError('archive must be true or false')
+    if not archive and not step:
+        raise ValueError('archive and step cannot both be false: each design needs one of them')
     older_versions = config.get('older_versions', OLDER_MOVE)
     if not isinstance(older_versions, str) or older_versions not in OLDER_VERSIONS:
         raise ValueError('older_versions must be one of: ' + ', '.join(OLDER_VERSIONS))
@@ -157,9 +165,11 @@ def check_settings(config):
     f3z_bundles = config.get('f3z_bundles', False)
     if not isinstance(f3z_bundles, bool):
         raise ValueError('f3z_bundles must be true or false')
+    if f3z_bundles and not archive:
+        raise ValueError('f3z_bundles needs the .f3d files: not with archive false')
     # "drawings" (from launchers before drawing export was removed) and "linked_copies" are ignored.
-    return (mode, selection, limit, timeout, not designs_only, linked_copies, step, older_versions, tool_libraries,
-            f3z_bundles, memory_guard)
+    return (mode, selection, limit, timeout, not designs_only, linked_copies, step, archive, older_versions,
+            tool_libraries, f3z_bundles, memory_guard)
 
 
 TOOL_LIBRARIES_ONLY = 'only'  # the job's "tool_libraries": only them, no designs
@@ -399,7 +409,7 @@ def run_autorun(app, config_path):
     try:
         unusable = None
         try:
-            (output, mode, selection, limit, timeout, other_files, linked_copies, step, older_versions,
+            (output, mode, selection, limit, timeout, other_files, linked_copies, step, archive, older_versions,
              tool_libraries, f3z_bundles, memory_guard) = read_config(config_path)
         except Exception as error:
             output = getattr(error, 'output', None) or beside
@@ -413,7 +423,7 @@ def run_autorun(app, config_path):
         if unusable is not None:
             raise ValueError(unusable)
         log.result.update(mode=mode, fusion_version=app.version, selection=selection.describe(), limit=limit,
-                          other_files=other_files, step=step, older_versions=older_versions,
+                          other_files=other_files, step=step, archive=archive, older_versions=older_versions,
                           tool_libraries_choice=('only' if tool_libraries == TOOL_LIBRARIES_ONLY
                                                  else 'on' if tool_libraries else 'off'), f3z_bundles=f3z_bundles)
         log.write('autorun start ' + mode)
@@ -452,7 +462,7 @@ def run_autorun(app, config_path):
                     data, cancelled=lambda: (output / 'STOP').exists(), progress=progress, limit=limit,
                     selection=selection, other_files=other_files, linked_copies=linked_copies, step=step,
                     older_versions=older_versions, tool_libraries=bool(tool_libraries),
-                    designs=tool_libraries != TOOL_LIBRARIES_ONLY, f3z_bundles=f3z_bundles)
+                    designs=tool_libraries != TOOL_LIBRARIES_ONLY, f3z_bundles=f3z_bundles, archive=archive)
             finally:
                 try:
                     write_report(exporter)

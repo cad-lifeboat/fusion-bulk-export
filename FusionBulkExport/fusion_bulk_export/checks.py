@@ -441,7 +441,7 @@ NEW_TOTALS = ('entries', 'done', 'designs', 'other_files', 'not_designs', 'skipp
               'step_ok', 'solids_match', 'solids_noted', 'solids_differ', 'solids_unknown', 'warnings', 'missing', 'changed',
               'failed_checks', 'members_not_crc_checked', 'linked_copies', 'step_off', 'step_failed',
               'hidden_left_out', 'no_solid_bodies', 'removed', 'moved', 'tool_libraries', 'tool_libraries_failed',
-              'f3z_bundles', 'f3z_not_built')
+              'f3z_bundles', 'f3z_not_built', 'archive_off')
 
 
 def check_folder(root, strict=False, show=None):
@@ -508,10 +508,58 @@ def check_folder(root, strict=False, show=None):
                     linked_problems, _, unchecked = archive_facts(linked)
                     problems += ['copy with linked parts: ' + problem for problem in linked_problems]
                     totals['members_not_crc_checked'] += unchecked
+            def step_check(step):
+                """The STEP's checks (problems and notes added, totals counted): (solids, Fusion's count)."""
+                solids = 0
+                if not os.path.isfile(long_path(step)):
+                    return solids, None
+                step_problems, step_notes, solids = step_facts(step)
+                problems.extend(step_problems)
+                notes.extend(step_notes)
+                if not step_problems:
+                    totals['step_ok'] += 1
+                verdict = step_verdict(solids, entry)
+                expected = verdict['expected']
+                shortfall = [w for w in verdict['warnings'] if w.startswith('STEP has')]
+                if verdict['hidden_left_out']:
+                    # Expected of a Fusion that cannot include hidden bodies: a note, never a
+                    # problem (the .f3d holds them).
+                    totals['hidden_left_out'] += 1
+                    notes.extend(w for w in verdict['warnings'] if not w.startswith('STEP has'))
+                if verdict['note']:
+                    totals['no_solid_bodies'] += 1  # sketches or surfaces only: nothing to flag
+                elif expected is None:
+                    totals['solids_unknown'] += 1
+                elif shortfall:
+                    # Advisory: the STEP translator can drop bodies it cannot write. The .f3d
+                    # is the complete copy.
+                    totals['solids_differ'] += 1
+                    (problems if strict else notes).extend(shortfall)
+                elif not verdict['hidden_left_out']:
+                    # A count that differs without a warning is only noted in the totals.
+                    distinct = (expected if entry.get('step_includes_hidden') is True
+                                else entry.get('visible_solid_bodies_distinct'))
+                    totals['solids_match' if solids_agree(solids, expected, distinct)
+                           or solids == 0 else 'solids_noted'] += 1
+                return solids, expected
+
+            def step_line(step, solids, expected):
+                size = os.stat(long_path(step)).st_size if os.path.isfile(long_path(step)) else 0
+                return 'STEP %d bytes, %s%s' % (size, plural(solids, 'solid'),
+                                                '' if expected is None else ' (Fusion: %d)' % expected)
+
             # No STEP by intent: not requested for that run ("off"), or Fusion would not write it
-            # ("failed": a warning, tried again on the next export). Not a problem here.
+            # ("failed": a warning, tried again on the next export). Not a problem here. No .f3d by
+            # intent: only the STEP was requested (archive "off"); the STEP must then be there.
             no_step = entry.get('step') in ('off', 'failed')
-            if no_step and archive is None:
+            no_archive = entry.get('archive') == 'off'
+            if no_archive and (no_step or step is None or archive is not None):
+                problems.append('STEP not recorded' if step is None or no_step else 'archive recorded although off')
+            elif no_archive:
+                totals['archive_off'] += 1
+                solids, expected = step_check(step)
+                line = 'STEP only (.f3d not requested), ' + step_line(step, solids, expected)
+            elif no_step and archive is None:
                 problems.append('archive not recorded')
             elif no_step:
                 suffix = archive.suffix.lower().lstrip('.')
@@ -530,46 +578,16 @@ def check_folder(root, strict=False, show=None):
             else:
                 suffix = archive.suffix.lower().lstrip('.')
                 totals[suffix] = totals.get(suffix, 0) + 1
-                members = solids = 0
+                members = 0
                 if os.path.isfile(long_path(archive)):
                     archive_problems, members, unchecked = archive_facts(archive)
                     problems += archive_problems
                     totals['members_not_crc_checked'] += unchecked
-                if os.path.isfile(long_path(step)):
-                    step_problems, step_notes, solids = step_facts(step)
-                    problems += step_problems
-                    notes += step_notes
-                    if not step_problems:
-                        totals['step_ok'] += 1
-                    verdict = step_verdict(solids, entry)
-                    expected = verdict['expected']
-                    shortfall = [w for w in verdict['warnings'] if w.startswith('STEP has')]
-                    if verdict['hidden_left_out']:
-                        # Expected of a Fusion that cannot include hidden bodies: a note, never a
-                        # problem (the .f3d holds them).
-                        totals['hidden_left_out'] += 1
-                        notes += [w for w in verdict['warnings'] if not w.startswith('STEP has')]
-                    if verdict['note']:
-                        totals['no_solid_bodies'] += 1  # sketches or surfaces only: nothing to flag
-                    elif expected is None:
-                        totals['solids_unknown'] += 1
-                    elif shortfall:
-                        # Advisory: the STEP translator can drop bodies it cannot write. The .f3d
-                        # is the complete copy.
-                        totals['solids_differ'] += 1
-                        (problems if strict else notes).extend(shortfall)
-                    elif not verdict['hidden_left_out']:
-                        # A count that differs without a warning is only noted in the totals.
-                        distinct = (expected if entry.get('step_includes_hidden') is True
-                                    else entry.get('visible_solid_bodies_distinct'))
-                        totals['solids_match' if solids_agree(solids, expected, distinct)
-                               or solids == 0 else 'solids_noted'] += 1
-                    line = '%s, %s, STEP %d bytes, %s%s%s' % (
-                        archive.suffix, plural(members, 'member design'), os.stat(long_path(step)).st_size,
-                        plural(solids, 'solid'),
-                        '' if expected is None else ' (Fusion: %d)' % expected,
-                        ', and an experimental copy with linked parts' if any(file_role(f) == 'archive_with_linked_parts'
-                                                                             for f in files) else '')
+                solids, expected = step_check(step)
+                line = '%s, %s, %s%s' % (
+                    archive.suffix, plural(members, 'member design'), step_line(step, solids, expected),
+                    ', and an experimental copy with linked parts' if any(file_role(f) == 'archive_with_linked_parts'
+                                                                         for f in files) else '')
             # The .f3z built beside an assembly (f3z.py): there unchanged, and an archive that opens
             # with every member readable and its Manifest.json; one that could not be built is a note.
             bundle = bundle_info(entry)

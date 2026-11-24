@@ -15,8 +15,8 @@ from urllib.parse import quote
 
 from . import toollibs
 from .checks import bundle_info, entry_step, file_role, inserted_designs, inserted_note
-from .core import (DRAWING_REASON, LEGACY_NATIVE_REASON, LINKS_UNREADABLE, LOW_MEMORY_NOTE, MOVED, OLDER_FOLDER, REMOVED,
-                   STEP_FAILED,
+from .core import (ARCHIVE_NOT_REQUESTED, ARCHIVE_OFF, ARCHIVE_OFF_NOTE, DRAWING_REASON, LEGACY_NATIVE_REASON,
+                   LINKS_UNREADABLE, LOW_MEMORY_NOTE, MOVED, OLDER_FOLDER, REMOVED, STEP_FAILED,
                    STEP_OFF, STEP_NOT_REQUESTED, STEP_OFF_NOTE)
 from .names import long_path
 from .words import form, plural
@@ -110,6 +110,7 @@ def items(manifest, run_info=None):
                            next_step=(STEP_RETRIED if status == 'done' and entry.get('step') == STEP_FAILED
                                       else WARNING_STEP if warnings else next_step(status, entry.get('error'))),
                            step_off=status == 'done' and entry.get('step') == STEP_OFF,
+                           archive_off=status == 'done' and entry.get('archive') == ARCHIVE_OFF,
                            warnings=warnings, note=step['note'] or '', thumbnail=picture or '',
                            has_links=entry.get('has_references'), links=len(links) if links else 0,
                            links_out_of_date=bool(entry.get('references_out_of_date')),
@@ -285,6 +286,8 @@ def table_html(rows, heading, column):
                          for path, role in zip(row['files'], roles))
         if row.get('step_off'):
             files += (' ' if files else '') + '<span class="muted">%s</span>' % esc(STEP_NOT_REQUESTED)
+        if row.get('archive_off'):
+            files += (' ' if files else '') + '<span class="muted">%s</span>' % esc(ARCHIVE_NOT_REQUESTED)
         version = ' v%s' % row['version'] if row['version'] is not None and row['kind'] == 'design' else ''
         name = esc(row['name'] + version)
         if row['kind'] == 'file' and row['version'] is not None:
@@ -367,6 +370,8 @@ def render_html(manifest, run_info, counts):
     out.append('<div class="muted">%s.</div>' % esc(line))
     if (run_info or {}).get('step') is False:
         out.append('<p class="muted">Note: %s</p>' % esc(STEP_OFF_NOTE))
+    if (run_info or {}).get('archive') is False:
+        out.append('<p class="muted">Note: %s</p>' % esc(ARCHIVE_OFF_NOTE))
     hidden = hidden_note(hidden_left_out(manifest))
     if hidden:
         out.append('<p class="muted">Note: %s</p>' % esc(hidden))
@@ -561,7 +566,7 @@ def render_csv(manifest, run_info):
         by_role = {}
         for path, role in zip(row['files'], row['roles']):
             by_role.setdefault(role, path)
-        archive = by_role.get('archive', '') if design else ''
+        archive = (ARCHIVE_NOT_REQUESTED if row.get('archive_off') else by_role.get('archive', '')) if design else ''
         step = (STEP_NOT_REQUESTED if row.get('step_off') else by_role.get('step', '')) if design else ''
         writer.writerow([row['status'], row['hub'], row['project'], row['folder'], row['name'],
                          '' if row['version'] is None else row['version'], archive, step, row['reason'],
@@ -747,6 +752,8 @@ def summary(counts, run_info, manifest, output, page=None):
         notes.append(unsupported_note(unsupported))
     if run_info.get('step') is False:
         notes.append(STEP_OFF_NOTE)
+    if run_info.get('archive') is False:
+        notes.append(ARCHIVE_OFF_NOTE)
     notes += older_notes(run_info)
     hidden = hidden_note(hidden_left_out(manifest))
     if hidden:
