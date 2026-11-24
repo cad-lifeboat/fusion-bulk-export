@@ -1002,7 +1002,12 @@ def check(output, names=False):
             print('%s: PROBLEM %s' % (label, problem))
         for note in notes:
             print('%s: NOTE %s' % (label, note))
-    totals = checks.check_folder(output, show=show)
+    try:
+        totals = checks.check_folder(output, show=show)
+    except ValueError as error:  # a manifest this version cannot read (checks.UnknownSchema), or not JSON
+        print('Could not check this folder: %s' % (error if isinstance(error, checks.UnknownSchema)
+                                                   else type(error).__name__))
+        return 1
     failed = totals['failed'] + totals.get('tool_libraries_failed', 0)
     print('Checked %s: %d with a problem, %s, %s, %s missing bodies, %d not exported yet (failed).'
           % (plural(totals['done'] + totals.get('tool_libraries', 0), 'finished item'), totals['failed_checks'] - failed,

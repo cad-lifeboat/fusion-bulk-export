@@ -715,7 +715,7 @@ def bundle_folder(root, older_versions='move'):
                 pass
         log('bundle started (older versions: %s)' % older_versions)
         tally = Builder(root, manifest, older_versions, log).run()
-        atomic_write(root / 'manifest.json', manifest)
+        atomic_write(root / 'manifest.json', checks.stamped(manifest))
         Journal(root / 'manifest.journal').clear()
         log('bundle finished ' + json.dumps(dict((key, value) for key, value in tally.items() if key != 'reasons')))
         runs = [run for run in manifest.get('runs') or [] if isinstance(run, dict)]

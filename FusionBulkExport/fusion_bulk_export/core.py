@@ -807,6 +807,7 @@ class Exporter:
                 self.manifest = json.loads(stream.read())
             if self.manifest.get('schema') not in (1, SCHEMA):
                 raise ValueError('Unsupported manifest schema')
+            checks.check_schema(self.manifest)
             # Schema 1 entries keep their (shortened, hashed) files; new exports use real names,
             # so such a folder holds both layouts (the report says so: older_layout).
             if self.manifest.get('schema') == 1:
@@ -857,8 +858,9 @@ class Exporter:
         self.manifest['runs'].append(self.run_info)
 
     def save(self):
-        """Rewrite manifest.json in full, then empty the journal it now contains."""
-        atomic_write(self.manifest_path, self.manifest)
+        """Rewrite manifest.json in full (with schema_id and exporter: checks.stamped), then empty
+        the journal it now contains."""
+        atomic_write(self.manifest_path, checks.stamped(self.manifest))
         self.journal.clear()
         self.saves += 1
         self.unsaved = 0

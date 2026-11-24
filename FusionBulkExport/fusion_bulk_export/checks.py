@@ -272,12 +272,53 @@ def file_sha256(path):
     return sha.hexdigest()
 
 
+# The documented schema of manifest.json (docs/manifest-schema.md) and who writes it. A folder
+# without schema_id (written before it existed) reads as SCHEMA_ID; another value is a format
+# this version does not know: never guessed at.
+SCHEMA_ID = 'cad-export-manifest/1'
+EXPORTER = 'fusion-bulk-export'
+ADDIN_MANIFEST = Path(__file__).resolve().parent.parent / 'FusionBulkExport.manifest'
+
+
+class UnknownSchema(ValueError):
+    """manifest.json says it follows a schema this version does not know."""
+
+
+def check_schema(manifest):
+    """Raise UnknownSchema when manifest names a schema_id other than SCHEMA_ID (absent is fine)."""
+    found = manifest.get('schema_id') if isinstance(manifest, dict) else None
+    if found is not None and found != SCHEMA_ID:
+        raise UnknownSchema('This folder was written in a format this version does not know (%s); '
+                            'use a newer version of Fusion Bulk Export.' % str(found)[:80])
+
+
+def exporter_version(manifest_path=ADDIN_MANIFEST):
+    """The add-in's version from its FusionBulkExport.manifest, or None."""
+    try:
+        with open(str(manifest_path), encoding='utf-8') as stream:
+            value = json.loads(stream.read()).get('version')
+        return str(value) if value else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def stamped(manifest, version=None):
+    """manifest as it is written: schema, schema_id and exporter first (set on manifest too),
+    then everything else in its order."""
+    manifest['schema_id'] = SCHEMA_ID
+    manifest['exporter'] = dict(name=EXPORTER, version=version if version is not None else exporter_version())
+    ordered = dict((key, manifest[key]) for key in ('schema', 'schema_id', 'exporter') if key in manifest)
+    ordered.update((key, value) for key, value in manifest.items() if key not in ordered)
+    return ordered
+
+
 def read_manifest(root):
     """manifest.json of an export folder with its journal (items finished after the last full
-    save) applied."""
+    save) applied. Raises UnknownSchema for a schema_id this version does not know."""
     root = Path(root)
     with open(long_path(root / 'manifest.json'), encoding='utf-8') as stream:
         manifest = json.loads(stream.read())
+    check_schema(manifest)
     manifest.setdefault('entries', [])
     pending = Journal(root / 'manifest.journal').read()
     if pending:
