@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cad-export-manifest/1",
+  "title": "Export folder manifest (cad-export-manifest/1)",
+  "description": "manifest.json of a Fusion Bulk Export folder. See manifest-schema.md. Unknown fields are allowed everywhere: additive changes keep /1.",
+  "type": "object",
+  "required": ["schema", "entries", "runs"],
+  "properties": {
+    "schema": {"type": "integer", "const": 2},
+    "schema_id": {"const": "cad-export-manifest/1"},
+    "exporter": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"const": "fusion-bulk-export"},
+        "version": {"type": "string"}
+      }
+    },
+    "older_layout": {"type": "boolean"},
+    "entries": {"type": "array", "items": {"$ref": "#/$defs/entry"}},
+    "tool_libraries": {"type": "array", "items": {"$ref": "#/$defs/toolLibrary"}},
+    "runs": {"type": "array", "items": {"$ref": "#/$defs/run"}}
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "anyOf": [
+          {"pattern": "^/"},
+          {"pattern": "^[A-Za-z]:"},
+          {"pattern": "\\\\"},
+          {"pattern": "(^|/)\\.\\.(/|$)"}
+        ]
+      }
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "time": {"type": "string", "description": "ISO 8601 with a UTC offset"},
+    "fileRecord": {
+      "type": "object",
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "role": {"type": "string", "description": "archive, step, thumbnail, file, f3z_bundle, archive_with_linked_parts; new values may be added"},
+        "bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "mtime_ns": {"type": "integer"}
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "version": {"type": "integer"},
+        "path": {"oneOf": [{"$ref": "#/$defs/relativePath"}, {"type": "null"}]}
+      }
+    },
+    "f3z": {
+      "allOf": [{"$ref": "#/$defs/fileRecord"}],
+      "type": "object",
+      "required": ["role", "built", "members"],
+      "properties": {
+        "role": {"const": "f3z_bundle"},
+        "built": {"$ref": "#/$defs/time"},
+        "format": {"type": "integer"},
+        "roles": {"type": "boolean"},
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "id", "sha256"],
+            "properties": {
+              "name": {"type": "string"},
+              "id": {"type": "string"},
+              "version": {"type": ["integer", "null"]},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "pinned": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+    "olderFile": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "moved_to": {"oneOf": [{"$ref": "#/$defs/relativePath"}, {"type": "null"}]},
+        "kept_as": {"$ref": "#/$defs/relativePath"},
+        "role": {"type": "string"},
+        "bytes": {"type": ["integer", "null"]},
+        "sha256": {"type": ["string", "null"]}
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": ["key", "status", "files"],
+      "properties": {
+        "key": {"type": "string"},
+        "kind": {"enum": ["design", "file"]},
+        "id": {"type": "string"},
+        "version": {"type": "integer"},
+        "name": {"type": "string"},
+        "hub": {"type": "string"},
+        "project": {"type": "string"},
+        "path": {"type": "array", "items": {"type": "string"}},
+        "date": {"description": "seconds since 1970 UTC (Fusion dateModified); tolerate other values"},
+        "status": {"type": "string", "description": "done, failed, skipped, unsupported, moved, removed; treat others as unknown"},
+        "error": {"type": ["string", "null"]},
+        "fusion_error": {"type": "string"},
+        "files": {"type": "array", "items": {"$ref": "#/$defs/fileRecord"}},
+        "thumbnail": {"oneOf": [{"$ref": "#/$defs/fileRecord"}, {"type": "null"}]},
+        "step": {"enum": ["off", "failed"]},
+        "references": {"oneOf": [{"type": "array", "items": {"$ref": "#/$defs/reference"}}, {"type": "null"}]},
+        "has_references": {"type": ["boolean", "null"]},
+        "references_out_of_date": {"type": ["boolean", "null"]},
+        "references_unreadable": {"type": "boolean"},
+        "references_error": {"type": "string"},
+        "f3z": {"$ref": "#/$defs/f3z"},
+        "f3z_not_built": {"type": "string"},
+        "f3z_older": {"type": "array", "items": {"$ref": "#/$defs/olderFile"}},
+        "moved": {"$ref": "#/$defs/time"},
+        "moved_files": {"type": "array", "items": {"$ref": "#/$defs/olderFile"}},
+        "removed": {"$ref": "#/$defs/time"},
+        "removed_files": {"type": "array", "items": {"$ref": "#/$defs/olderFile"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "step_note": {"type": "string"},
+        "long_path": {"type": "boolean"},
+        "slow_seconds": {"type": "integer"},
+        "kept": {"type": "string"},
+        "move_error": {"type": "string"},
+        "remove_error": {"type": "string"}
+      }
+    },
+    "toolLibrary": {
+      "type": "object",
+      "required": ["key", "name", "status"],
+      "properties": {
+        "key": {"type": "string"},
+        "kind": {"const": "tool_library"},
+        "location": {"type": "string"},
+        "folder": {"type": "array", "items": {"type": "string"}},
+        "name": {"type": "string"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "tools": {"type": ["integer", "null"]},
+        "bytes": {"type": "integer"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "exported": {"$ref": "#/$defs/time"},
+        "status": {"type": "string"},
+        "error": {"type": ["string", "null"]},
+        "older": {"type": "array", "items": {"$ref": "#/$defs/olderFile"}}
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": ["started", "finished", "cancelled"],
+      "properties": {
+        "started": {"$ref": "#/$defs/time"},
+        "finished": {"oneOf": [{"$ref": "#/$defs/time"}, {"type": "null"}]},
+        "cancelled": {"type": "boolean"},
+        "stopped_code": {"type": ["string", "null"]},
+        "stopped_reason": {"type": ["string", "null"]},
+        "error": {"type": "string"},
+        "counts": {
+          "type": "object",
+          "properties": {
+            "exported": {"type": "integer"},
+            "up_to_date": {"type": "integer"},
+            "files": {"type": "integer"},
+            "files_up_to_date": {"type": "integer"},
+            "skipped": {"type": "integer"},
+            "unsupported": {"type": "integer"},
+            "failed": {"type": "integer"}
+          }
+        },
+        "found": {"type": "integer"},
+        "selection": {"type": "string"},
+        "step": {"type": "boolean"},
+        "other_files": {"type": "boolean"},
+        "f3z_bundles": {"type": "boolean"},
+        "older_versions": {"enum": ["move", "keep", "delete"]},
+        "limit_reached": {"type": "boolean"},
+        "discovery_errors": {"type": "array"}
+      }
+    }
+  }
+}
