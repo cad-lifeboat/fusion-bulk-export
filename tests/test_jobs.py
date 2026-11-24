@@ -429,6 +429,8 @@ class RunTests(JobTestCase):
         status = self.status()
         self.assertEqual((status['state'], status['reason'], status['exit_code']), ('cancelled', 'cancelled', 130))
         self.assertEqual(status['counts']['exported'], 2)
+        self.assertEqual(status['progress']['done'], 2)  # the third was not begun
+        self.assertEqual(status['message'], 'Cancelled after 2 items.')
         self.assertEqual(status['manifest'], str(self.output / 'manifest.json'))
         self.assertTrue(self.manifest()['runs'][-1]['cancelled'])
         # A later job into the same folder carries on.

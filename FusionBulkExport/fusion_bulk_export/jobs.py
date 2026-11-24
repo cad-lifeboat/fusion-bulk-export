@@ -490,7 +490,10 @@ class Service:
         for stem in self.job_ids(names):
             if stem + '.status.json' not in names:
                 return True
-        queued = list(self.queued)
+        try:
+            queued = list(self.queued)
+        except RuntimeError:  # changed by the main thread meanwhile: looked at on the next poll
+            queued = []
         if queued and (busy or {}).get('by') is None:
             return True
         return any(stem + '.cancel' in names or stem + '.json' not in names for stem in queued)
@@ -669,8 +672,8 @@ class Service:
         progress = status['progress']
         if not inventory:
             status['counts'] = dict((key, counts.get(key, 0)) for key in COUNT_KEYS)
-            if isinstance(found, int):
-                progress['done'] = found
+            if counts:
+                progress['done'] = sum(status['counts'].values())  # items finished, whatever the outcome
         reason = result.get('reason')
         stopped = result.get('stopped_code')
         if reason:
