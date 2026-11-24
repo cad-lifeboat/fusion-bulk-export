@@ -146,7 +146,7 @@ class Watcher(threading.Thread):
         service = _jobs['service']
         if service is not None:
             try:
-                service.beat(_busy)  # the agent file's heartbeat (about every 10 s)
+                service.beat(_busy, self.interval)  # the agent file's heartbeat (at most 10 s apart)
             except Exception:
                 pass
             if service.wants_attention(_busy):

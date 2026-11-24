@@ -78,7 +78,7 @@ reads every `*.json` in `agents/` and picks an agent by its `exporter` and `feat
 | `fusion_running` | Always `true` while the file exists (kept for readers that expect it). |
 | `pid` | Fusion's process id. |
 | `started` | When the add-in started in this Fusion. |
-| `updated` | Heartbeat, rewritten about every 10 s. |
+| `updated` | Heartbeat, rewritten at most 10 s apart, also while a job runs (between its items; Fusion can hold it back while it opens or exports one large design). |
 | `busy` | `null`, `"button"` (an export from the toolbar button is running) or `"job"` (a protocol job, or an `autorun.json` job from the command line). |
 | `job` | Id of the protocol job running now, or `null` (also while an `autorun.json` job runs). |
 | `jobs_dir` | Absolute path of the jobs folder. |
@@ -176,7 +176,8 @@ STEP and counts it as "f3d not requested".
    Fusion, the button into the same folder, the command line), the job **fails at once** with
    reason `folder_busy`; it is never run into a folder in use, and nothing in that folder is
    touched. (It never waits: the other export may run for hours. The requester submits a new job
-   later.)
+   later.) Two jobs of this add-in into the same folder are not a clash: jobs run one at a time,
+   so the second simply waits its turn in the queue and then carries on in that folder.
 6. The job runs exactly as an `autorun.json` job does (same export code, same `manifest.json`,
    `index.html`, `autorun.log` and `autorun-result.json` in `output_dir`), while the add-in keeps
    `<id>.status.json` up to date.

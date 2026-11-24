@@ -312,6 +312,13 @@ class JobHooks(autorun.Hooks):
         return self.service.cancel_path(self.job.id).exists()
 
     def progress(self, state):
+        # The heartbeat from the main thread too: while Fusion runs a job's export, the background
+        # watcher may not get to run at all (seen on Fusion 2706: the agent file kept the time the
+        # job started), so each step of the job keeps it fresh.
+        try:
+            self.service.beat(dict(by='job', job=self.job.id))
+        except Exception:
+            pass
         progress = self.status['progress']
         phase = state.get('phase')
         if phase == 'design':
@@ -377,9 +384,12 @@ class Service:
         write_json(self.agent_path, self.agent(busy))
         self.beaten = self.clock()
 
-    def beat(self, busy=None):
-        """The heartbeat: rewrite the agent file when HEARTBEAT_SECONDS have passed (or it is gone)."""
-        if self.beaten is None or self.clock() - self.beaten >= HEARTBEAT_SECONDS or not self.agent_path.is_file():
+    def beat(self, busy=None, every=0):
+        """The heartbeat: rewrite the agent file when HEARTBEAT_SECONDS have passed (or it is gone).
+        every: how often the caller comes back (the watcher's poll interval), so the file is
+        rewritten at the latest HEARTBEAT_SECONDS after the last time, not up to one interval later."""
+        if (self.beaten is None or self.clock() - self.beaten + every > HEARTBEAT_SECONDS
+                or not self.agent_path.is_file()):
             self.write_agent(busy)
 
     def remove_agent(self):

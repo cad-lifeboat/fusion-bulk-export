@@ -251,6 +251,45 @@ class ValidationTests(JobTestCase):
         self.assertEqual((folders.config['limit'], folders.config['f3z_bundles']), (3, True))
 
 
+class HeartbeatTests(JobTestCase):
+    def test_the_watcher_interval_never_makes_it_late(self):
+        # Polled every 3 s, the file is rewritten at most 10 s apart (not 12 s, as seen on Fusion).
+        clock = [100.0]
+        self.service.clock = lambda: clock[0]
+        self.service.write_agent(self.busy)
+        writes = []
+        original = self.service.write_agent
+
+        def recording(busy=None):
+            writes.append(clock[0])
+            return original(busy)
+        self.service.write_agent = recording
+        for _ in range(20):
+            clock[0] += 3
+            self.service.beat(self.busy, 3)
+        gaps = [later - earlier for earlier, later in zip([100.0] + writes, writes)]
+        self.assertTrue(gaps)
+        self.assertTrue(all(gap <= jobs.HEARTBEAT_SECONDS for gap in gaps), gaps)
+
+    def test_a_running_job_keeps_the_heartbeat_fresh_from_the_main_thread(self):
+        # The watcher thread may not run while Fusion exports: the job's own steps beat instead.
+        clock = [1000.0]
+        self.service.clock = lambda: clock[0]
+        self.service.write_agent(self.busy)
+        path = self.service.agents / 'fusion-bulk-export.json'
+        times = []
+        original = jobs.JobHooks.progress
+
+        def progress(hooks, state):
+            clock[0] += jobs.HEARTBEAT_SECONDS + 1  # each item takes longer than a heartbeat
+            original(hooks, state)
+            times.append(json.loads(path.read_bytes())['updated'])
+        self.submit()
+        with patch.object(jobs.JobHooks, 'progress', progress):
+            self.handle()
+        self.assertGreater(len(set(times)), 1)
+
+
 class RunTests(JobTestCase):
     def test_everything_runs_to_done_with_its_status(self):
         states = []
