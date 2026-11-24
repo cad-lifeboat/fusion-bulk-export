@@ -79,8 +79,8 @@ reads every `*.json` in `agents/` and picks an agent by its `exporter` and `feat
 | `pid` | Fusion's process id. |
 | `started` | When the add-in started in this Fusion. |
 | `updated` | Heartbeat, rewritten about every 10 s. |
-| `busy` | `null`, `"button"` (an export from the toolbar button is running) or `"job"`. |
-| `job` | Id of the protocol job running now, or `null`. |
+| `busy` | `null`, `"button"` (an export from the toolbar button is running) or `"job"` (a protocol job, or an `autorun.json` job from the command line). |
+| `job` | Id of the protocol job running now, or `null` (also while an `autorun.json` job runs). |
 | `jobs_dir` | Absolute path of the jobs folder. |
 | `features` | What this version supports; a job may use only these (see [Versioning](#versioning-and-compatibility)). |
 
@@ -244,7 +244,7 @@ When finished:
 | `progress.total` | Items the job will handle, when known: the design count for a design list (with the linked designs once found); for `"all"`, `null` until the whole account has been listed (the export works folder by folder as it lists). |
 | `progress.current` | Id (lineage URN) of the item in progress, or `null`. |
 | `progress.current_number` | Its 1-based number, or `null`. |
-| `counts` | The run counts, as in `manifest.json` `runs[].counts`. |
+| `counts` | The run counts, as in `manifest.json` `runs[].counts` (`null` until the first item, and for an inventory). |
 | `manifest` | Absolute path of `manifest.json` once the job is final (`done`, and `cancelled` or `failed` when an export was written); else `null`. Always `null` for an inventory. |
 | `inventory` | For `action: "inventory"`: absolute path of `inventory.json` once the job is `done`; else `null`. Absent for an export. |
 | `result` | Absolute path of the job's `autorun-result.json`, once written. |
@@ -262,7 +262,7 @@ Reason codes:
 | `unsupported_protocol` | failed | `protocol` is not in the agent's `protocols`. | Use a protocol the agent lists, or update the add-in. |
 | `folder_busy` | failed | Another export holds `output_dir/export.lock`. | Submit again later. |
 | `output_unusable` | failed | Fusion cannot create or write `output_dir` (a network drive not connected in Fusion's session, no permission). | Use another folder. |
-| `not_found` | failed | A hub, project, folder or design id is not in the account. | Fix the ids (run an `inventory` job). |
+| `not_found` | failed | A hub, project, folder or design id the job names is not in the account. (A linked design that cannot be found is no failure: it is left out, and the assembly's link has `path: null`.) | Fix the ids (run an `inventory` job). |
 | `not_signed_in` | failed | No hubs appeared within `hub_timeout_seconds`. | Ask the person to sign in to Fusion. |
 | `failing` | failed | 5 designs in a row failed (offline, signed out). | Check sign-in; resubmit (it resumes). |
 | `disk_full`, `output_missing`, `output_unwritable` | failed | The folder filled up, went away, or cannot be written. | Fix; resubmit. |
@@ -285,14 +285,16 @@ The requester creates an empty file `jobs/<id>.cancel`.
 
 After a job is final the requester deletes `<id>.json`, `<id>.status.json` and `<id>.cancel`
 (the requester owns the job; the add-in never deletes job files). Deleting a job file while its
-job is `queued` withdraws it (it is not run); deleting it while `running` changes nothing (use
+job is `queued` withdraws it (it is not run; its status becomes `cancelled`); deleting it while `running` changes nothing (use
 `.cancel`).
 
 ### Add-in restarts
 
-When the add-in starts, it looks at status files that are not final and name another `agent_pid`
-whose process is gone: a `running` one becomes `failed` with reason `interrupted`; a `queued` one
-is taken over (its `agent_pid` updated) and runs in turn.
+When the add-in starts, it looks at status files that are not final and name an `agent_pid` whose
+process is gone (or its own: the add-in was switched off and on again in the same Fusion): a
+`running` one becomes `failed` with reason `interrupted` (`exit_code` 77); a `queued` one is taken
+over (its `agent_pid` updated) and runs in turn. A status of another Fusion that is still running
+is left alone.
 
 ## Mapping onto the existing `autorun.json` job
 
@@ -309,7 +311,7 @@ minus reading `autorun.json`).
 | `projects` | `projects` | Exists. |
 | `folders` (`{project, folder}`) | `folders: {project: [{"id": folder}]}` | Exists (by id). |
 | `hubs` | none | **New**: a hub filter (`select_projects` by hub id). Small. |
-| `designs: [lineage URN...]` | none | **New** (code needed): find each design by id (`Data.findFileById`), its project and folder path from its parents, and export exactly those files; with `include_references`, add the designs each links to (`childReferences`, recursively, each once). `progress.total` comes from this list. |
+| `designs: [lineage URN...]` | none | **New**: find each design by id (`Data.findFileById`; its `latestVersion` when Fusion hands out an older one), its folder path from `DataFile.parentFolder` up to the root, its project (`parentProject`) and hub (`parentHub`), and export exactly those files in that layout; with `include_references`, add the designs each links to (`childReferences`, recursively, each once). `progress.total` comes from this list. |
 | `include_references` | none | **New** (with the design list). |
 | `formats` | `step`, `archive` (true/false) | `"step"` in `formats` ⇔ `step: true`; `"f3d"` in `formats` ⇔ `archive: true` (**new** setting: `false` writes no `.f3d`). |
 | `rebuilt_f3z` | `f3z_bundles` | Renamed. |
@@ -331,7 +333,7 @@ minus reading `autorun.json`).
 - The add-in reads jobs only from `~/.cad-export/jobs` of the user running Fusion, and writes only
   there, in `~/.cad-export/agents`, and inside each job's `output_dir`.
 - It skips (and never claims) a job file that is a symbolic link, is not a regular file, is
-  larger than 1 MB, or (macOS) is not owned by the user running Fusion. It creates its folders
+  larger than 1 MB, or (macOS, Linux) is not owned by the user running Fusion. It creates its folders
   owner-only.
 - A job can only ask for this add-in's own export or inventory. No field is ever run as a
   command, loaded as code or used as a URL; paths in a job are used only as the export folder.

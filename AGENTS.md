@@ -123,6 +123,11 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
 - **"Fusion is busy"**: the person is exporting with the button. Only one export runs at a
   time; wait until their export has ended (its summary message appears), then run the same
   command again. The busy answer never touches the running export's folder.
+- **The command keeps waiting although the add-in is on**: another program on this computer
+  may have asked the add-in for an export (job protocol, `docs/job-protocol.md`):
+  `~/.cad-export/agents/fusion-bulk-export.json` then shows `"busy": "job"`. Your job starts
+  when that one has ended. Never delete or edit files in `~/.cad-export`: they belong to that
+  program.
 - **"The add-in failed to start"** plus a traceback: the Run switch springs back off.
   Report the error type (not paths with the person's name in them) and stop.
 - **"Stopped by itself"** in `status`: the code says why. `failing` means 5 designs in a

@@ -237,12 +237,30 @@ python3 scripts/autorun.py stop ~/FusionExport                           # pause
 - If you stop the command (Ctrl-C) or it times out before Fusion started the job, it withdraws the job and says so in one line, so Fusion does not run it later by itself. A job Fusion already started carries on; use `stop` to pause it.
 - `diagnostics <folder>` records which export functions your Fusion build has, for bug reports. `reset` only clears job files left behind by an earlier version.
 
+## For other programs
+
+Another program on the same computer (an importer, a backup tool) can ask the running add-in to
+export, without the command line: it writes a small job file into `~/.cad-export/jobs`
+(`%USERPROFILE%\.cad-export\jobs` on Windows), and the add-in runs it in Fusion, one job at a
+time, and keeps a status file beside it with the progress and the result. A job can ask for
+everything, some hubs, projects or folders, or a list of designs by id (with the designs they
+link to); for `.f3d`, STEP or both; and can be cancelled. While Fusion runs with the add-in on,
+`~/.cad-export/agents/fusion-bulk-export.json` says so. The add-in still only reads from your
+Fusion account, and a job can only ask for its own export, into a folder.
+
+- [docs/job-protocol.md](docs/job-protocol.md): the agent, job and status files, and how to
+  install a pinned release (each release also has `FusionBulkExport-X.Y.Z.zip.sha256` and
+  `FusionBulkExport-release.json`).
+- [docs/manifest-schema.md](docs/manifest-schema.md): how to read an export folder's
+  `manifest.json` (`schema_id` `cad-export-manifest/1`), with a JSON Schema in
+  [docs/manifest-schema.json](docs/manifest-schema.json).
+
 ## Developers
 
 - Tests: `python3 -m unittest discover -s tests` (a simulated Fusion API; no Fusion needed) and `node tests/tree_logic_test.js`. CI runs them on macOS, Windows and Linux.
 - Install a checkout into Fusion: `python3 scripts/install.py` (`--uninstall` removes it). It replaces whatever is installed and writes `install-stamp.json` (version and a hash of the files; the release zip carries the same one), which the command line compares with its checkout.
 - The results dialog can be switched off (`DIALOG_ENABLED` in `fusion_bulk_export/results.py`); the summary is then a plain message. Its page is written for each run into the add-in's app-data folder (beside `settings.json`) and deleted when the dialog closes or at the next start.
-- Release zip: `python3 scripts/package.py` writes `dist/FusionBulkExport-<version>.zip`. `python3 scripts/release.py prepare X.Y.Z` sets the version, moves the changelog's Unreleased section, runs the tests and builds the zip; it prints the publishing commands without running them.
+- Release zip: `python3 scripts/package.py` writes `dist/FusionBulkExport-<version>.zip`. `python3 scripts/release.py prepare X.Y.Z` sets the version, moves the changelog's Unreleased section, runs the tests and builds the zip with its `.sha256` and `FusionBulkExport-release.json`; it prints the publishing commands without running them.
 - Pictures: `python3 docs/cards.py` regenerates the banner and social preview, `python3 docs/screens.py` the dialog illustrations (both need `cairosvg` for PNGs; without it they write SVG only).
 
 MIT licensed; see [LICENSE](LICENSE). See also [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
