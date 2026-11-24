@@ -68,12 +68,36 @@ class ReleaseTests(unittest.TestCase):
         notes = (self.root / 'dist' / 'release-notes-0.3.0.md').read_text(encoding='utf-8')
         self.assertEqual(notes, '- New thing.\n- Fixed thing.\n')
 
+    def test_writes_checksum_and_release_json_beside_the_zip(self):
+        import hashlib
+        import json
+        target = self.prepare('0.3.0')
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        dist = self.root.resolve() / 'dist'
+        # sha256sum format: hash, two spaces, the file name, a newline (no CR, any platform).
+        self.assertEqual((dist / 'FusionBulkExport-0.3.0.zip.sha256').read_bytes(),
+                         ('%s  FusionBulkExport-0.3.0.zip\n' % digest).encode('ascii'))
+        info = json.loads((dist / 'FusionBulkExport-release.json').read_bytes().decode('utf-8'))
+        self.assertEqual(info, dict(
+            version='0.3.0', sha256=digest, protocol=1,
+            zip_url='https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/v0.3.0/'
+                    'FusionBulkExport-0.3.0.zip'))
+        from fusion_bulk_export import jobs
+        self.assertEqual(info['protocol'], jobs.PROTOCOL)
+
+    def test_missing_protocol_line_is_an_error(self):
+        (self.root / 'FusionBulkExport' / 'fusion_bulk_export' / 'jobs.py').write_text('X = 1\n', encoding='utf-8')
+        with self.assertRaises(release.ReleaseError):
+            self.prepare('0.3.0')
+        self.assertEqual(self.manifest.read_text(encoding='utf-8'), MANIFEST)  # restored
+
     def test_prints_publish_commands_without_running_them(self):
         self.prepare('0.3.0')
         printed = '\n'.join(self.lines)
         self.assertIn('git tag -a v0.3.0', printed)
         self.assertIn('git push origin HEAD v0.3.0', printed)
-        self.assertIn('gh release create v0.3.0 "dist/FusionBulkExport-0.3.0.zip"', printed)
+        self.assertIn('gh release create v0.3.0 "dist/FusionBulkExport-0.3.0.zip" '
+                      '"dist/FusionBulkExport-0.3.0.zip.sha256" "dist/FusionBulkExport-release.json"', printed)
         self.assertIn('--notes-file "dist/release-notes-0.3.0.md"', printed)
         self.assertFalse((self.root / '.git').exists())
 

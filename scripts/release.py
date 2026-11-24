@@ -6,11 +6,17 @@
 1. Sets "version" in FusionBulkExport/FusionBulkExport.manifest to X.Y.Z.
 2. Renames the "## Unreleased" section of CHANGELOG.md to "## X.Y.Z".
 3. Runs the tests (python -m unittest discover -s tests); on failure both files are restored.
-4. Builds dist/FusionBulkExport-X.Y.Z.zip and dist/release-notes-X.Y.Z.md.
-5. Prints the git and GitHub commands that commit, tag and publish it. It runs none of
-   them: nothing here touches the network.
+4. Builds dist/FusionBulkExport-X.Y.Z.zip and dist/release-notes-X.Y.Z.md, and beside the zip
+   dist/FusionBulkExport-X.Y.Z.zip.sha256 (one line, sha256sum format) and
+   dist/FusionBulkExport-release.json ({version, zip_url, sha256, protocol}: the same name in
+   every release, so other programs can read the newest one from
+   releases/latest/download/FusionBulkExport-release.json; see docs/job-protocol.md).
+5. Prints the git and GitHub commands that commit, tag and publish it (all three assets). It
+   runs none of them: nothing here touches the network.
 """
 import argparse
+import hashlib
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -24,6 +30,12 @@ VERSION = re.compile(r'^\d+\.\d+\.\d+$')
 MANIFEST_VERSION = re.compile(r'("version"\s*:\s*")([^"]*)(")')
 UNRELEASED = re.compile(r'^## Unreleased[ \t]*$', re.MULTILINE)
 NEXT_HEADING = re.compile(r'^## ', re.MULTILINE)
+# Where each release's zip is downloaded from (docs/job-protocol.md, "Installing the add-in").
+RELEASES = 'https://github.com/cad-lifeboat/fusion-bulk-export/releases/download'
+RELEASE_JSON = 'FusionBulkExport-release.json'
+# The job protocol the add-in accepts, read from the add-in's own source (one place to change).
+JOBS_SOURCE = Path('FusionBulkExport') / 'fusion_bulk_export' / 'jobs.py'
+PROTOCOL_LINE = re.compile(r'^PROTOCOL = (\d+)\s*$', re.MULTILINE)
 
 
 class ReleaseError(Exception):
@@ -63,15 +75,45 @@ def run_tests(root):
     return subprocess.call([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests'], cwd=str(root)) == 0
 
 
-def commands(new, zip_path, notes_path, root):
-    zip_rel = zip_path.relative_to(root).as_posix() if root in zip_path.parents else str(zip_path)
-    notes_rel = notes_path.relative_to(root).as_posix() if root in notes_path.parents else str(notes_path)
+def protocol(root):
+    """The job protocol version the add-in in root accepts (jobs.PROTOCOL)."""
+    match = PROTOCOL_LINE.search((Path(root) / JOBS_SOURCE).read_text(encoding='utf-8'))
+    if not match:
+        raise ReleaseError('No "PROTOCOL = <number>" line in %s.' % JOBS_SOURCE.as_posix())
+    return int(match.group(1))
+
+
+def sha256_of(path):
+    sha = hashlib.sha256()
+    with open(str(path), 'rb') as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
+def release_assets(new, zip_path, root):
+    """Write <zip>.sha256 (sha256sum format) and FusionBulkExport-release.json beside the zip.
+    Returns (sha256 path, release.json path)."""
+    digest = sha256_of(zip_path)
+    sha_path = zip_path.with_name(zip_path.name + '.sha256')
+    sha_path.write_bytes(('%s  %s\n' % (digest, zip_path.name)).encode('ascii'))
+    info = dict(version=new, zip_url='%s/v%s/%s' % (RELEASES, new, zip_path.name), sha256=digest,
+                protocol=protocol(root))
+    json_path = zip_path.with_name(RELEASE_JSON)
+    json_path.write_bytes((json.dumps(info, indent=2) + '\n').encode('utf-8'))
+    return sha_path, json_path
+
+
+def commands(new, zip_path, notes_path, root, assets=()):
+    def relative(path):
+        return path.relative_to(root).as_posix() if root in path.parents else str(path)
+    files = ' '.join('"%s"' % relative(path) for path in [zip_path] + list(assets))
     return [
         'git add FusionBulkExport/FusionBulkExport.manifest CHANGELOG.md',
         'git commit -m "%s"' % new,
         'git tag -a v%s -m "%s"' % (new, new),
         'git push origin HEAD v%s' % new,
-        'gh release create v%s "%s" --title "%s" --notes-file "%s"' % (new, zip_rel, new, notes_rel),
+        'gh release create v%s %s --title "%s" --notes-file "%s"' % (new, files, new, relative(notes_path)),
     ]
 
 
@@ -96,6 +138,7 @@ def prepare(new, root=ROOT, out_dir=None, tests=run_tests, echo=print):
         if not tests(root):
             raise ReleaseError('Tests failed.')
         zip_path = package.build(out_dir, root)
+        assets = release_assets(new, zip_path, root)
     except BaseException:
         manifest_path.write_text(manifest_before, encoding='utf-8')
         changelog_path.write_text(changelog_before, encoding='utf-8')
@@ -104,10 +147,12 @@ def prepare(new, root=ROOT, out_dir=None, tests=run_tests, echo=print):
     notes_path = out_dir / ('release-notes-%s.md' % new)
     notes_path.write_text(notes + '\n', encoding='utf-8')
     echo('Built %s' % zip_path)
+    echo('Checksum: %s' % assets[0])
+    echo('Release info: %s' % assets[1])
     echo('Release notes: %s' % notes_path)
     echo('')
     echo('Check the diff (git diff), then publish with:')
-    for line in commands(new, zip_path, notes_path, root):
+    for line in commands(new, zip_path, notes_path, root, assets):
         echo('  ' + line)
     return zip_path
 
