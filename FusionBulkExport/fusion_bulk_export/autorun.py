@@ -79,6 +79,10 @@ from .report import memory_line, write as write_report
 from .words import plural
 
 
+# The documented schema inventory.json follows (docs/inventory-schema.md); additive changes keep /1.
+INVENTORY_SCHEMA_ID = 'cad-export-inventory/1'
+
+
 class NotFound(ValueError):
     """A hub, project, folder or design id the job names is not in the account."""
 
@@ -418,7 +422,7 @@ def inventory(data, log, stop=lambda: False, output=None):
     def summary():
         projects = [p for h in hubs.values() for p in h['projects'].values()]
         files = [f for p in projects for f in p['files']]
-        return dict(hubs=hubs, unreadable=errors, stopped=stopped,
+        return dict(schema_id=INVENTORY_SCHEMA_ID, hubs=hubs, unreadable=errors, stopped=stopped,
                     counts=dict(hubs=len(hubs), projects=len(projects), files=len(files),
                                 designs=sum(1 for f in files if f['extension'].lower() == 'f3d'),
                                 links_out_of_date=sum(1 for f in files if f.get('references_out_of_date')),

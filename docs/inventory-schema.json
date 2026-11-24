@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cad-export-inventory/1",
+  "title": "Account listing (cad-export-inventory/1)",
+  "description": "inventory.json written by a Fusion Bulk Export inventory. See inventory-schema.md. Unknown fields are allowed everywhere: additive changes keep /1. A file without schema_id (0.3.5 and earlier) has the same layout.",
+  "type": "object",
+  "required": ["hubs", "unreadable", "stopped", "counts"],
+  "properties": {
+    "schema_id": {"const": "cad-export-inventory/1"},
+    "hubs": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/hub"}
+    },
+    "unreadable": {"type": "array", "items": {"$ref": "#/$defs/unreadable"}},
+    "stopped": {"type": "boolean"},
+    "counts": {"$ref": "#/$defs/counts"}
+  },
+  "$defs": {
+    "hub": {
+      "type": "object",
+      "required": ["name", "projects"],
+      "properties": {
+        "name": {"type": "string"},
+        "projects": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/project"}
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": ["name", "files"],
+      "properties": {
+        "name": {"type": "string"},
+        "files": {"type": "array", "items": {"$ref": "#/$defs/file"}}
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["id", "name", "path", "folder_ids", "extension", "version"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "description": "Cloud id; for a design its lineage URN"},
+        "name": {"type": "string"},
+        "path": {"type": "array", "items": {"type": "string"}},
+        "folder_ids": {"type": "array", "items": {"type": ["string", "null"]}},
+        "extension": {"type": "string"},
+        "version": {"type": "integer", "minimum": 0},
+        "has_references": {"type": ["boolean", "null"]},
+        "references_out_of_date": {"type": ["boolean", "null"]},
+        "references_unreadable": {"const": true},
+        "references_error": {"type": "string"}
+      },
+      "dependentRequired": {"references_error": ["references_unreadable"]}
+    },
+    "unreadable": {
+      "type": "object",
+      "required": ["path", "error"],
+      "properties": {
+        "path": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "error": {"type": "string"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": ["hubs", "projects", "files", "designs", "links_out_of_date", "links_unreadable", "unreadable"],
+      "properties": {
+        "hubs": {"$ref": "#/$defs/count"},
+        "projects": {"$ref": "#/$defs/count"},
+        "files": {"$ref": "#/$defs/count"},
+        "designs": {"$ref": "#/$defs/count"},
+        "links_out_of_date": {"$ref": "#/$defs/count"},
+        "links_unreadable": {"$ref": "#/$defs/count"},
+        "unreadable": {"$ref": "#/$defs/count"}
+      }
+    },
+    "count": {"type": "integer", "minimum": 0}
+  }
+}

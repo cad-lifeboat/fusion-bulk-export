@@ -65,6 +65,8 @@ class AutorunTests(unittest.TestCase):
         self.assertEqual(result['counts'], dict(hubs=1, projects=2, files=4, designs=3, links_out_of_date=0,
                                                 links_unreadable=0, unreadable=0))
         listing = json.loads((self.output / 'inventory.json').read_text(encoding='utf-8'))
+        self.assertEqual(list(listing)[0], 'schema_id')  # first, as in manifest.json
+        self.assertEqual(listing['schema_id'], 'cad-export-inventory/1')
         files = listing['hubs']['hub-1']['projects']['project-1']['files']
         self.assertEqual(len(files), 3)
         self.assertEqual((files[0]['has_references'], files[0]['references_out_of_date']), (False, False))

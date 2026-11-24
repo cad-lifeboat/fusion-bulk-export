@@ -254,6 +254,10 @@ Fusion account, and a job can only ask for its own export, into a folder.
 - [docs/manifest-schema.md](docs/manifest-schema.md): how to read an export folder's
   `manifest.json` (`schema_id` `cad-export-manifest/1`), with a JSON Schema in
   [docs/manifest-schema.json](docs/manifest-schema.json).
+- [docs/inventory-schema.md](docs/inventory-schema.md): how to read `inventory.json` (every hub,
+  project and design with ids and versions, from an inventory; `schema_id`
+  `cad-export-inventory/1`), with a JSON Schema in
+  [docs/inventory-schema.json](docs/inventory-schema.json).
 
 ## Developers
 
