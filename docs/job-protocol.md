@@ -1,6 +1,7 @@
 # Job protocol 1: asking the running add-in to export
 
-Status: draft for review. Nothing here is implemented yet except where it says "exists today".
+Status: protocol 1, implemented by the add-in from the release after 0.3.5. Draft until that
+release is out: details may still change.
 
 Another program on the same computer, run by the same person, can ask Fusion Bulk Export (running
 inside that person's Fusion) to export their designs into a folder, follow its progress, cancel
@@ -20,7 +21,8 @@ design list.
 ```
 ~/.cad-export/                      Windows: %USERPROFILE%\.cad-export\
   agents/
-    fusion-bulk-export.json         the running add-in announces itself (written by the add-in)
+    <agent id>.json                 the running add-in announces itself (written by the add-in);
+                                    this add-in's agent id is fusion-bulk-export
   jobs/
     <job id>.json                   a job (written by the other program, never changed by the add-in)
     <job id>.status.json            its state and progress (written by the add-in only)
@@ -42,8 +44,9 @@ design list.
 ## Discovery: the agent file
 
 While Fusion runs with the add-in switched on, the add-in keeps
-`~/.cad-export/agents/fusion-bulk-export.json` up to date, and removes it when the add-in stops
-(Fusion closing, or the person switching it off).
+`~/.cad-export/agents/<agent id>.json` (for this add-in `fusion-bulk-export.json`) up to date, and
+removes it when the add-in stops (Fusion closing, or the person switching it off). A requester
+reads every `*.json` in `agents/` and picks an agent by its `exporter` and `features`.
 
 ```json
 {
@@ -60,7 +63,8 @@ While Fusion runs with the add-in switched on, the add-in keeps
   "busy": null,
   "job": null,
   "jobs_dir": "/Users/someone/.cad-export/jobs",
-  "features": ["export", "inventory", "designs_by_id", "step", "f3z_bundles", "tool_libraries", "older_versions", "cancel"]
+  "features": ["export", "inventory", "designs_by_id", "include_references", "hubs", "step", "step_only",
+               "f3z_bundles", "tool_libraries", "older_versions", "cancel"]
 }
 ```
 
@@ -111,9 +115,7 @@ never changes, renames or deletes it.
   "include_references": true,
   "formats": ["f3d", "step"],
   "rebuilt_f3z": true,
-  "older_versions": "move",
-  "tool_libraries": false,
-  "designs_only": true
+  "older_versions": "move"
 }
 ```
 
@@ -126,14 +128,14 @@ never changes, renames or deletes it.
 | `action` | string | `"export"` | `"export"`, or `"inventory"`: list every hub, project and design with ids and versions into `output_dir/inventory.json`, opening nothing (gives the ids a design list needs). |
 | `output_dir` | string | required | Absolute path of the export folder. The same folder resumes an earlier export. |
 | `designs` | `"all"` or array | `"all"` | `"all"`: everything the account holds, narrowed by `hubs`, `projects`, `folders`. Or a list of design ids (lineage URNs, as in `manifest.json` `entries[].id` and `inventory.json`): only those designs (their current version). |
-| `include_references` | boolean | `true` | With a design list: also export every design those link to, and theirs (so assemblies are complete and their `.f3z` can be built). |
+| `include_references` | boolean | `true` | With a design list: also export every design those link to, and theirs, each once (so assemblies are complete and their `.f3z` can be built). Each linked design is exported at its current version, as an export of everything does; the version a link names is in `manifest.json` `references[].version`. Ignored with `"all"`. |
 | `hubs` | array of strings | all | Hub ids. Only with `designs: "all"`. |
 | `projects` | array of strings | all | Project ids. Only with `designs: "all"`. |
 | `folders` | array | all | `{"project": project id, "folder": folder id}` each: that folder and its subfolders. Only with `designs: "all"`. |
-| `formats` | array | `["f3d", "step"]` | Must contain `"f3d"` (the archive is always written). `"step"` adds the STEP file. Nothing else in protocol 1. |
-| `rebuilt_f3z` | boolean | `false` | Build an `.f3z` beside each assembly's `.f3d` from the exported files, at the end. |
+| `formats` | array | `["f3d", "step"]` | `["f3d", "step"]` (both), `["f3d"]` (the archive only) or `["step"]` (shapes only: no `.f3d` is written; see [STEP only](#step-only)). Nothing else in protocol 1; no duplicates. |
+| `rebuilt_f3z` | boolean | `false` | Build an `.f3z` beside each assembly's `.f3d` from the exported files, at the end. Needs `"f3d"` in `formats`. |
 | `older_versions` | string | `"move"` | What happens to the files of a design's older versions in the folder once its newest is saved: `"move"` into `Older versions/`, `"keep"`, `"delete"` (cannot be undone; only when the person asked for it). |
-| `tool_libraries` | boolean or `"only"` | `true` | Also save the person's CAM tool libraries; `"only"`: only them. |
+| `tool_libraries` | boolean or `"only"` | `true` with `designs: "all"`, `false` with a design list | Also save the person's CAM tool libraries; `"only"`: only them (only with `"all"`). |
 | `designs_only` | boolean | `false` | Leave out other files (PDFs, uploads). Implied by a design list. |
 | `max_designs` | integer ≥ 1 | none | Stop after exporting this many designs (those already up to date do not count). |
 | `memory_guard` | boolean | `true` | `false` switches off the stop when Fusion holds too much memory. |
@@ -141,7 +143,21 @@ never changes, renames or deletes it.
 | `x-*` | any | | Fields starting with `x-` are the requester's own; ignored. |
 
 Any other field makes the job invalid (status `failed`, reason `invalid_job`, the message naming
-the field). A requester checks the agent file's `features` before using a field added later.
+the field), and so does a field of the wrong type or a combination that cannot work (`hubs`,
+`projects` or `folders` with a design list, `rebuilt_f3z` without `"f3d"`, `tool_libraries:
+"only"` with a design list, `action: "inventory"` with a design list). A requester checks the
+agent file's `features` before using a field added later.
+
+#### STEP only
+
+`formats: ["step"]` writes each design's STEP file and its thumbnail, but no `.f3d`. Its
+`manifest.json` entry says so honestly: `"archive": "off"`, and its `files` hold the `step` role
+only (no `archive`). The design's links are still recorded in `references`, but their `path` is
+`null` (they name `.f3d` files), and no `.f3z` can be built. If Fusion cannot write the STEP, the
+design has nothing to show for it and is `failed`. A design exported earlier with its `.f3d`
+counts as up to date (nothing is deleted); a design exported STEP-only is exported again by a
+later job that asks for `"f3d"`. `python3 scripts/autorun.py check` checks a STEP-only entry's
+STEP and counts it as "f3d not requested".
 
 ### Claiming, queueing and running
 
@@ -158,8 +174,9 @@ the field). A requester checks the agent file's `features` before using a field 
    the status message says so.
 5. Before running, the add-in checks `output_dir/export.lock`. If another export holds it (another
    Fusion, the button into the same folder, the command line), the job **fails at once** with
-   reason `folder_busy`; it is never run into a folder in use. (It does not wait: the other
-   export may run for hours. The requester submits a new job later.)
+   reason `folder_busy`; it is never run into a folder in use, and nothing in that folder is
+   touched. (It never waits: the other export may run for hours. The requester submits a new job
+   later.)
 6. The job runs exactly as an `autorun.json` job does (same export code, same `manifest.json`,
    `index.html`, `autorun.log` and `autorun-result.json` in `output_dir`), while the add-in keeps
    `<id>.status.json` up to date.
@@ -228,7 +245,8 @@ When finished:
 | `progress.current` | Id (lineage URN) of the item in progress, or `null`. |
 | `progress.current_number` | Its 1-based number, or `null`. |
 | `counts` | The run counts, as in `manifest.json` `runs[].counts`. |
-| `manifest` | Absolute path of `manifest.json` once the job is final (`done`, and `cancelled` or `failed` when an export was written); else `null`. |
+| `manifest` | Absolute path of `manifest.json` once the job is final (`done`, and `cancelled` or `failed` when an export was written); else `null`. Always `null` for an inventory. |
+| `inventory` | For `action: "inventory"`: absolute path of `inventory.json` once the job is `done`; else `null`. Absent for an export. |
 | `result` | Absolute path of the job's `autorun-result.json`, once written. |
 | `exit_code` | What the command-line launcher would exit with: `0` done, `1` failed, `75` memory, `77` Fusion closed mid-job, `130` cancelled. `null` until final. |
 
@@ -293,10 +311,10 @@ minus reading `autorun.json`).
 | `hubs` | none | **New**: a hub filter (`select_projects` by hub id). Small. |
 | `designs: [lineage URN...]` | none | **New** (code needed): find each design by id (`Data.findFileById`), its project and folder path from its parents, and export exactly those files; with `include_references`, add the designs each links to (`childReferences`, recursively, each once). `progress.total` comes from this list. |
 | `include_references` | none | **New** (with the design list). |
-| `formats` | `step` (true/false) | `"step"` in `formats` ⇔ `step: true`. |
+| `formats` | `step`, `archive` (true/false) | `"step"` in `formats` ⇔ `step: true`; `"f3d"` in `formats` ⇔ `archive: true` (**new** setting: `false` writes no `.f3d`). |
 | `rebuilt_f3z` | `f3z_bundles` | Renamed. |
 | `older_versions` | `older_versions` | Exists. |
-| `tool_libraries` | `tool_libraries` | Exists. |
+| `tool_libraries` | `tool_libraries` | Exists; a design list defaults it to `false`. |
 | `designs_only` | `designs_only` | Exists. |
 | `max_designs` | `limit` | Renamed. |
 | `memory_guard` | `memory_guard` | Exists. |
@@ -329,16 +347,32 @@ minus reading `autorun.json`).
 
 ## Installing the add-in
 
-- Releases are on the project's GitHub releases page. Asset name, unchanged:
-  `FusionBulkExport-X.Y.Z.zip` (tag `vX.Y.Z`). New beside it:
-  `FusionBulkExport-X.Y.Z.zip.sha256`, one line in the usual `sha256sum` format:
-  `<64 lowercase hex>  FusionBulkExport-X.Y.Z.zip`.
-- URLs: a given version is
-  `https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/vX.Y.Z/FusionBulkExport-X.Y.Z.zip` (and
-  `.sha256`). The newest: `https://github.com/cad-lifeboat/fusion-bulk-export/releases/latest` redirects to
-  `.../releases/tag/vX.Y.Z`, which gives the version without the API. (A
-  `releases/latest/download/<name>` URL needs a name without the version; see open questions.)
-- Check the SHA-256 of the zip against the `.sha256` file before using it.
+- Releases are on the project's GitHub releases page (tag `vX.Y.Z`). Each release has three
+  assets:
+  - `FusionBulkExport-X.Y.Z.zip`: the add-in (name unchanged).
+  - `FusionBulkExport-X.Y.Z.zip.sha256`: one line in the usual `sha256sum` format,
+    `<64 lowercase hex>  FusionBulkExport-X.Y.Z.zip`.
+  - `FusionBulkExport-release.json` (the same name in every release):
+
+    ```json
+    {
+      "version": "0.3.6",
+      "zip_url": "https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/v0.3.6/FusionBulkExport-0.3.6.zip",
+      "sha256": "<64 lowercase hex of the zip>",
+      "protocol": 1
+    }
+    ```
+
+    `version` and `zip_url` name that release's zip, `sha256` is its SHA-256, `protocol` the
+    highest job protocol it accepts. `min_fusion` (a Fusion version string), when present, is the
+    oldest Fusion it supports; absent means no known minimum.
+- A requester **pins** the version it installs: it downloads
+  `https://github.com/cad-lifeboat/fusion-bulk-export/releases/download/vX.Y.Z/FusionBulkExport-X.Y.Z.zip`
+  (and `.sha256`) for the version it was tested with. It uses
+  `https://github.com/cad-lifeboat/fusion-bulk-export/releases/latest/download/FusionBulkExport-release.json`
+  only to tell the person "a newer exporter is available"; it never installs that one by itself.
+- Check the SHA-256 of the zip against the `.sha256` file (or `release.json`'s `sha256`) before
+  using it.
 - The zip holds `FusionBulkExport-X.Y.Z/FusionBulkExport/`: that folder is the add-in (with
   `FusionBulkExport.manifest` holding `version`, and `install-stamp.json` with the version and a
   hash of its files). Install it as `scripts/install.py` does: copy it to a temporary folder

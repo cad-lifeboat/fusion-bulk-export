@@ -26,8 +26,9 @@ reading it must not send it, or anything quoted from it, anywhere else.
 - `exporter` (object): `name` is always `"fusion-bulk-export"`; `version` is the add-in version
   (or command-line tool version) that last wrote the file.
 
-`schema_id` and `exporter` are new (a small code change, not in 0.3.4). A reader must accept a
-file without them: `schema: 2` without `schema_id` reads as `cad-export-manifest/1`.
+`schema_id` and `exporter` are written on every save from the release after 0.3.5. A reader
+must accept a file without them (older folders): `schema: 2` without `schema_id` reads as
+`cad-export-manifest/1`.
 
 Rules:
 - **Additive changes keep `/1`**: a new optional field, a new value of `role`, a new key in
@@ -108,6 +109,7 @@ exported (`v3`, then `v4`); older versions stay in the list with status `done` (
 | `files` | array | yes | Files written for this item: see [files](#files). Empty unless `status` is `done` (or partly, `moved`/`removed`). |
 | `thumbnail` | object | yes | The design's thumbnail, same shape as a `files[]` item with role `thumbnail`. Optional. |
 | `step` | string | yes | Absent when the STEP was written. `"off"`: the run did not ask for STEP. `"failed"`: Fusion could not write it (`step_error` says why); the `.f3d` is still there. |
+| `archive` | string | yes | Absent when the `.f3d` was written. `"off"`: the run asked for STEP only (a job's `formats: ["step"]`): `files` hold the STEP and no `archive`. (New; never `"off"` together with `step`.) |
 | `references` | array or null | yes | Designs this design links to: see [references](#references). `null`: they could not be read. Absent: not recorded (other files; very old entries). |
 | `has_references` | boolean or null | yes | Fusion says the design has links. `null`: unknown. |
 | `references_out_of_date` | boolean or null | yes | Fusion says some links point at older versions of the linked designs. |
@@ -157,8 +159,8 @@ Each item of `files` (and `thumbnail`, and `f3z` with extra fields) is:
 
 | `role` | Where | Meaning |
 |---|---|---|
-| `archive` | design `files` | The design's `.f3d` as Fusion wrote it. Exactly one per `done` design. |
-| `step` | design `files` | The design's `.step` (all solid bodies, linked parts included). One per `done` design unless `step` is `"off"` or `"failed"`. |
+| `archive` | design `files` | The design's `.f3d` as Fusion wrote it. Exactly one per `done` design, unless `archive` is `"off"` (none). |
+| `step` | design `files` | The design's `.step` (all solid bodies, linked parts included). One per `done` design unless `step` is `"off"` or `"failed"`; always one when `archive` is `"off"`. |
 | `thumbnail` | `thumbnail` | The design's `.png` thumbnail. |
 | `file` | other-file `files` | The other file, as Fusion hands it out. Exactly one per `done` other file. |
 | `f3z_bundle` | `f3z` | The `.f3z` built beside an assembly. |
@@ -249,6 +251,7 @@ One object per run, appended at its start. Stable fields:
 | `found` | integer | Items found in the run. |
 | `selection` | string | What was asked for (`everything`, or a description). |
 | `step`, `other_files`, `f3z_bundles` | boolean | The run's options. |
+| `archive` | boolean | The run wrote `.f3d` files (`false`: STEP only). New; absent in older runs (read as `true`). |
 | `older_versions` | string | `move`, `keep` or `delete`. |
 | `limit_reached` | boolean | The run stopped at its design limit. |
 | `discovery_errors` | array | Folders that could not be read: `{path, error}`. |
@@ -291,7 +294,7 @@ How the usual questions of another program map onto the fields above.
 | Which designs are in the export? | Entries with `kind == "design"` and `status == "done"`; for each `id`, the one with the highest `version` (older versions kept beside are `done` too). |
 | A design's id | `entry.id`, its lineage URN. |
 | Its version and name | `entry.version`, `entry.name`. |
-| Its `.f3d` | `entry.files[]` item with `role == "archive"`: `path`. |
+| Its `.f3d` | `entry.files[]` item with `role == "archive"`: `path`. None when `entry.archive` is `"off"` (STEP only). |
 | Its STEP | `entry.files[]` item with `role == "step"`; none when `entry.step` is `"off"` or `"failed"`. |
 | Its rebuilt `.f3z` | `entry.f3z.path` (assemblies only, when bundles were asked for); `entry.f3z_not_built` says why there is none. |
 | Part or assembly? | Assembly when `entry.references` is a non-empty list; part otherwise. `has_references: true` with `references` null or empty means links exist but could not be listed. |
