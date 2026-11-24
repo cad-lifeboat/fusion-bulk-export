@@ -11,11 +11,13 @@ import os
 import socket
 import sys
 import time
+import uuid
 
 from .names import long_path
 
 NAME = 'export.lock'
 STALE_SECONDS = 12 * 3600
+WRITING_SECONDS = 10  # an unreadable lock this young is being written (see FolderLock.create)
 _HELD = set()  # lock files this process holds now
 
 
@@ -71,7 +73,13 @@ class FolderLock:
     def stale(self):
         facts = self.facts()
         if facts is None:
-            return True
+            # Unreadable or empty: stale, unless it was made a moment ago (an export creating it
+            # where a lock cannot be written in one step; see acquire()).
+            try:
+                age = time.time() - os.stat(long_path(self.path)).st_mtime
+            except OSError:
+                return True
+            return not (-WRITING_SECONDS < age < WRITING_SECONDS)
         started = facts.get('started')
         if not isinstance(started, (int, float)) or self.clock() - started > STALE_SECONDS:
             return True
@@ -83,9 +91,10 @@ class FolderLock:
 
     def acquire(self):
         """Take the lock, or raise FolderBusy."""
+        data = json.dumps(dict(pid=os.getpid(), host=socket.gethostname(), started=self.clock())).encode('utf-8')
         for _ in range(2):
             try:
-                handle = os.open(long_path(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                self.create(data)
             except FileExistsError:
                 if not self.stale():
                     raise FolderBusy('Another export is using this folder.')
@@ -94,12 +103,35 @@ class FolderLock:
                 except FileNotFoundError:
                     pass
                 continue
-            with os.fdopen(handle, 'w', encoding='utf-8') as stream:
-                stream.write(json.dumps(dict(pid=os.getpid(), host=socket.gethostname(), started=self.clock())))
             self.held = True
             _HELD.add(self.path)
             return
         raise FolderBusy('Another export is using this folder.')
+
+    def create(self, data):
+        """Create the lock with its contents in one step: written to a temporary file, then
+        hard-linked to the lock's name, which fails (FileExistsError) when the lock exists, so
+        no one ever sees it empty. Where hard links are not available (some network or FAT
+        drives), an exclusive create then a write; stale() gives such a lock a moment."""
+        temporary = '%s.%s.tmp' % (self.path, uuid.uuid4().hex[:12])
+        try:
+            with open(long_path(temporary), 'wb') as stream:
+                stream.write(data)
+            try:
+                os.link(long_path(temporary), long_path(self.path))
+                return
+            except FileExistsError:
+                raise
+            except (OSError, NotImplementedError, AttributeError):
+                pass  # no hard links here: the exclusive create below
+        finally:
+            try:
+                os.unlink(long_path(temporary))
+            except OSError:
+                pass
+        handle = os.open(long_path(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(handle, 'wb') as stream:
+            stream.write(data)
 
     def release(self):
         if not self.held:

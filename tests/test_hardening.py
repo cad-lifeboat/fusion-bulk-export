@@ -332,12 +332,44 @@ class FolderLockTests(Base):
         gone = subprocess.Popen([sys.executable, '-c', 'pass'])
         gone.wait()
         for facts in (dict(pid=gone.pid), dict(started=time.time() - 13 * 3600), dict(pid=os.getpid()), None):
-            if facts is None:
-                (self.root / 'export.lock').write_text('{half')
+            if facts is None:  # unreadable and not made a moment ago
+                (self.root / 'export.lock').write_bytes(b'{half')
+                old = time.time() - 60
+                os.utime(str(self.root / 'export.lock'), (old, old))
             else:
                 self.lock_file(**facts)
             self.run_export(fake.data([fake.File('Part', 'part')]))
             self.assertFalse((self.root / 'export.lock').exists())
+
+    def test_a_lock_being_written_is_not_taken_over(self):
+        # An empty or half-written lock made a moment ago belongs to an export starting now
+        # (where the lock cannot be written in one step): busy, not stale.
+        from fusion_bulk_export.lock import FolderBusy
+        (self.root / 'export.lock').write_bytes(b'')
+        part = fake.File('Part', 'part')
+        with self.assertRaises(FolderBusy):
+            Exporter(self.root, self.adapter).run(fake.data([part]))
+        self.assertEqual(part.calls, 0)
+
+    def test_the_lock_is_created_with_its_contents_in_one_step(self):
+        import json
+        import os
+        from fusion_bulk_export.lock import FolderLock
+        seen = []
+        original = os.link
+
+        def link(source, target, *args, **kwargs):
+            seen.append(json.loads(open(source, encoding='utf-8').read()))
+            return original(source, target, *args, **kwargs)
+        lock = FolderLock(self.root)
+        with patch('os.link', link):
+            lock.acquire()
+        try:
+            self.assertEqual(seen[0]['pid'], os.getpid())
+            self.assertEqual(json.loads((self.root / 'export.lock').read_bytes())['pid'], os.getpid())
+            self.assertEqual([p.name for p in self.root.iterdir()], ['export.lock'])  # no temporary left
+        finally:
+            lock.release()
 
     def test_the_lock_is_released_when_the_run_fails(self):
         from unittest.mock import patch

@@ -204,12 +204,15 @@ when it fails or is cancelled; a crash leaves it behind.
 | `host` | The computer's name (Python's `socket.gethostname()`). |
 | `started` | When the lock was taken, **seconds since 1970** (UTC, a number), not an ISO time. |
 
-It is created exclusively (`O_CREAT | O_EXCL`), then written: for an instant after it appears it
-can be empty. It is one line of JSON, not indented.
+It is created with its contents in one step: written to a temporary file next to it, then
+hard-linked to `export.lock`, which fails when a lock exists. Where a drive has no hard links (some
+network or FAT drives), it is created exclusively (`O_CREAT | O_EXCL`) and then written, so there
+it can be empty for an instant. It is one line of JSON, not indented.
 
 **Stale rule.** The add-in, the command line and `bundle` all use the same rule (`lock.py`). A
 lock is **stale** (left behind, taken over) when, in this order:
-1. it cannot be read, or is not a JSON object: stale;
+1. it cannot be read, or is not a JSON object: stale, unless the file was changed less than
+   **10 seconds** ago (then it is an export creating it: held);
 2. `started` is not a number, or is more than **12 hours** old: stale;
 3. `host` is not this computer's name (another computer exporting into a shared folder): **held**
    (only the 12 hours make it stale);
@@ -221,8 +224,7 @@ lock is **stale** (left behind, taken over) when, in this order:
 An export that finds a held lock does not start; one that finds a stale lock deletes it and takes
 its own. A recycled process id can make a lock look held until it is 12 hours old. A program
 reading a folder (for [a complete export](manifest-schema.md#detecting-a-complete-export)) applies
-the same rule; it should read an empty or unreadable lock again a second later before calling it
-stale.
+the same rule.
 
 **When a job gets `folder_busy`.** A protocol job (export or inventory) fails with `folder_busy`:
 - when it starts (after its path is checked) and `output_dir/export.lock` exists
