@@ -1817,7 +1817,8 @@ class Exporter:
             entry['attempts'] = attempt + 1
             began = self.clock()
             for fact in ('linked_occurrences', 'linked_copy', 'links_broken', 'step', 'step_error', 'step_note',
-                         'step_includes_hidden', 'step_hidden_error', 'surface_bodies', 'mesh_bodies', 'archive'):
+                         'step_includes_hidden', 'step_hidden_error', 'surface_bodies', 'mesh_bodies', 'archive',
+                         'up_axis', 'up_axis_error'):
                 entry.pop(fact, None)  # an earlier attempt's (or run's)
             try:
                 stem, facts = self.destination(hub, project, folders, file, owned=owned)

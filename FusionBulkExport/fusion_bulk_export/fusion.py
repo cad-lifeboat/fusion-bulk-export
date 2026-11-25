@@ -10,6 +10,7 @@ from .core import (DRAWING_REASON, RECIPE_BOTH, RECIPE_COMPUTE, RECIPE_INNERMOST
                    NonDesign, NotSaved, OpenInFusion, StepNotWritten, collection, disk_full, is_drawing)
 from .names import LINKED_SUFFIX, fusion_path, long_path
 from .staging import Staging
+from .upaxis import up_axis
 
 # Fusion's own types other than designs (core.UNSUPPORTED): the exporter records them without
 # asking Fusion; download() refuses them too, in case it is ever handed one.
@@ -83,6 +84,11 @@ class FusionAdapter:
 
     def observe(self, design, data_file):
         """Called with each opened design before export; records facts for the manifest."""
+        # Y-up or Z-up, from the design's own named views (read only; upaxis.up_axis never raises).
+        axis, problem = up_axis(design)
+        self.details['up_axis'] = axis
+        if problem:
+            self.details['up_axis_error'] = problem
         try:
             # Distinct solid bodies over all components, hidden or not (the .f3d keeps all).
             self.details['solid_bodies'] = sum(

@@ -51,6 +51,7 @@ ACCOUNT_CHANGED_NOTE = ("This design's version or date in the Fusion account cha
                         "with its linked parts; the export stopped. Check its version history in Fusion.")
 
 
+Y_UP = 'Y up'  # shown beside a design made Y-up (index.html); Z up, the usual, is not shown
 STEP_RETRIED = 'Its STEP file is tried again on the next export into this folder.'
 WARNING_STEP = ('The .f3d archive is the complete copy; open the design in Fusion if you need the STEP '
                 'to hold every body.')
@@ -118,7 +119,8 @@ def items(manifest, run_info=None):
                            fusion_error=entry.get('fusion_error') or '', slow_seconds=entry.get('slow_seconds'),
                            roles=roles, account_changed=bool(entry.get('account_changed')),
                            kept=older_kept_text(entry), inserted=assemblies.get(id(entry)) or [],
-                           f3z=bundle_text(entry) if status == 'done' else ''))
+                           f3z=bundle_text(entry) if status == 'done' else '',
+                           up_axis=up_axis_of(entry) if status == 'done' else None))
     for problem in (run_info or {}).get('discovery_errors') or []:
         where = list(problem.get('path') or [])
         result.append(dict(status='unreadable', kind='folder', hub=where[0] if where else '',
@@ -127,10 +129,17 @@ def items(manifest, run_info=None):
                            next_step=next_step('unreadable', problem.get('error')), warnings=[], note='',
                            thumbnail='', has_links=None, links=0, links_out_of_date=False, links_unreadable=False,
                            fusion_error='', slow_seconds=None, roles=[], account_changed=False, kept='',
-                           inserted=[], f3z=''))
+                           inserted=[], f3z='', up_axis=None))
     result.sort(key=lambda i: (ORDER.get('warning' if i['warnings'] else i['status'], 9), i['hub'].casefold(),
                                i['project'].casefold(), i['folder'].casefold(), i['name'].casefold()))
     return result
+
+
+def up_axis_of(entry):
+    """An entry's recorded up axis, "y" or "z"; None when unknown (unreadable, or recorded
+    before the field existed)."""
+    axis = entry.get('up_axis')
+    return axis if axis in ('y', 'z') else None
 
 
 # The report's words for older versions moved or deleted once each design's newest version was
@@ -292,6 +301,8 @@ def table_html(rows, heading, column):
         name = esc(row['name'] + version)
         if row['kind'] == 'file' and row['version'] is not None:
             name += ' <span class="muted">(version %s)</span>' % esc(str(row['version']))
+        if row.get('up_axis') == 'y':
+            name += ' <span class="muted">%s</span>' % esc(Y_UP)  # Z up is the usual: not shown
         if row['thumbnail']:
             name = '<img class="thumb" src="%s" alt="" loading="lazy">%s' % (esc(link(row['thumbnail'])), name)
         why = esc(row['reason'])
@@ -560,7 +571,7 @@ def render_csv(manifest, run_info):
     writer.writerow(['status', 'hub', 'project', 'folder', 'design', 'version', 'archive', 'step',
                      'reason', 'next_step', 'warnings', 'thumbnail', 'kind', 'file', 'has_links', 'links',
                      'links_out_of_date', 'fusion_error', 'links_unreadable', 'slow_seconds', 'note',
-                     'location', 'tools', 'inserted_designs', 'f3z'])
+                     'location', 'tools', 'inserted_designs', 'f3z', 'up_axis'])
     for row in items(manifest, run_info):
         design = row['kind'] != 'file'
         by_role = {}
@@ -575,7 +586,8 @@ def render_csv(manifest, run_info):
                          yes_no(row['has_links']), row['links'] or '', 'yes' if row['links_out_of_date'] else '',
                          row['fusion_error'], 'yes' if row['links_unreadable'] else '',
                          row['slow_seconds'] or '', row.get('note') or row.get('kept') or '', '', '',
-                         '; '.join(inserted_text(design) for design in row['inserted']), row['f3z']])
+                         '; '.join(inserted_text(design) for design in row['inserted']), row['f3z'],
+                         row.get('up_axis') or ''])
     for status, reason, label in ((MOVED, 'Older version moved to the %s folder on %%s' % OLDER_FOLDER, 'Moved: '),
                                   (REMOVED, 'Older version deleted from this folder on %s', 'Deleted: ')):
         # One row per moved or deleted older version: its status, and its files in note.
@@ -586,7 +598,7 @@ def render_csv(manifest, run_info):
                              '' if entry.get('version') is None else entry['version'], '', '',
                              reason % str(entry.get(OLDER_WORDS[status]['field']) or '')[:10],
                              '', '', '', 'design', '', '', '', '', '', '', '',
-                             (label + '; '.join(paths)) if paths else '', '', '', '', ''])
+                             (label + '; '.join(paths)) if paths else '', '', '', '', '', ''])
     for entry in toollibs.entries(manifest):
         # One row per tool library (kind tool_library): its location and tool count in the last
         # two columns, its name in "design", its .json in "file".
@@ -595,7 +607,7 @@ def render_csv(manifest, run_info):
                          '', '', '', (entry.get('error') or '') if entry.get('status') == 'failed' else '', '', '', '',
                          toollibs.KIND, entry.get('path') or '', '', '', '', '', '', '',
                          '; '.join(toollibs.entry_notes(entry, run_info)), entry.get('location') or '',
-                         '' if tools is None else tools, '', ''])
+                         '' if tools is None else tools, '', '', ''])
     return stream.getvalue()
 
 

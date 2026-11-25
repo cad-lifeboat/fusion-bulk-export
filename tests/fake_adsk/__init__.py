@@ -43,6 +43,11 @@ class File:
         # isIncludingInvisibleComponents, seen on real Fusion's export options): 'both' (offered),
         # 'none' (this Fusion has neither), 'bodies' (only the first), or 'raise' (setting fails).
         self.step_hidden_options = 'both'
+        # Which way is up in the opened design, as its standard named views show it (named_views()):
+        # 'z' or 'y', 'disagree' (Top says Z, Front says Y), 'tilted' (Top looks along a slant),
+        # 'missing' (the design has no namedViews), 'no_front' (frontNamedView is None) or
+        # 'raise' (reading namedViews raises).
+        self.up_axis = 'z'
         # Solids a STEP with hidden bodies included adds to step_solids; None: the design's
         # switched-off solid bodies (see hidden_solids()).
         self.step_hidden_solids = None
@@ -413,10 +418,96 @@ def occurrence(part, visible=True, bulb=True, parent=None):
     return NS(component=part, isVisible=visible, isLightBulbOn=bulb, assemblyContext=parent)
 
 
+class Point3D:
+    """adsk.core.Point3D (and, with the same fields, Vector3D): x, y, z."""
+    def __init__(self, x=0.0, y=0.0, z=0.0):
+        self.x, self.y, self.z = float(x), float(y), float(z)
+
+    def copy(self):
+        return type(self)(self.x, self.y, self.z)
+
+
+class Vector3D(Point3D):
+    pass
+
+
+class Camera:
+    """adsk.core.Camera, the documented fields read here: eye, target (Point3D), upVector (Vector3D)."""
+    def __init__(self, eye, target, up):
+        self.eye, self.target, self.upVector = Point3D(*eye), Point3D(*target), Vector3D(*up)
+
+    def copy(self):
+        return Camera((self.eye.x, self.eye.y, self.eye.z), (self.target.x, self.target.y, self.target.z),
+                      (self.upVector.x, self.upVector.y, self.upVector.z))
+
+
+def view_change(*args, **kwargs):
+    CALLS.append(('view changed',))
+    raise AccountWrite('The add-in must never change a view or the viewport of a design it exports.')
+
+
+class NamedView:
+    """adsk.fusion.NamedView: reading camera returns a copy, as on real Fusion; setting it (or
+    any other change) fails the test."""
+    def __init__(self, camera):
+        self._camera = camera
+
+    @property
+    def camera(self):
+        return self._camera.copy()
+
+    @camera.setter
+    def camera(self, value):
+        view_change()
+
+    deleteMe = view_change
+
+
+# Cameras of a design's standard named views: (eye, target, upVector), as Fusion sets them up for a
+# design made Z-up or Y-up.
+VIEWS = {
+    'z': dict(top=((0, 0, 10), (0, 0, 0), (0, 1, 0)), front=((0, -10, 0), (0, 0, 0), (0, 0, 1))),
+    'y': dict(top=((0, 10, 0), (0, 0, 0), (0, 0, -1)), front=((0, 0, 10), (0, 0, 0), (0, 1, 0))),
+}
+
+
+class NamedViews(Collection):
+    """adsk.fusion.NamedViews: topNamedView, frontNamedView (and the others, here the same two)."""
+    def __init__(self, top, front):
+        super().__init__(*[view for view in (top, front) if view is not None])
+        self.topNamedView, self.frontNamedView = top, front
+        self.add = view_change
+
+
+class RaisingNamedViews:
+    @property
+    def topNamedView(self):
+        raise RuntimeError('2 : InternalValidationError : namedViews')
+
+    frontNamedView = topNamedView
+
+
+def named_views(mode):
+    """A design's namedViews for File.up_axis (see there); None for 'missing'."""
+    if mode == 'missing':
+        return None
+    if mode == 'raise':
+        return RaisingNamedViews()
+    top = VIEWS['y' if mode == 'y' else 'z']['top']
+    front = VIEWS['y' if mode in ('y', 'disagree') else 'z']['front']
+    if mode == 'tilted':
+        top = ((7, 0, 7), (0, 0, 0), (0, 1, 0))  # looking down at 45 degrees: along neither axis
+    return NamedViews(NamedView(Camera(*top)), None if mode == 'no_front' else NamedView(Camera(*front)))
+
+
 def design_product(file, document, root, components):
     """A document's Design. computeAll records itself in CALLS; file.compute: 'missing' (this
-    Fusion has no computeAll) or an error message (computeAll raises it)."""
+    Fusion has no computeAll) or an error message (computeAll raises it). Its namedViews follow
+    file.up_axis (named_views())."""
     design = NS(exportManager=Manager(file, document), rootComponent=root, allComponents=Collection(*components))
+    views = named_views(getattr(file, 'up_axis', 'z'))
+    if views is not None:
+        design.namedViews = views
     compute = file.compute
     if compute != 'missing':
         def compute_all():
