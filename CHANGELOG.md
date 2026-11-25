@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 - **Which way is up.** Each exported design's `manifest.json` entry records `"up_axis": "z"` or `"y"`, read from the design's own Top and Front named views when it is exported (the Top view looks down -Z and the Front view's up is +Z, or -Y and +Y; both must agree). When they are missing, disagree or cannot be read it is `null`, with `up_axis_error` saying why; `null` or absent means unknown. Nothing in the design or the view is changed. `index.csv` has a new last column `up_axis`, and `index.html` says "Y up" beside a Y-up design. Designs already up to date keep their entry (no `up_axis`) until they are exported again. See [docs/manifest-schema.md](docs/manifest-schema.md#up-axis).
 
