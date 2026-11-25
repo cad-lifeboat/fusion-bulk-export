@@ -176,6 +176,8 @@ A design whose STEP has no bodies, or fewer solids than expected (every distinct
 
 **Why is my assembly's .f3d almost empty?** An assembly's `.f3d` holds its own bodies and the links to its parts, not the parts themselves, so another program sees just the assembly's own bodies (sometimes a single screw). Each linked design is exported as its own `.f3d` in the same export, and the assembly's `.step` contains the full geometry, linked parts included. `manifest.json` maps every link to its exported file (`references`, each with its `path`). The summary at the end of every export counts these assemblies, and `index.html` lists them under **Assemblies with inserted designs**, each with links to the `.f3d` of every design inserted into it. Fusion gives add-ins no way to write a bundled archive (`.f3z`), so the export can build one itself: tick **Also build .f3z for assemblies** (or run `python3 scripts/autorun.py bundle <folder>`) for an .f3z-style bundle beside each assembly, made from the exported `.f3d` files without changing them (see "Assemblies as one file" above).
 
+**Which way is up?** A Fusion design is Z-up or Y-up, depending on a preference set when it was made, and its `.f3d` and `.step` keep its own coordinates. Each design's entry in `manifest.json` says which (`up_axis`: `"z"`, `"y"`, or `null` when unknown), `index.csv` has an `up_axis` column, and `index.html` marks Y-up designs "Y up".
+
 **Why not just export by hand?** For a few designs, File → Export in Fusion is fine. This is for when you have dozens or thousands: it keeps your project and folder layout, saves STEP files too, and can stop and pick up where it left off.
 
 ## How resuming works

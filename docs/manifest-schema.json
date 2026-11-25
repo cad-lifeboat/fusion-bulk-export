@@ -132,6 +132,8 @@
         "long_path": {"type": "boolean"},
         "slow_seconds": {"type": "integer"},
         "kept": {"type": "string"},
+        "up_axis": {"enum": ["y", "z", null], "description": "Y-up or Z-up, from the design's Top and Front named views; null or absent: unknown"},
+        "up_axis_error": {"type": "string", "description": "why up_axis is null"},
         "move_error": {"type": "string"},
         "remove_error": {"type": "string"}
       }

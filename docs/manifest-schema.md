@@ -125,6 +125,8 @@ exported (`v3`, then `v4`); older versions stay in the list with status `done` (
 | `long_path` | boolean | yes | A file's full path is over 260 characters. |
 | `slow_seconds` | integer | yes | Fusion took this long (over a minute) on the item. |
 | `kept` | string | yes | Why an older version's files were not moved or deleted. |
+| `up_axis` | string or null | yes | Which way is up in the design: `"z"` (Z-up) or `"y"` (Y-up); `null`: unknown, with `up_axis_error`. See [up axis](#up-axis). Optional (new): absent in entries written before it existed and in other files; read absent as unknown. |
+| `up_axis_error` | string | yes | Why `up_axis` is `null` (plain words, no names). Present only then. |
 | `move_error`, `remove_error` | string | yes | Why moving or deleting an older version's files failed (retried next run). |
 | `extension` | string | internal | File extension of an other file. |
 | `attempts`, `base`, `location`, `identities`, `shortened`, `solid_bodies`, `visible_solid_bodies`, `visible_solid_bodies_distinct`, `surface_bodies`, `mesh_bodies`, `step_solids`, `step_includes_hidden`, `step_hidden_error`, `step_error`, `count_error`, `documents_left_open`, `linked_copy`, `linked_occurrences`, `links_broken`, `account_changed` | various | internal | Naming, checking and testing bookkeeping. |
@@ -142,6 +144,27 @@ exported (`v3`, then `v4`); older versions stay in the list with status `done` (
 
 There is no `verified` status in the file. A reader may see `verified` only in run counts
 (`up_to_date`).
+
+### up axis
+
+A Fusion design is Y-up or Z-up, depending on the modeling-orientation preference in force when it
+was created; the exported `.f3d` and `.step` keep the design's own coordinates. Fusion's API has no
+documented property of a design for this, and the preference only applies to new designs, so it is
+never used. Instead, when the design is opened for export, its own standard named views are read
+(nothing in the design or the viewport is changed):
+
+- the Top view's view direction (camera `target` minus `eye`) is normalized; about -Z means Z-up,
+  about -Y means Y-up;
+- the Front view's camera `upVector` is normalized; about +Z means Z-up, about +Y means Y-up;
+- "about" means that component of the unit vector is at least 0.9.
+
+`up_axis` is `"z"` or `"y"` only when both views give the same answer. When a view is missing, a
+vector is along neither axis, the two disagree, or Fusion raises on reading them, `up_axis` is
+`null` and `up_axis_error` says why. `null` (or an absent field) means unknown, never "Z".
+
+It is recorded when the design is exported (with or without its `.f3d`). A design found up to date
+on a later run is not opened again, so its entry keeps what it had; entries written before this
+field existed have none until that design is exported again (a new version, or a missing file).
 
 ## files
 
@@ -307,6 +330,7 @@ How the usual questions of another program map onto the fields above.
 | Which failed, and why | Entries with `status == "failed"`: `error` (plain words), `fusion_error` (Fusion's text). |
 | Not exportable | `status == "unsupported"` (drawings, electronics), with `error`. |
 | Integrity | `bytes` and `sha256` on every file record. |
+| Which way is up? | `entry.up_axis`: `"z"` or `"y"`; `null` or absent means unknown (`up_axis_error` says why). |
 | Who wrote it | `exporter.name`, `exporter.version` (new); the folder's runs in `runs[]`. |
 | When | `runs[-1].started` / `finished`; each design's own date in `entry.date` (seconds since 1970, UTC). |
 
