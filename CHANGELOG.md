@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 - The add-in's manifest has a stable `id` (`07e296c8-3640-4485-9e8b-19407bbf8eb6`), the same in every release from now on, so add-in stores and installers can tell it apart from other add-ins. Updating from 0.4.1 keeps the add-in's place in Fusion's list and its Run on Startup setting (checked on real Fusion).
 - American spelling throughout ("Canceled", "color", checkboxes are "checked"); job protocol values unchanged.
