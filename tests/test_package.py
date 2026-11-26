@@ -162,3 +162,14 @@ class ForbiddenCallTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ManifestIdTests(unittest.TestCase):
+    # Add-in stores and installers identify the add-in by this id: it must never change once published
+    # (0.4.2 onward). Fusion itself keeps Run on Startup by name and path, so the id does not affect it.
+    STABLE_ID = '07e296c8-3640-4485-9e8b-19407bbf8eb6'
+
+    def test_manifest_keeps_its_published_id(self):
+        import json
+        manifest = json.loads((ROOT / 'FusionBulkExport' / 'FusionBulkExport.manifest').read_text(encoding='utf-8'))
+        self.assertEqual(manifest.get('id'), self.STABLE_ID)
