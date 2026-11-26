@@ -1,6 +1,7 @@
 {
   "autodeskProduct": "Fusion360",
   "type": "addin",
+  "id": "07e296c8-3640-4485-9e8b-19407bbf8eb6",
   "author": "Contributors",
   "description": {"": "Export your Fusion designs as archives and STEP files."},
   "version": "0.4.1",
