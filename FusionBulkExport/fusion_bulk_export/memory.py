@@ -189,7 +189,7 @@ def _macos():
         return sysctl(b'hw.memsize', ctypes.c_uint64(0))
 
     def pressure_level():
-        # The kernel's own judgement (what Activity Monitor's memory pressure graph shows):
+        # The kernel's own judgment (what Activity Monitor's memory pressure graph shows):
         # 1 normal, 2 warning, 4 critical. An int; None where the name does not exist.
         return sysctl(b'kern.memorystatus_vm_pressure_level', ctypes.c_int32(0))
 

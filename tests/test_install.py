@@ -24,7 +24,7 @@ def load(name):
 install = load('install')
 package = load('package')
 NEXT_STEP = ('Installed. In Fusion press Shift+S and find FusionBulkExport in the list: type its name in '
-             'Search, or tick Add-ins under Type on the left. Tick its Run on Startup box first, then '
+             'Search, or check Add-ins under Type on the left. Check its Run on Startup box first, then '
              'switch Run on. The window closes when you switch it on; that is normal.')
 
 

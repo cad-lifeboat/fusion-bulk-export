@@ -42,7 +42,7 @@ def _text(path, newline):
 def _add(archive, name, data, mode=0o644):
     info = zipfile.ZipInfo(name, date_time=DATE)
     info.compress_type = zipfile.ZIP_DEFLATED
-    info.create_system = 3  # Unix, so unzip tools honour the permission bits below
+    info.create_system = 3  # Unix, so unzip tools honor the permission bits below
     info.external_attr = (0o100000 | mode) << 16
     archive.writestr(info, data)
 

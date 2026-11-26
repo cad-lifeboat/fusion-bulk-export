@@ -342,7 +342,7 @@ class JobHooks(autorun.Hooks):
 
 class Service:
     """The add-in's side of the protocol for one Fusion session: the agent file, claiming and
-    queueing jobs, running them one at a time, and their status files."""
+    queuing jobs, running them one at a time, and their status files."""
     def __init__(self, version, fusion_version, home=None, pid=None, clock=time.monotonic):
         self.home = Path(home) if home is not None else Path.home()
         self.base = self.home / FOLDER
@@ -492,10 +492,10 @@ class Service:
         self.queued.discard(status['id'])
         write_json(self.status_path(status['id']), dict(status, updated=now()))
 
-    # ---- claiming, queueing, running ------------------------------------------------------------
+    # ---- claiming, queuing, running ------------------------------------------------------------
     def wants_attention(self, busy=None):
         """For the background watcher (files only): whether the main thread has something to do: a
-        job nobody claimed, or a job this add-in queued that can run now, was cancelled or withdrawn."""
+        job nobody claimed, or a job this add-in queued that can run now, was canceled or withdrawn."""
         names = self.names()
         for stem in self.job_ids(names):
             if stem + '.status.json' not in names:
@@ -566,10 +566,10 @@ class Service:
         return sorted(found, key=lambda item: item[0])
 
     def withdraw(self, stem, status):
-        """A queued job that was cancelled or whose job file was removed: cancelled, never run.
+        """A queued job that was canceled or whose job file was removed: canceled, never run.
         True when it was."""
         if self.cancel_path(stem).exists():
-            self.finish(status, 'cancelled', 'cancelled', 'Cancelled before it ran.')
+            self.finish(status, 'cancelled', 'cancelled', 'Canceled before it ran.')
             return True
         if not self.job_path(stem).exists():
             self.finish(status, 'cancelled', 'cancelled', 'The job file was removed before it ran.')
@@ -599,7 +599,7 @@ class Service:
                 self.queued.add(stem)
 
     def handle(self, app, busy):
-        """The custom event's work, on Fusion's main thread: claim new jobs, withdraw cancelled
+        """The custom event's work, on Fusion's main thread: claim new jobs, withdraw canceled
         ones, then (unless another export runs) run the queued jobs one at a time. busy is the
         add-in's {'by': None | 'button' | 'job', 'job': protocol job id}; it is set while a job runs,
         so a call while Fusion handles events during the export only claims."""
@@ -622,7 +622,7 @@ class Service:
                     self.update(status)
 
     def run(self, app, stem, status, busy):
-        """Run one queued job to its end; its status is final afterwards, whatever happens."""
+        """Run one queued job to its end; its status is final afterward, whatever happens."""
         self.queued.discard(stem)
         busy.update(by='job', job=stem)
         try:
@@ -696,7 +696,7 @@ class Service:
             reason, message = stopped, MESSAGES.get(stopped) or 'Stopped by itself.'
             state, code = 'failed', EXIT_MEMORY if stopped == 'memory' else EXIT_FAILED
         elif result.get('cancelled'):
-            reason, message, state, code = 'cancelled', 'Cancelled after %s.' % plural(
+            reason, message, state, code = 'cancelled', 'Canceled after %s.' % plural(
                 progress.get('done') or 0, 'item'), 'cancelled', EXIT_CANCELLED
         else:
             state, code = 'done', EXIT_DONE

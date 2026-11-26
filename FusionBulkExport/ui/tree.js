@@ -32,7 +32,7 @@ function build(hubs) {
 }
 
 // Subfolders below a project or folder: names, or {id, name} (folders are then addressed by
-// id, so two siblings with the same name stay apart). Children inherit a full tick.
+// id, so two siblings with the same name stay apart). Children of a checked box come checked.
 function addFolders(parent, folders) {
   parent.children = folders.map(function (f) {
     const name = typeof f === 'string' ? f : f.name;
@@ -86,7 +86,7 @@ function refreshUp(n) {
   }
 }
 
-// Clicking a box: a partly ticked or unticked box becomes ticked, a ticked one unticked.
+// Clicking a box: a partly checked or unchecked box becomes checked, a checked one unchecked.
 function toggle(n) {
   setDown(n, n.state === ON ? OFF : ON);
   refreshUp(n);
@@ -149,7 +149,7 @@ function expandable(n) {
 
 // Keyboard, as in a file browser: {focus: row index, action: null | 'toggle' | 'open' | 'close'}.
 // Up/Down move; Right opens (or moves to the first child); Left closes (or moves to the parent);
-// Space ticks; Enter opens or closes; Home/End go to the first/last row.
+// Space checks; Enter opens or closes; Home/End go to the first/last row.
 function keyAction(rows, index, key) {
   const last = rows.length - 1;
   const here = rows[index];
@@ -272,7 +272,7 @@ if (typeof document !== 'undefined') {
       done.title = 'Already in the chosen output folder';
       line.appendChild(done);
     }
-    // The box ticks; the rest of the row opens and closes, as in a file browser.
+    // The box checks and unchecks; the rest of the row opens and closes, as in a file browser.
     box.onclick = function (e) { e.stopPropagation(); focused = n; tick(n); };
     line.onclick = function () { focused = n; if (open) expand(n); else render(); };
     li.appendChild(line);

@@ -1,12 +1,69 @@
 """Guard over every user-facing string of the add-in: no sentence explains which button does
 what (buttons are named for what they do), and each dialog message stays short."""
 import ast
+import io
 from pathlib import Path
 import re
+import tokenize
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1] / 'FusionBulkExport'
 BUTTON_TALK = re.compile(r'\b(Yes|No|Cancel|OK)\b.*(open|opens|close|closes|stop|stops)', re.I)
+
+# American spelling and usage in everything a user or contributor reads. A checkbox is "checked",
+# not "ticked". The job protocol keeps its own spelling: a word glued to a quote, backtick or code
+# punctuation (`cancelled`, "cancelled":, run_info['cancelled'], .cancelled(), --tick) is a name
+# other programs rely on, not prose.
+BRITISH = re.compile(
+    r'\b(cancell(ed|ing)|(un)?tick(s|ed|ing)?|grey(s|ed|ing)?|colours?|colour(ed|ing)'
+    r'|behaviours?|queueing|(recogn|organ|real|summar|initial|normal|custom|optim|prioriti?|author|util)'
+    r'is(e|es|ed|ing|ation|ations)|(model|label|travel|cancel|signal|level|total)l(ed|ing)'
+    r'|judgement|honour(s|ed|ing)?|favour(s|ed|ite)?|centre(s|d)?|centred|towards|afterwards|whilst'
+    r'|amongst|licence|catalogue|analys(e|es|ed|ing)|programmes?|learnt|spelt)\b', re.I)
+GLUED_BEFORE, GLUED_AFTER = set('\'"`._-[/'), set('\'"`_-[(=')
+# Fixed fragments where the protocol value stands unquoted: the state column of the reason codes.
+SPELLING_ALLOWED = ('| `cancelled` | cancelled |',)
+
+
+def british(text):
+    """The British spellings in a piece of prose, names glued to code punctuation left out."""
+    for fragment in SPELLING_ALLOWED:
+        text = text.replace(fragment, '')
+    found = []
+    for match in BRITISH.finditer(text):
+        word, start, end = match.group(0), match.start(), match.end()
+        before = text[start - 1] if start else ''
+        after = text[end] if end < len(text) else ''
+        if (before and before in GLUED_BEFORE) or (after and after in GLUED_AFTER) or word.isupper():
+            continue
+        found.append(word)
+    return found
+
+
+def prose(path):
+    """(line, text) of what a reader sees in a file: for Python, its string literals (docstrings
+    included) and comments; for any other text file, every line."""
+    source = path.read_text(encoding='utf-8')
+    if path.suffix != '.py':
+        yield from enumerate(source.splitlines(), 1)
+        return
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value != 'cancelled':
+            yield node.lineno, node.value
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT:
+            yield token.start[0], token.string
+
+
+def user_facing():
+    top = ROOT.parent
+    yield from sorted(top.glob('*.md'))
+    yield from sorted(path for path in top.glob('docs/*') if path.suffix in ('.md', '.json', '.svg', '.py'))
+    yield from sorted(path for path in top.glob('packaging/*') if path.is_file())
+    yield from sorted(top.glob('.github/**/*.yml'))
+    yield from sorted(top.glob('scripts/*.py'))
+    yield from sources()
+    yield from sorted((ROOT / 'ui').glob('*.*'))
 
 
 def literals(path):
@@ -64,6 +121,22 @@ class TextTests(unittest.TestCase):
                     if pattern.search(''.join(quoted)):
                         found.append('%s:%d %s' % (path.name, number, ''.join(quoted)))
         self.assertEqual(found, [])
+
+    def test_american_spelling(self):
+        found = []
+        for path in user_facing():
+            for line, text in prose(path):
+                for word in british(text):
+                    found.append('%s:%d %s' % (path.relative_to(ROOT.parent), line, word))
+        self.assertEqual(found, [])
+
+    def test_spelling_guard_catches_british_words_and_spares_protocol_names(self):
+        self.assertEqual(british('Cancelled after 3 items.'), ['Cancelled'])
+        self.assertEqual(british('Tick its Run on Startup box; the colour stays grey.'), ['Tick', 'colour', 'grey'])
+        self.assertEqual(british('Untick it, then recognise the behaviour.'), ['Untick', 'recognise', 'behaviour'])
+        self.assertEqual(british('state `cancelled`, "cancelled": true, run_info[\'cancelled\'], .cancelled()'), [])
+        self.assertEqual(british('var(--tick); EXIT_CANCELLED; progress.wasCancelled; TICK'), [])
+        self.assertEqual(british('Canceled. Check its box; the color stays gray; checked toward the end.'), [])
 
     def test_plural(self):
         from fusion_bulk_export.words import form, plural

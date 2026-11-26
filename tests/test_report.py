@@ -112,7 +112,7 @@ class ReportTests(unittest.TestCase):
         counts = dict(exported=0)
         self.assertEqual(report.summary(counts, {}, dict(entries=[]), '/o')['headline'], 'Finished')
         cancelled = report.summary(counts, dict(cancelled=True), dict(entries=[]), '/o')
-        self.assertEqual(cancelled['headline'], 'Cancelled')
+        self.assertEqual(cancelled['headline'], 'Canceled')
         self.assertIn('Run again to carry on where it stopped.', cancelled['notes'])
         stopped = report.summary(counts, dict(stopped_reason='The output folder is gone.'), dict(entries=[]), '/o')
         self.assertEqual(stopped['headline'], 'Stopped: The output folder is gone.')

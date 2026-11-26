@@ -13,7 +13,7 @@ delete anything in the account, or run anything but its own export.
 
 It builds on the job file the add-in already takes from its command line (`autorun.json` beside
 the add-in, results in `autorun-result.json`): same options, same validation, same export. What is
-new is where the files live, that several jobs can queue, the progress file, cancelling, and a
+new is where the files live, that several jobs can queue, the progress file, canceling, and a
 design list.
 
 ## Files
@@ -159,7 +159,7 @@ counts as up to date (nothing is deleted); a design exported STEP-only is export
 later job that asks for `"f3d"`. `python3 scripts/autorun.py check` checks a STEP-only entry's
 STEP and counts it as "f3d not requested".
 
-### Claiming, queueing and running
+### Claiming, queuing and running
 
 1. The add-in scans `jobs/` every few seconds (its existing watcher polls every 3 s) for
    `<id>.json` files that have no `<id>.status.json`.
@@ -192,7 +192,7 @@ Every export takes `export.lock` in its output folder for the whole run (from it
 the `.f3z` files at the end), whoever started it: the toolbar button, an `autorun.json` job from
 the command line, a protocol export job, and `python3 scripts/autorun.py bundle` (which builds the
 `.f3z` files without Fusion). An inventory never takes it. It is removed when the run ends, also
-when it fails or is cancelled; a crash leaves it behind.
+when it fails or is canceled; a crash leaves it behind.
 
 ```json
 {"pid": 41237, "host": "someones-laptop.local", "started": 1795431063.512}
@@ -306,7 +306,7 @@ When finished:
 | `manifest` | Absolute path of `manifest.json` once the job is final (`done`, and `cancelled` or `failed` when an export was written); else `null`. Always `null` for an inventory. |
 | `inventory` | For `action: "inventory"`: absolute path of `inventory.json` once the job is `done`; else `null`. Absent for an export. |
 | `result` | Absolute path of the job's `autorun-result.json`, once written. |
-| `exit_code` | What the command-line launcher would exit with: `0` done, `1` failed, `75` memory, `77` Fusion closed mid-job, `130` cancelled. `null` until final. |
+| `exit_code` | What the command-line launcher would exit with: `0` done, `1` failed, `75` memory, `77` Fusion closed mid-job, `130` canceled. `null` until final. |
 
 `done` means the export ran to its end. It can still hold failed items: check `counts.failed`
 (and each entry's `status` in `manifest.json`). Running a new job with the same options retries
@@ -328,9 +328,11 @@ Reason codes:
 | `account_changed` | failed | A design changed in the account while it was exported. | Resubmit. |
 | `interrupted` | failed | Fusion closed or crashed while the job ran (set when the add-in next starts). | Resubmit (it resumes). Repeated crashes on the same design: tell the person. |
 | `error` | failed | Anything unexpected; `message` has the error type. | Report the type (not paths or names). |
-| `cancelled` | cancelled | Cancelled on request. | Nothing. |
+| `cancelled` | cancelled | Canceled on request. | Nothing. |
 
-### Cancelling
+### Canceling
+
+The state and the reason code are spelled `cancelled` in protocol 1; messages say "canceled".
 
 The requester creates an empty file `jobs/<id>.cancel`.
 - A `queued` job becomes `cancelled` without running.
@@ -443,7 +445,7 @@ minus reading `autorun.json`).
   older version over a newer one (compare `install-stamp.json` `version`). A replaced add-in takes
   effect when Fusion next starts.
 - **The person must switch it on once in Fusion**: Shift+S (Utilities > Add-Ins > Scripts and
-  Add-Ins), find FusionBulkExport, tick **Run on Startup**, then switch **Run** on. No program can
+  Add-Ins), find FusionBulkExport, check **Run on Startup**, then switch **Run** on. No program can
   do this for them. Until they do, no agent file appears; a requester should say so in those
   words and keep waiting. Fusion keeps the setting when the folder is replaced by a newer version.
 

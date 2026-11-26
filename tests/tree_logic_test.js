@@ -10,7 +10,7 @@ const roots = t.build([{ id: 'h', name: 'Hub', projects: [{ id: 'p1', name: 'P1'
 const [p1, p2] = roots[0].children;
 assert.deepStrictEqual(t.selection(roots), {});
 
-// Folders load on demand; ticking one makes its project partial and selects just that path.
+// Folders load on demand; checking one makes its project partial and selects just that path.
 t.addFolders(p1, ['Top', 'Other']);
 const [top, other] = p1.children;
 t.addFolders(top, ['Sub']);
@@ -20,20 +20,20 @@ assert.strictEqual(roots[0].state, t.SOME);
 assert.strictEqual(top.children[0].state, t.ON);
 assert.deepStrictEqual(t.selection(roots), { p1: [['Top']] });
 
-// Nested folder only: the path goes deep, and Top stays partial (its own files are not ticked).
+// Nested folder only: the path goes deep, and Top stays partial (its own files are not checked).
 t.toggle(top);
 t.toggle(top.children[0]);
 assert.strictEqual(top.state, t.SOME);
 assert.deepStrictEqual(t.selection(roots), { p1: [['Top', 'Sub']] });
 
-// Every folder ticked still leaves the project's own files out: it counts as whole only when ticked.
+// Every folder checked still leaves the project's own files out: it counts as whole only when checked.
 t.toggle(other);
 assert.strictEqual(p1.state, t.SOME);
 assert.deepStrictEqual(t.selection(roots), { p1: [['Top', 'Sub'], ['Other']] });
 t.toggle(p1);
 assert.deepStrictEqual(t.selection(roots), { p1: null });
 
-// A partly ticked hub becomes fully ticked when clicked; clicking again clears everything.
+// A partly checked hub becomes fully checked when clicked; clicking again clears everything.
 assert.strictEqual(roots[0].state, t.SOME);
 t.toggle(roots[0]);
 assert.strictEqual(p2.state, t.ON);
@@ -41,13 +41,13 @@ assert.deepStrictEqual(t.selection(roots), { p1: null, p2: null });
 t.toggle(roots[0]);
 assert.deepStrictEqual(t.selection(roots), {});
 
-// Folders opened under a ticked project arrive ticked.
+// Folders opened under a checked project arrive checked.
 t.toggle(p2);
 t.addFolders(p2, ['A']);
 assert.strictEqual(p2.children[0].state, t.ON);
 console.log('tree logic ok');
 
-// Own files: ticking every subfolder does not tick the parent's own files.
+// Own files: checking every subfolder does not check the parent's own files.
 {
   const r = t.build([{ id: 'h', name: 'Hub', projects: [{ id: 'p', name: 'P' }] }]);
   const p = r[0].children[0];
@@ -55,7 +55,7 @@ console.log('tree logic ok');
   t.toggle(p.children[0]);
   assert.strictEqual(p.state, t.SOME);
   assert.deepStrictEqual(t.selection(r), { p: [['Only']] });
-  // Unticking one folder of a fully ticked project keeps the project's own files.
+  // Unchecking one folder of a fully checked project keeps the project's own files.
   t.toggle(p);           // SOME -> ON (whole)
   t.addFolders(p.children[0], []);
   t.toggle(p.children[0]);
@@ -118,7 +118,7 @@ console.log('errors and retry ok');
 }
 console.log('filter ok');
 
-// Keyboard: arrows move and open/close, space ticks, enter opens, left goes to the parent.
+// Keyboard: arrows move and open/close, space checks, enter opens, left goes to the parent.
 {
   const r = t.build([{ id: 'h', name: 'Hub', projects: [{ id: 'p', name: 'P' }, { id: 'q', name: 'Q' }] }]);
   r[0].open = true;
@@ -157,7 +157,7 @@ console.log('keyboard ok');
 console.log('exported marks ok');
 
 // Page wiring smoke test with a minimal stand-in for the browser and Fusion's bridge: the page
-// loads hubs, opens a project, shows an error row with Retry, retries, ticks by keyboard.
+// loads hubs, opens a project, shows an error row with Retry, retries, checks by keyboard.
 {
   const fs = require('fs');
   const vm = require('vm');
@@ -229,7 +229,7 @@ console.log('exported marks ok');
     const last = requests.filter(function (r) { return r[0] === 'folders'; }).pop();
     assert.deepStrictEqual(last[1], { project: 'p', path: [], ids: [] });
     key('ArrowRight');      // to Parts
-    key(' ');               // tick it
+    key(' ');               // check it
     const sent = requests.filter(function (r) { return r[0] === 'selection'; }).pop();
     assert.deepStrictEqual(sent[1], { p: [[{ id: 'f', name: 'Parts' }]] });
     filterBox.listeners.input({ target: { value: 'zzz' } });

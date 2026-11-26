@@ -24,7 +24,7 @@ _busy = {'by': None, 'job': None}
 def forget_package():
     """Fusion keeps Python modules loaded between Stop and Run and between jobs; drop ours so
     the next import reads the installed files. Never while an export runs: its code would then
-    raise errors of the old modules that the new ones do not recognise. (The synthetic test API
+    raise errors of the old modules that the new ones do not recognize. (The synthetic test API
     keeps them: tests patch these modules.)"""
     if getattr(adsk, '_synthetic', False) or _busy['by'] is not None:
         return
@@ -266,7 +266,7 @@ class FromPage(adsk.core.HTMLEventHandler):
 
 
 class Validate(adsk.core.ValidateInputsEventHandler):
-    """Export stays greyed out until there is a folder and Everything or something ticked."""
+    """Export stays grayed out until there is a folder and Everything or something checked."""
     def notify(self, args):
         try:
             args.areInputsValid = _picker is None or _picker.ready()
@@ -282,7 +282,7 @@ class Execute(adsk.core.CommandEventHandler):
                 return
             selection = _picker.selection()
             if selection is None:
-                app.userInterface.messageBox('Tick at least one project or folder, or choose Everything.',
+                app.userInterface.messageBox('Check at least one project or folder, or choose Everything.',
                                              'Fusion Bulk Export')
                 return
             if not _picker.output:

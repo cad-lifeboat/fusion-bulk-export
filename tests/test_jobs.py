@@ -1,5 +1,5 @@
 """Job protocol 1 (jobs.py, docs/job-protocol.md): the agent file and its heartbeat, claiming,
-validating, queueing and running jobs from ~/.cad-export/jobs, their status files, cancelling,
+validating, queuing and running jobs from ~/.cad-export/jobs, their status files, canceling,
 folder_busy, interrupted jobs, each scope (everything, hubs, projects, folders, a design list with
 its linked designs), STEP only and inventory. Against the synthetic API, in a temporary home."""
 import errno
@@ -190,7 +190,7 @@ class ValidationTests(JobTestCase):
 
     def test_unknown_fields_wrong_types_and_bad_combinations_are_refused(self):
         cases = [
-            ('Unknown field: colour', dict(colour='red')),
+            ('Unknown field: color', dict(color='red')),
             ('id must equal', dict(id='other')),
             ('requested', dict(requested='yesterday')),
             ('absolute', dict(output_dir='relative/folder')),
@@ -469,7 +469,7 @@ class RunTests(JobTestCase):
         self.assertEqual((status['state'], status['reason'], status['exit_code']), ('cancelled', 'cancelled', 130))
         self.assertEqual(status['counts']['exported'], 2)
         self.assertEqual(status['progress']['done'], 2)  # the third was not begun
-        self.assertEqual(status['message'], 'Cancelled after 2 items.')
+        self.assertEqual(status['message'], 'Canceled after 2 items.')
         self.assertEqual(status['manifest'], str(self.output / 'manifest.json'))
         self.assertTrue(self.manifest()['runs'][-1]['cancelled'])
         # A later job into the same folder carries on.

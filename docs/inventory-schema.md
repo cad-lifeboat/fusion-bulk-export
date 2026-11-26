@@ -67,7 +67,7 @@ Rules (as for `manifest.json`):
 | `schema_id` | string | yes | `"cad-export-inventory/1"` (may be absent in older files). |
 | `hubs` | object | yes | Hub id → [hub](#hubs). |
 | `unreadable` | array | yes | Places that could not be listed: `{"path": [names...], "error": text}`. `path` is `[hub name]` for a hub whose projects could not be listed, `[hub name, project name, folder names...]` for a project or folder. Those places are missing from `hubs` (a hub that could not be listed is present with no projects). |
-| `stopped` | boolean | yes | `true`: the listing was cancelled (the job's `.cancel` file, or `STOP` in the folder) before every project was listed. It stops between projects: the projects listed are complete, the rest are absent. |
+| `stopped` | boolean | yes | `true`: the listing was canceled (the job's `.cancel` file, or `STOP` in the folder) before every project was listed. It stops between projects: the projects listed are complete, the rest are absent. |
 | `counts` | object | yes | See [counts](#counts). |
 
 ## hubs

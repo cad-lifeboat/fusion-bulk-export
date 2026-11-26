@@ -29,8 +29,8 @@ files (never changing them). It only reads from the account. Work on the person'
 
 - Installing Fusion and signing in (their credentials, never yours).
 - Once: switching the add-in on in Fusion. **Shift+S** (Utilities > Add-Ins > Scripts and
-  Add-Ins), find **FusionBulkExport** in the list (Search, or tick **Add-ins** under
-  **Type**), tick its **Run on Startup** box first, then switch **Run** on. The window
+  Add-Ins), find **FusionBulkExport** in the list (Search, or check **Add-ins** under
+  **Type**), check its **Run on Startup** box first, then switch **Run** on. The window
   closes when it is switched on; that is normal. Fusion keeps that setting itself; you
   cannot set it.
 - Closing a Fusion dialog that blocks the export, or saving a design that is open with
@@ -143,7 +143,7 @@ Below, `python3` means `py` on Windows and `OUT` is the output folder.
   person connect the drive in their own session.
 - **Exit status** of `export`: 0 done; 1 the job failed or was refused; 75 stopped for
   memory (restart Fusion, rerun); 76 `--restart-fusion` reopened Fusion but the add-in did
-  not start (ask the person to tick Run on Startup); 77 Fusion closed or crashed before the
+  not start (ask the person to check Run on Startup); 77 Fusion closed or crashed before the
   export finished (open it, rerun); 130 interrupted. Rerunning always carries on.
 - **A design failed because it is open with unsaved changes, or another version is
   open**: have the person save or close it in Fusion, then rerun the export.

@@ -329,7 +329,7 @@ class ToolLibraryTests(unittest.TestCase):
             status = launcher.check(self.root)
         self.assertEqual(status, 1)
         self.assertIn('tool library 1: PROBLEM file missing', out.getvalue())
-        self.assertNotIn('Mills:', out.getvalue())  # labelled by number unless --names (as designs)
+        self.assertNotIn('Mills:', out.getvalue())  # labeled by number unless --names (as designs)
         self.assertIn('Of them 5 tool libraries (in Tool libraries), 0 failed in the last export.', out.getvalue())
 
     def test_progress_says_which_library(self):

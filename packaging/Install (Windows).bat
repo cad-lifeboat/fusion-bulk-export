@@ -16,7 +16,7 @@ rem date, so a manifest of the same size would otherwise keep the old version).
 robocopy "%SOURCE%" "%ADDINS%\FusionBulkExport" /MIR /IS /IT /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 goto failed
 
-echo Installed. In Fusion press Shift+S and find FusionBulkExport in the list: type its name in Search, or tick Add-ins under Type on the left. Tick its Run on Startup box first, then switch Run on. The window closes when you switch it on; that is normal.
+echo Installed. In Fusion press Shift+S and find FusionBulkExport in the list: type its name in Search, or check Add-ins under Type on the left. Check its Run on Startup box first, then switch Run on. The window closes when you switch it on; that is normal.
 set "RESULT=0"
 goto end
 

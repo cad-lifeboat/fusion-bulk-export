@@ -643,7 +643,7 @@ def folder_counts(manifest, assemblies=None):
 
 # The words of the summary, the report and the command line.
 OPTION = 'Also build .f3z for assemblies'
-HOW = 'run the export again with "%s" ticked, or: python3 scripts/autorun.py bundle <folder>' % OPTION
+HOW = 'run the export again with "%s" checked, or: python3 scripts/autorun.py bundle <folder>' % OPTION
 
 
 def note(count, counts=None, on=False):

@@ -43,12 +43,12 @@ OLDER_CHOICE = 'Move to the Older versions folder'  # the default
 OLDER_NOTE = 'Older versions move to the Older versions folder.'
 EXPORT_LABEL = 'Export'
 CHOOSE = 'Choose projects or folders'
-TREE_HINT = ('Tick what to export. Ticking a folder includes everything inside it. '
-             'Keys: arrows move and open, Space ticks, Enter opens.')
+TREE_HINT = ('Check what to export. Checking a folder includes everything inside it. '
+             'Keys: arrows move and open, Space checks, Enter opens.')
 FILTER = 'Filter projects by name'
 OUTPUT = '/Users/you/Documents/FusionExport'
 DONE_BEFORE = 42
-CHOSEN = {'p-jigs': None, 'p-arm': [['Brackets']]}  # what the tree below has ticked
+CHOSEN = {'p-jigs': None, 'p-arm': [['Brackets']]}  # what the tree below has checked
 OK_BUTTON = 'Export'
 
 # The tree: (depth, kind, state, open, name, files shown, exported mark). state: 0 off, 1 on, 2 some.
@@ -145,7 +145,7 @@ def frame(x, y, w, h, title):
 
 
 def caret(x, y, opened, fill=MUTED):
-    """The tree's open (pointing down) or closed (pointing right) marker, centred on (x, y)."""
+    """The tree's open (pointing down) or closed (pointing right) marker, centered on (x, y)."""
     if opened:
         return f'<path d="M{x - 4},{y - 2} h8 l-4,5 z" fill="{fill}"/>'
     return f'<path d="M{x - 2},{y - 4} v8 l5,-4 z" fill="{fill}"/>'

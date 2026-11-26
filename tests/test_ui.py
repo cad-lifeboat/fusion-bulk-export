@@ -319,7 +319,7 @@ class UItests(UIBase):
         self.page(command, 'selection', {})
         self.assertFalse(self.valid(command))
         command.execute.handlers[0].notify(None)
-        self.assertIn('Tick at least one', self.errors[0][0])
+        self.assertIn('Check at least one', self.errors[0][0])
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
 
     def test_lifecycle_summary_and_report(self):
@@ -964,7 +964,7 @@ class UItests(UIBase):
         self.open_dialog().execute.handlers[0].notify(None)
         self.assertEqual(self.file.calls, 0)
         data = self.results()[1]
-        self.assertEqual(data['headline'], 'Cancelled')
+        self.assertEqual(data['headline'], 'Canceled')
         self.assertIn('Run again to carry on where it stopped.', data['notes'])
         self.assertTrue((Path(self.temp.name) / 'manifest.json').exists())
 
@@ -1296,7 +1296,7 @@ class TreeLayoutContractTests(UIBase):
         width, height = picker.DIALOG_SIZE
         self.assertLessEqual(height, 1080 - 200)  # menu bar, dock or taskbar, title bar, margins
         # Rows above the tree at about 30 units each, the OK/Cancel row about 60: the tree's
-        # minimum still fits in the first size, also with the STEP box unticked, when its note
+        # minimum still fits in the first size, also with the STEP box unchecked, when its note
         # shows too.
         self.assertLessEqual((len(shown) + 1) * 30 + picker.TREE_MIN_HEIGHT + 60, height)
         self.assertLessEqual(picker.DIALOG_MINIMUM[1], height)
@@ -1436,6 +1436,6 @@ class OutputRootTests(UIBase):
             command = self.open_dialog()
             note = command.commandInputs.find('fbx_note').text
             self.assertIn('on Windows it can be at most 200', note)
-            self.assertFalse(self.valid(command))  # Export stays greyed out
+            self.assertFalse(self.valid(command))  # Export stays grayed out
             self.settings.write_text(json.dumps(dict(output='C:\\FusionExport')))
             self.assertTrue(self.valid(self.open_dialog()))

@@ -18,7 +18,7 @@
      TREE_MIN_HEIGHT): never decided by how much the page holds, so an empty or loading tree is as
      tall as a full one. */
   html, body { min-height: 260px; }
-  /* Scrollbars in the page's own colours, not a bright white track on the dark theme. */
+  /* Scrollbars in the page's own colors, not a bright white track on the dark theme. */
   html { scrollbar-color: var(--line) transparent; }
   ::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -63,8 +63,8 @@
 </style>
 </head>
 <body>
-  <div class="hint">Tick what to export. Ticking a folder includes everything inside it.
-    <span class="keys">Keys: arrows move and open, Space ticks, Enter opens.</span></div>
+  <div class="hint">Check what to export. Checking a folder includes everything inside it.
+    <span class="keys">Keys: arrows move and open, Space checks, Enter opens.</span></div>
   <input id="filter" type="search" placeholder="Filter projects by name" aria-label="Filter projects by name">
   <ul id="tree" role="tree" aria-label="Hubs, projects and folders"><li class="empty">Loading your hubs…</li></ul>
   <script src="tree.js"></script>

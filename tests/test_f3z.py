@@ -388,7 +388,7 @@ class ExportTests(Base):
         counts = exporter.run(data)
         notes = report.summary(counts, exporter.run_info, exporter.manifest, self.root)['notes']
         self.assertTrue(any(note.endswith('To build an .f3z beside it, run the export again with "Also build .f3z '
-                                          'for assemblies" ticked, or: python3 scripts/autorun.py bundle <folder>.')
+                                          'for assemblies" checked, or: python3 scripts/autorun.py bundle <folder>.')
                             for note in notes))
         self.assertFalse(list(self.root.rglob('*.f3z')))
         archives = {path: path.read_bytes() for path in self.root.rglob('*.f3d')}

@@ -24,11 +24,11 @@ spec.loader.exec_module(launcher)
 
 ONE = ('1 assembly uses designs inserted from other designs. Its .f3d holds only links to them; the full '
        'geometry is in its .step, and every inserted design is in this folder too. To build an .f3z beside it, '
-       'run the export again with "Also build .f3z for assemblies" ticked, or: python3 scripts/autorun.py bundle '
+       'run the export again with "Also build .f3z for assemblies" checked, or: python3 scripts/autorun.py bundle '
        '<folder>.')
 THREE = ('3 assemblies use designs inserted from other designs. Their .f3d holds only links to them; the full '
          'geometry is in their .step, and every inserted design is in this folder too. To build an .f3z beside '
-         'each, run the export again with "Also build .f3z for assemblies" ticked, or: python3 '
+         'each, run the export again with "Also build .f3z for assemblies" checked, or: python3 '
          'scripts/autorun.py bundle <folder>.')
 
 
@@ -85,7 +85,7 @@ class NoteTests(unittest.TestCase):
                          '1 assembly uses designs inserted from other designs. Its .f3d holds only links to them; '
                          'the full geometry is in its .step, and the inserted designs are in this folder too, '
                          'except 2 designs not in this export. To build an .f3z beside it, run the export again '
-                         'with "Also build .f3z for assemblies" ticked, or: python3 scripts/autorun.py bundle '
+                         'with "Also build .f3z for assemblies" checked, or: python3 scripts/autorun.py bundle '
                          '<folder>.')
 
     def test_without_step_the_note_does_not_promise_one(self):

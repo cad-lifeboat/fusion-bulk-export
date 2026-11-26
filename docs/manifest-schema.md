@@ -266,7 +266,7 @@ One object per run, appended at its start. Stable fields:
 |---|---|---|
 | `started` | string | ISO 8601. |
 | `finished` | string or null | `null` while the run is going, or when it ended without a final save (Fusion closed). |
-| `cancelled` | boolean | Stopped on request (Cancel, `STOP` file, a cancelled job). |
+| `cancelled` | boolean | Stopped on request (Cancel, `STOP` file, a canceled job). |
 | `stopped_code` | string or null | Why it stopped by itself: `failing` (5 designs in a row failed), `disk_full`, `output_missing`, `output_unwritable`, `memory`, `account_changed`. `null`: it did not. |
 | `stopped_reason` | string or null | The same in plain words. |
 | `error` | string | Present when the run ended with an unexpected error. |

@@ -49,7 +49,7 @@ MINIMUM = (420, 300)
 def tone(headline):
     if headline.startswith('Stopped'):
         return 'stopped'
-    if headline.startswith('Cancelled'):
+    if headline.startswith('Canceled'):
         return 'cancelled'
     return 'finished'
 

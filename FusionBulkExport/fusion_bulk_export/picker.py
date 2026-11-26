@@ -33,7 +33,7 @@ TOOL_LIBRARIES_WHY = ('Your own tool libraries from Manufacture > Tool Library (
 # note is always shown and, like STEP_OFF_NOTE, stays one short line.
 F3Z = 'Also build .f3z for assemblies'
 F3Z_NOTE = 'A single file with its inserted designs, beside the .f3d.'
-F3Z_WHY = ("An assembly's .f3d holds only links to the designs inserted into it. With this ticked, an .f3z "
+F3Z_WHY = ("An assembly's .f3d holds only links to the designs inserted into it. With this checked, an .f3z "
            '(Fusion Archive) is also built beside it from the .f3d files of this export: the assembly with every '
            'design it inserts, in one file. The .f3d files Fusion wrote are never changed; nothing in your Fusion '
            'account is touched.')
@@ -57,7 +57,7 @@ OLD_FUSION = ('Choosing projects or folders needs a newer Fusion (update Fusion 
               'This one can export everything.')
 # Dialog size in Fusion's units: wide enough for project names in the tree beside its boxes.
 # 800 high: on a screen 1080 points high every control is in view at first (the tree is last),
-# also the note shown while the STEP box is unticked, the ones under the tool libraries and .f3z boxes
+# also the note shown while the STEP box is unchecked, the ones under the tool libraries and .f3z boxes
 # and the one under the older-versions choice (each row about 30 units: the controls above the tree
 # come to about 480, with the tree's 260 and the OK row below them).
 DIALOG_SIZE = (520, 800)
@@ -135,7 +135,7 @@ class Picker:
     The page asks for "hubs" (hubs with their projects, and how many items of each are already
     in the output folder), "folders" (the subfolders, with ids, and the file count of a folder
     in a project, listed only when the user opens it; addressed by folder ids where known, else
-    by name path) and reports "selection" after every tick, in the Selection format
+    by name path) and reports "selection" after every change, in the Selection format
     {project id: None | [folder paths]}, where each folder in a path is {"id", "name"} when its
     id is known (so a folder is told apart from a same-named sibling) and its name otherwise.
     """
@@ -175,7 +175,7 @@ class Picker:
         self.facts = None
         self.browsing = False
         self.refresh_folder()
-        # On unless the user switched it off last time; the note under it shows while it is unticked.
+        # On unless the user switched it off last time; the note under it shows while it is unchecked.
         self.step_box = inputs.addBoolValueInput('fbx_step', STEP, True, '', remembered.get('step') is not False)
         describe(self.step_box, STEP_WHY, trace)
         self.step_note = inputs.addTextBoxCommandInput('fbx_step_note', '', STEP_OFF_NOTE, 1, True)
@@ -291,7 +291,7 @@ class Picker:
         self.note.text = settings.folder_note(self.facts) if self.output else 'Choose where to save the export.'
         problem = output_root_problem(self.output)
         if problem:
-            self.note.text = problem  # Export stays greyed out (ready()) until another folder is chosen
+            self.note.text = problem  # Export stays grayed out (ready()) until another folder is chosen
 
     def choose_folder(self):
         """Browse…: the system folder dialog, starting at the current folder."""
@@ -405,7 +405,7 @@ class Picker:
             self.trace('sendInfoToHTML: %s' % error)
 
     def selection(self):
-        """Selection for what is ticked; None means nothing was chosen."""
+        """Selection for what is checked; None means nothing was chosen."""
         if not self.choosing:
             return Selection()
         return Selection(self.chosen) if self.chosen else None

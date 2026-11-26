@@ -52,7 +52,7 @@ FULL_COLLECT_EVERY = 50
 
 # The memory guard. Fusion's memory can grow over a long run (by gigabytes over thousands of
 # designs, in Fusion itself), and a Fusion that runs out of memory dies with whatever it had open.
-# Between items the run then stops cleanly, as if cancelled, with stopped_code 'memory', and the
+# Between items the run then stops cleanly, as if canceled, with stopped_code 'memory', and the
 # next run (after restarting Fusion) carries on where it stopped. A guard that stops a healthy run
 # is worse than none, so it stops only when restarting Fusion would actually help, and only when
 # that is so for a while, never on one sample:
@@ -1166,7 +1166,7 @@ class Exporter:
         version or date changes meanwhile (which must never happen) stops the run at once,
         without asking on_trouble: stopped_code 'account_changed'.
 
-        f3z_bundles: at the end of the run (unless it was cancelled or stopped), build an .f3z
+        f3z_bundles: at the end of the run (unless it was canceled or stopped), build an .f3z
         beside each assembly's .f3d from the .f3d files in the folder (f3z.py; run_info["f3z"] is
         the tally). Off unless asked for. The files Fusion wrote are never changed.
 
@@ -1357,7 +1357,7 @@ class Exporter:
                         break
                     if limit is not None and counts['exported'] >= limit and finishing is None:
                         # A small run on a large account need not list everything; the other files
-                        # of this folder are still saved (they do not count towards the limit).
+                        # of this folder are still saved (they do not count toward the limit).
                         finishing = (str(hub.id), str(project.id), list(folders))
                         self.run_info['limit_reached'] = True
         except Exception as error:

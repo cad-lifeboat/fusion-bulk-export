@@ -144,7 +144,7 @@ class RestartTests(unittest.TestCase):
         fusion = FakeFusion(addin=False)
         status, out = quiet(launcher.restart_fusion, fusion, MEMORY, force=False)
         self.assertEqual(status, launcher.EXIT_NO_ADDIN)
-        self.assertIn('Tick its Run on Startup box first', out)
+        self.assertIn('Check its Run on Startup box first', out)
         self.assertIn('Then run the same command again.', out)
         self.assertNotIn('keeps waiting', out)
         self.assertGreaterEqual(fusion.now, launcher.MANUAL_HINT_SECONDS)

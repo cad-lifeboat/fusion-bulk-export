@@ -655,7 +655,7 @@ class Documents(Collection):
         file.calls += 1
         CLOCK[0] += file.open_seconds
         # On real Fusion, a drawing opened through the API took minutes and its PDF export then
-        # crashed Fusion itself: opening one is a test failure, not a modelled behaviour.
+        # crashed Fusion itself: opening one is a test failure, not a modeled behavior.
         if str(file.fileExtension).lower() == 'f2d':
             raise FusionCrashed(DRAWING_CRASH)
         if file.open_error:

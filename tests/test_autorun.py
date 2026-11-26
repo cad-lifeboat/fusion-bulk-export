@@ -449,7 +449,7 @@ class AutorunTests(unittest.TestCase):
         synthetic = patch.object(adsk, '_synthetic', False)  # as in real Fusion: forgetting is on
         synthetic.start()
         self.addCleanup(synthetic.stop)
-        modules = patch.dict(sys.modules)  # whatever is forgotten here comes back afterwards
+        modules = patch.dict(sys.modules)  # whatever is forgotten here comes back afterward
         modules.start()
         self.addCleanup(modules.stop)
         errors = sys.modules['fusion_bulk_export.errors']

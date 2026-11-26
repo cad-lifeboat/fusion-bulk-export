@@ -66,7 +66,7 @@ def next_step(status, error):
         return DRAWING_NEXT if 'drawing' in text else UNSUPPORTED_NEXT
     if status == 'skipped':
         if 'not a fusion design' in text:
-            return 'Not saved: only designs were exported. Tick "Also save other files" to save it.'
+            return 'Not saved: only designs were exported. Check "Also save other files" to save it.'
         if 'no fusion design' in text or 'not a fusion document' in text:
             return 'Nothing to do: not a 3D design.'
         if 'unsaved changes' in text or 'close it' in text:
@@ -728,7 +728,7 @@ def summary(counts, run_info, manifest, output, page=None):
     folder and, when it was written, the report."""
     run_info = run_info or {}
     if run_info.get('cancelled'):
-        headline = 'Cancelled'
+        headline = 'Canceled'
     elif run_info.get('stopped_reason'):
         headline = 'Stopped: ' + run_info['stopped_reason']
     else:

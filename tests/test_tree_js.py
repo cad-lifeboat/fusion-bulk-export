@@ -53,8 +53,8 @@ class TreePageLayoutTests(unittest.TestCase):
         return self.css[(media, selector)]
 
     def test_scrollbars_follow_the_theme(self):
-        # Fusion's dark theme showed a bright white scrollbar track: the page names its colour
-        # scheme for both themes and styles its scrollbars with its own colours.
+        # Fusion's dark theme showed a bright white scrollbar track: the page names its color
+        # scheme for both themes and styles its scrollbars with its own colors.
         self.assertEqual(self.rule(':root')['color-scheme'], 'dark')
         self.assertEqual(self.rule(':root', '(prefers-color-scheme: light)')['color-scheme'], 'light')
         self.assertEqual(self.rule('html')['scrollbar-color'], 'var(--line) transparent')
@@ -127,7 +127,7 @@ class SummaryLogicTests(unittest.TestCase):
 
 
 class SummaryPageLayoutTests(unittest.TestCase):
-    """The results page: the tree page's colours, light and dark, no sideways scrolling, names
+    """The results page: the tree page's colors, light and dark, no sideways scrolling, names
     that end in an ellipsis, a folder path that can be selected, nothing loaded from outside."""
     def setUp(self):
         self.page = SUMMARY.read_text(encoding='utf-8')

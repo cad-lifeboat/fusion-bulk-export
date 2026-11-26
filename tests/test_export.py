@@ -552,7 +552,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), spec.content)
         self.assertEqual(path.stat().st_mtime, 1700000000)  # the file's date in Fusion
         self.assertEqual(entries['spec']['files'][0]['bytes'], len(spec.content))
-        # Fusion is given a short file path in a fresh staging folder, which is gone afterwards.
+        # Fusion is given a short file path in a fresh staging folder, which is gone afterward.
         self.assertEqual(Path(spec.downloads[0]).parent.parent, self.root / '.staging')
         self.assertLess(len(spec.downloads[0]), 260)
         self.assertFalse((self.root / '.staging').exists())

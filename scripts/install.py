@@ -8,8 +8,8 @@
 An older copy is replaced as a whole. Run-time files (job files, logs, caches) are
 never copied. The installed copy gets install-stamp.json: its version and a hash of
 its files (the release zip carries the same stamp), so the command-line launcher can
-tell whether it is older than a checkout. Fusion lists the add-in by itself afterwards: press Shift+S,
-find FusionBulkExport in the list (Search, or tick Add-ins under Type), tick its Run on Startup box
+tell whether it is older than a checkout. Fusion lists the add-in by itself afterward: press Shift+S,
+find FusionBulkExport in the list (Search, or check Add-ins under Type), check its Run on Startup box
 first, then switch Run on. The window closes when you switch it on; that is normal.
 
 The release zip carries "Install (macOS).command" and "Install (Windows).bat", which
@@ -29,7 +29,7 @@ NAME = 'FusionBulkExport'
 SOURCE = ROOT / NAME
 MANIFEST = NAME + '.manifest'
 NEXT_STEP = ('Installed. In Fusion press Shift+S and find FusionBulkExport in the list: type its name in '
-             'Search, or tick Add-ins under Type on the left. Tick its Run on Startup box first, then '
+             'Search, or check Add-ins under Type on the left. Check its Run on Startup box first, then '
              'switch Run on. The window closes when you switch it on; that is normal.')
 
 # Files and folders the add-in creates at run time, plus caches. Never installed or packaged.
