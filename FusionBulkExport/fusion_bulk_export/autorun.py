@@ -640,7 +640,7 @@ def run_settings(app, settings, beside, hooks=None):
             listing = inventory(data, log, stop=cancelled, output=output)
             atomic_write(output / 'inventory.json', listing)
             log.result['counts'] = listing['counts']
-            log.result['cancelled'] = bool(listing.get('stopped'))
+            log.result['cancelled'] = log.result['canceled'] = bool(listing.get('stopped'))
         else:
             exporter = Exporter(output, FusionAdapter(app), error_callback=log.error)
             exporter.memory_guard = memory_guard
@@ -664,7 +664,7 @@ def run_settings(app, settings, beside, hooks=None):
                     log.write('report not written: ' + type(error).__name__)
             info = exporter.run_info
             log.result.update(found=info.get('found'),
-                              cancelled=info['cancelled'],
+                              canceled=info['canceled'], cancelled=info['cancelled'],
                               stopped_reason=info.get('stopped_reason'), stopped_code=info.get('stopped_code'),
                               low_space=info.get('low_space'), free_bytes=info.get('free_bytes'),
                               discovery_errors=len(info['discovery_errors']),

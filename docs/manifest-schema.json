@@ -163,7 +163,8 @@
       "properties": {
         "started": {"$ref": "#/$defs/time"},
         "finished": {"oneOf": [{"$ref": "#/$defs/time"}, {"type": "null"}]},
-        "cancelled": {"type": "boolean"},
+        "cancelled": {"type": "boolean", "description": "older name of canceled, still written; the only one up to 0.4.2"},
+        "canceled": {"type": "boolean", "description": "stopped on request; absent in runs written by 0.4.2 or earlier (read `cancelled`)"},
         "stopped_code": {"type": ["string", "null"]},
         "stopped_reason": {"type": ["string", "null"]},
         "error": {"type": "string"},

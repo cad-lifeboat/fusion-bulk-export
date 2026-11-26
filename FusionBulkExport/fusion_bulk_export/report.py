@@ -17,7 +17,7 @@ from . import toollibs
 from .checks import bundle_info, entry_step, file_role, inserted_designs, inserted_note
 from .core import (ARCHIVE_NOT_REQUESTED, ARCHIVE_OFF, ARCHIVE_OFF_NOTE, DRAWING_REASON, LEGACY_NATIVE_REASON,
                    LINKS_UNREADABLE, LOW_MEMORY_NOTE, MOVED, OLDER_FOLDER, REMOVED, STEP_FAILED,
-                   STEP_OFF, STEP_NOT_REQUESTED, STEP_OFF_NOTE)
+                   STEP_OFF, STEP_NOT_REQUESTED, STEP_OFF_NOTE, was_canceled)
 from .names import long_path
 from .words import form, plural
 
@@ -727,7 +727,7 @@ def summary(counts, run_info, manifest, output, page=None):
     many more the report lists, the retry hint when something failed, short notes, the output
     folder and, when it was written, the report."""
     run_info = run_info or {}
-    if run_info.get('cancelled'):
+    if was_canceled(run_info):
         headline = 'Canceled'
     elif run_info.get('stopped_reason'):
         headline = 'Stopped: ' + run_info['stopped_reason']
@@ -744,7 +744,7 @@ def summary(counts, run_info, manifest, output, page=None):
             rows.append([label, value])
     failed = failures(manifest, run_info)
     notes = []
-    if run_info.get('cancelled'):
+    if was_canceled(run_info):
         notes.append('Run again to carry on where it stopped.')
     if run_info.get('stopped_code'):
         from .errors import NEXT_STEP

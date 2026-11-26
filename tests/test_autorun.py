@@ -291,7 +291,7 @@ class AutorunTests(unittest.TestCase):
         self.output.mkdir()
         (self.output / 'STOP').write_text('')
         result = self.run_with()
-        self.assertTrue(result['cancelled'])
+        self.assertEqual((result['canceled'], result['cancelled']), (True, True))
         self.assertEqual(result['counts']['exported'], 0)
         (self.output / 'STOP').unlink()
         self.assertEqual(self.run_with()['counts']['exported'], 3)

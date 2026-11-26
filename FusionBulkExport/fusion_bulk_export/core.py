@@ -289,6 +289,13 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def was_canceled(record):
+    """Whether a manifest run or an autorun-result.json says it was canceled: `canceled`, or
+    `cancelled`, the only name written up to 0.4.2 (still written beside it)."""
+    record = record or {}
+    return bool(record.get('canceled', record.get('cancelled')))
+
+
 def collection(values):
     for index in range(values.count):
         yield values.item(index)
@@ -871,7 +878,7 @@ class Exporter:
         # MEMORY_GUARD_ENV and settings.json can switch it off too (memory_guard_enabled).
         self.memory_guard = True
         self.memory_clock = time.monotonic
-        self.run_info = {'started': now(), 'finished': None, 'cancelled': False}
+        self.run_info = {'started': now(), 'finished': None, 'cancelled': False, 'canceled': False}
         if self.upgraded:
             self.run_info['upgraded_schema'] = 1
         self.manifest['runs'].append(self.run_info)
@@ -1235,7 +1242,7 @@ class Exporter:
                     self.run_info.update(stopped_reason=stopping.reason, stopped_code=stopping.code)
                     self.log('trouble: ' + stopping.reason + ' ' + (stopping.error or ''))
                 elif cancelled():
-                    self.run_info['cancelled'] = True
+                    self.run_info.update(cancelled=True, canceled=True)
                 self.save()  # the libraries are in manifest.json before the first design
             if not designs or stopping is not None or self.run_info['cancelled']:
                 data = _View()
@@ -1286,7 +1293,7 @@ class Exporter:
                 for hub, project, folders, file in walk(data, unreadable, None if selection.everything else selection,
                                                         visiting):
                     if cancelled():
-                        self.run_info['cancelled'] = True
+                        self.run_info.update(cancelled=True, canceled=True)
                         break
                     if not selection.keeps(hub, project, folders):
                         continue
@@ -1301,7 +1308,7 @@ class Exporter:
                                  kind=self.item_kind(file))
                     report('design')
                     if cancelled():
-                        self.run_info['cancelled'] = True
+                        self.run_info.update(cancelled=True, canceled=True)
                         break
                     began = self.clock()
                     earlier = entries.get(self.item_key(hub, project, file))

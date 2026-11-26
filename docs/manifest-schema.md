@@ -266,7 +266,8 @@ One object per run, appended at its start. Stable fields:
 |---|---|---|
 | `started` | string | ISO 8601. |
 | `finished` | string or null | `null` while the run is going, or when it ended without a final save (Fusion closed). |
-| `cancelled` | boolean | Stopped on request (Cancel, `STOP` file, a canceled job). |
+| `canceled` | boolean | Stopped on request (Cancel, `STOP` file, a canceled job). New in versions after 0.4.2; absent in older runs (read `cancelled`). |
+| `cancelled` | boolean | The same value under its older name, the only one up to 0.4.2; still written for readers of `cad-export-manifest/1`. Read `canceled` when present. |
 | `stopped_code` | string or null | Why it stopped by itself: `failing` (5 designs in a row failed), `disk_full`, `output_missing`, `output_unwritable`, `memory`, `account_changed`. `null`: it did not. |
 | `stopped_reason` | string or null | The same in plain words. |
 | `error` | string | Present when the run ended with an unexpected error. |
@@ -300,8 +301,8 @@ An export folder is complete and settled when all of these hold:
 1. There is no `export.lock`, or it is stale by the rule in
    [job-protocol.md, export.lock](job-protocol.md#exportlock).
 2. `manifest.journal` is absent or empty.
-3. The last item of `runs` has `finished` set, `cancelled: false`, `stopped_code: null`, no
-   `error`, and `limit_reached` absent.
+3. The last item of `runs` has `finished` set, `stopped_code: null`, no `error`,
+   `limit_reached` absent, and `canceled: false` (`cancelled: false` in runs up to 0.4.2).
 4. For the newest version of every design (`kind: "design"`), `status` is `done`; no entry the
    reader cares about has `status: "failed"`.
 

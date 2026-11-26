@@ -532,7 +532,10 @@ def summary(output):
         memory = memory or memory_line(report.get('memory'))
         if memory:
             lines.append(memory)
-        for key in ('found', 'cancelled', 'discovery_errors', 'bytes'):
+        if 'canceled' in report or 'cancelled' in report:
+            # `cancelled` alone: a result written by 0.4.2 or earlier.
+            report['canceled'] = report.get('canceled', report.get('cancelled'))
+        for key in ('found', 'canceled', 'discovery_errors', 'bytes'):
             if key in report:
                 lines.append('%s: %s' % (key, report[key]))
         lines.append('Errors: %d' % len(report.get('errors', [])))

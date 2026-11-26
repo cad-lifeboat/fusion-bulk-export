@@ -143,7 +143,8 @@ class ExportTests(unittest.TestCase):
                 state['cancel'] = True
         exporter, counts = self.run_export(fake.data([file]),
                                           cancelled=lambda: state['cancel'], progress=update)
-        self.assertTrue(exporter.run_info['cancelled'])
+        self.assertEqual((exporter.run_info['canceled'], exporter.run_info['cancelled']), (True, True))
+        self.assertEqual((self.manifest['runs'][-1]['canceled'], self.manifest['runs'][-1]['cancelled']), (True, True))
         self.assertEqual(counts['exported'], 0)
         self.assertEqual(file.calls, 0)
 

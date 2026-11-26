@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parents[1] / 'FusionBulkExport'
 BUTTON_TALK = re.compile(r'\b(Yes|No|Cancel|OK)\b.*(open|opens|close|closes|stop|stops)', re.I)
 
 # American spelling and usage in everything a user or contributor reads. A checkbox is "checked",
-# not "ticked". The job protocol keeps its own spelling: a word glued to a quote, backtick or code
-# punctuation (`cancelled`, "cancelled":, run_info['cancelled'], .cancelled(), --tick) is a name
-# other programs rely on, not prose.
+# not "ticked". A word glued to a quote, backtick or code punctuation is a name, not prose: the one
+# British name left is `cancelled`, the older key of manifest.json runs and autorun-result.json and
+# the job status value of 0.4.2 and earlier, still written or read for older readers and files.
 BRITISH = re.compile(
     r'\b(cancell(ed|ing)|(un)?tick(s|ed|ing)?|grey(s|ed|ing)?|colours?|colour(ed|ing)'
     r'|behaviours?|queueing|(recogn|organ|real|summar|initial|normal|custom|optim|prioriti?|author|util)'
@@ -21,14 +21,10 @@ BRITISH = re.compile(
     r'|judgement|honour(s|ed|ing)?|favour(s|ed|ite)?|centre(s|d)?|centred|towards|afterwards|whilst'
     r'|amongst|licence|catalogue|analys(e|es|ed|ing)|programmes?|learnt|spelt)\b', re.I)
 GLUED_BEFORE, GLUED_AFTER = set('\'"`._-[/'), set('\'"`_-[(=')
-# Fixed fragments where the protocol value stands unquoted: the state column of the reason codes.
-SPELLING_ALLOWED = ('| `cancelled` | cancelled |',)
 
 
 def british(text):
     """The British spellings in a piece of prose, names glued to code punctuation left out."""
-    for fragment in SPELLING_ALLOWED:
-        text = text.replace(fragment, '')
     found = []
     for match in BRITISH.finditer(text):
         word, start, end = match.group(0), match.start(), match.end()
@@ -128,6 +124,18 @@ class TextTests(unittest.TestCase):
             for line, text in prose(path):
                 for word in british(text):
                     found.append('%s:%d %s' % (path.relative_to(ROOT.parent), line, word))
+        self.assertEqual(found, [])
+
+    def test_cancelled_is_documented_only_as_the_old_name(self):
+        # In the documentation, `cancelled` appears only where the line says it is what 0.4.2
+        # and earlier wrote (the export's internal cancelled() check aside).
+        found = []
+        for path in user_facing():
+            if path.suffix != '.md':
+                continue
+            for line, text in prose(path):
+                if re.search(r'cancelled(?!\()', text, re.I) and '0.4.2' not in text:
+                    found.append('%s:%d' % (path.relative_to(ROOT.parent), line))
         self.assertEqual(found, [])
 
     def test_spelling_guard_catches_british_words_and_spares_protocol_names(self):

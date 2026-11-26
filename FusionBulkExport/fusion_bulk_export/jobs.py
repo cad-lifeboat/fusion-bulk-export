@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import autorun
-from .core import OLDER_VERSIONS, now
+from .core import OLDER_VERSIONS, now, was_canceled
 from .lock import NAME as LOCK_NAME, FolderLock, process_alive
 from .names import absolute_path, output_root_problem
 from .words import plural
@@ -34,14 +34,18 @@ PROTOCOL = 1
 PROTOCOLS = (1,)
 AGENT = 'fusion-bulk-export'
 FEATURES = ('export', 'inventory', 'designs_by_id', 'include_references', 'hubs', 'step', 'step_only',
-            'f3z_bundles', 'tool_libraries', 'older_versions', 'cancel')
+            'f3z_bundles', 'tool_libraries', 'older_versions', 'cancel', 'canceled')
 FOLDER = '.cad-export'
 HEARTBEAT_SECONDS = 10      # the agent file's "updated" is rewritten this often
 STATUS_SECONDS = 10         # a running job's status is rewritten at least this often while listing
 MAX_JOB_BYTES = 1 << 20     # a larger job file is never read
 JOB_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 REQUESTER_LIMIT = 200
-FINAL = ('done', 'failed', 'cancelled')
+CANCELED = 'canceled'
+# The state and reason of a canceled job as written up to 0.4.2; still read (a status file left by
+# an earlier version is final all the same).
+CANCELED_OLD = 'cancelled'
+FINAL = ('done', 'failed', CANCELED, CANCELED_OLD)
 FRACTION = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d+)(.*)$')
 COUNT_KEYS = ('exported', 'up_to_date', 'files', 'files_up_to_date', 'skipped', 'unsupported', 'failed')
 FIELDS = ('protocol', 'id', 'requested', 'requester', 'action', 'output_dir', 'designs', 'include_references',
@@ -484,9 +488,10 @@ class Service:
         return True
 
     def finish(self, status, state, reason=None, message='', exit_code=None):
-        status.update(state=state, reason=reason, message=message, finished=now(),
-                      exit_code=exit_code if exit_code is not None else (
-                          EXIT_DONE if state == 'done' else EXIT_CANCELLED if state == 'cancelled' else EXIT_FAILED))
+        if exit_code is None:
+            exit_code = (EXIT_DONE if state == 'done' else EXIT_CANCELLED if state in (CANCELED, CANCELED_OLD)
+                         else EXIT_FAILED)
+        status.update(state=state, reason=reason, message=message, finished=now(), exit_code=exit_code)
         status['progress']['current'] = None
         status['progress']['current_number'] = None
         self.queued.discard(status['id'])
@@ -569,10 +574,10 @@ class Service:
         """A queued job that was canceled or whose job file was removed: canceled, never run.
         True when it was."""
         if self.cancel_path(stem).exists():
-            self.finish(status, 'cancelled', 'cancelled', 'Canceled before it ran.')
+            self.finish(status, CANCELED, CANCELED, 'Canceled before it ran.')
             return True
         if not self.job_path(stem).exists():
-            self.finish(status, 'cancelled', 'cancelled', 'The job file was removed before it ran.')
+            self.finish(status, CANCELED, CANCELED, 'The job file was removed before it ran.')
             return True
         return False
 
@@ -632,7 +637,7 @@ class Service:
         try:
             read = self.read_job(stem)
             if read is None:
-                self.finish(status, 'cancelled', 'cancelled', 'The job file was removed before it ran.')
+                self.finish(status, CANCELED, CANCELED, 'The job file was removed before it ran.')
                 return
             try:
                 job = self.parse(read[0], stem)
@@ -695,9 +700,9 @@ class Service:
         elif stopped:
             reason, message = stopped, MESSAGES.get(stopped) or 'Stopped by itself.'
             state, code = 'failed', EXIT_MEMORY if stopped == 'memory' else EXIT_FAILED
-        elif result.get('cancelled'):
-            reason, message, state, code = 'cancelled', 'Canceled after %s.' % plural(
-                progress.get('done') or 0, 'item'), 'cancelled', EXIT_CANCELLED
+        elif was_canceled(result):
+            reason, message, state, code = CANCELED, 'Canceled after %s.' % plural(
+                progress.get('done') or 0, 'item'), CANCELED, EXIT_CANCELLED
         else:
             state, code = 'done', EXIT_DONE
             if inventory:
