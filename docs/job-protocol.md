@@ -64,7 +64,7 @@ reads every `*.json` in `agents/` and picks an agent by its `exporter` and `feat
   "job": null,
   "jobs_dir": "/Users/someone/.cad-export/jobs",
   "features": ["export", "inventory", "designs_by_id", "include_references", "hubs", "step", "step_only",
-               "f3z_bundles", "tool_libraries", "older_versions", "cancel"]
+               "f3z_bundles", "tool_libraries", "older_versions", "cancel", "canceled"]
 }
 ```
 
@@ -294,7 +294,7 @@ When finished:
 
 | Field | Meaning |
 |---|---|
-| `state` | `queued`, `running`, `done`, `failed`, `cancelled`. The last three are final: the file does not change again. A job can go from claimed to `running` (or straight to `failed` when invalid) without `queued` ever being seen. |
+| `state` | `queued`, `running`, `done`, `failed`, `canceled`. The last three are final: the file does not change again. A job can go from claimed to `running` (or straight to `failed` when invalid) without `queued` ever being seen. |
 | `reason` | `null` for `done`; else a code (below). |
 | `message` | One line in plain words. Counts only: never a design, project or hub name. |
 | `claimed`, `started`, `updated`, `finished` | Times; `started`/`finished` are `null` until then. |
@@ -303,9 +303,9 @@ When finished:
 | `progress.current` | Id (lineage URN) of the item in progress, or `null`. |
 | `progress.current_number` | Its 1-based number, or `null`. |
 | `counts` | The run counts, as in `manifest.json` `runs[].counts` (`null` until the first item, and for an inventory). |
-| `manifest` | Absolute path of `manifest.json` once the job is final (`done`, and `cancelled` or `failed` when an export was written); else `null`. Always `null` for an inventory. |
+| `manifest` | Absolute path of `manifest.json` once the job is final (`done`, and `canceled` or `failed` when an export was written); else `null`. Always `null` for an inventory. |
 | `inventory` | For `action: "inventory"`: absolute path of `inventory.json` once the job is `done`; else `null`. Absent for an export. |
-| `result` | Absolute path of the job's `autorun-result.json`, once written. |
+| `result` | Absolute path of the job's `autorun-result.json`, once written. Its `canceled` (boolean) says whether the run was canceled; `cancelled`, the only name up to 0.4.2, is still written beside it with the same value. |
 | `exit_code` | What the command-line launcher would exit with: `0` done, `1` failed, `75` memory, `77` Fusion closed mid-job, `130` canceled. `null` until final. |
 
 `done` means the export ran to its end. It can still hold failed items: check `counts.failed`
@@ -328,16 +328,18 @@ Reason codes:
 | `account_changed` | failed | A design changed in the account while it was exported. | Resubmit. |
 | `interrupted` | failed | Fusion closed or crashed while the job ran (set when the add-in next starts). | Resubmit (it resumes). Repeated crashes on the same design: tell the person. |
 | `error` | failed | Anything unexpected; `message` has the error type. | Report the type (not paths or names). |
-| `cancelled` | cancelled | Canceled on request. | Nothing. |
+| `canceled` | canceled | Canceled on request. | Nothing. |
 
 ### Canceling
 
-The state and the reason code are spelled `cancelled` in protocol 1; messages say "canceled".
+Versions up to 0.4.2 wrote the state and the reason code as `cancelled`; later versions write
+`canceled` (their agent file lists the feature `canceled`). Both are protocol 1: a reader accepts
+either spelling, as final, with the same meaning.
 
 The requester creates an empty file `jobs/<id>.cancel`.
-- A `queued` job becomes `cancelled` without running.
+- A `queued` job becomes `canceled` without running.
 - A `running` job stops between items, as the `STOP` file in the output folder does today:
-  everything finished so far is kept and recorded; state `cancelled`. A later job into the same
+  everything finished so far is kept and recorded; state `canceled`. A later job into the same
   folder carries on.
 - A final job ignores it.
 
@@ -345,7 +347,7 @@ The requester creates an empty file `jobs/<id>.cancel`.
 
 After a job is final the requester deletes `<id>.json`, `<id>.status.json` and `<id>.cancel`
 (the requester owns the job; the add-in never deletes job files). Deleting a job file while its
-job is `queued` withdraws it (it is not run; its status becomes `cancelled`); deleting it while `running` changes nothing (use
+job is `queued` withdraws it (it is not run; its status becomes `canceled`); deleting it while `running` changes nothing (use
 `.cancel`).
 
 ### Add-in restarts
@@ -455,7 +457,8 @@ minus reading `autorun.json`).
   `protocols`; a requester writes the highest version both know.
 - Within protocol 1, changes are additive only: new optional job fields (announced in `features`
   first), new status fields, new `reason` codes, new `features`. A requester ignores status fields
-  it does not know and treats an unknown `reason` as `error`.
+  it does not know and treats an unknown `reason` as `error`. One value changed spelling within
+  protocol 1: `cancelled` (up to 0.4.2) is now `canceled` (see [Canceling](#canceling)).
 - Anything else (a field removed or changing meaning, new required fields, a new layout of
   `~/.cad-export`) is protocol 2. The add-in keeps accepting protocol 1 for at least one minor
   version after adding 2.

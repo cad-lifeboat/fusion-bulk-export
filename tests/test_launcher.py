@@ -693,6 +693,17 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class CanceledResultTests(unittest.TestCase):
+    def test_summary_says_canceled_from_either_name(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp)
+            for result in (dict(canceled=True, cancelled=True), dict(cancelled=True), dict(canceled=True)):
+                (out / 'autorun-result.json').write_text(json.dumps(dict(mode='export', counts={}, **result)))
+                lines = launcher.summary(out)
+                self.assertIn('canceled: True', lines)
+                self.assertFalse([line for line in lines if line.startswith('cancelled')])
+
+
 class AddInVersionTests(unittest.TestCase):
     """The launcher installs its checkout's add-in only when none is installed or the installed
     one is older; it never downgrades, and replaces nothing while an export runs. (A tester's

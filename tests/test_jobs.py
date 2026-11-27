@@ -452,7 +452,7 @@ class RunTests(JobTestCase):
         self.handle()
         for stem in ('cancelled', 'withdrawn'):
             status = self.status(stem)
-            self.assertEqual((status['state'], status['reason'], status['exit_code']), ('cancelled', 'cancelled', 130))
+            self.assertEqual((status['state'], status['reason'], status['exit_code']), ('canceled', 'canceled', 130))
         self.assertFalse(self.output.exists())
 
     def test_cancel_while_running_stops_between_items(self):
@@ -466,12 +466,15 @@ class RunTests(JobTestCase):
         with patch.object(jobs.JobHooks, 'progress', progress):
             self.handle()
         status = self.status()
-        self.assertEqual((status['state'], status['reason'], status['exit_code']), ('cancelled', 'cancelled', 130))
+        self.assertEqual((status['state'], status['reason'], status['exit_code']), ('canceled', 'canceled', 130))
         self.assertEqual(status['counts']['exported'], 2)
         self.assertEqual(status['progress']['done'], 2)  # the third was not begun
         self.assertEqual(status['message'], 'Canceled after 2 items.')
         self.assertEqual(status['manifest'], str(self.output / 'manifest.json'))
-        self.assertTrue(self.manifest()['runs'][-1]['cancelled'])
+        run = self.manifest()['runs'][-1]
+        self.assertEqual((run['canceled'], run['cancelled']), (True, True))  # the older name kept
+        result = json.loads((self.output / 'autorun-result.json').read_text(encoding='utf-8'))
+        self.assertEqual((result['canceled'], result['cancelled']), (True, True))
         # A later job into the same folder carries on.
         self.submit('job-2', projects=['project-1'])
         self.handle()
@@ -563,6 +566,59 @@ class RestartTests(JobTestCase):
         self.assertEqual(self.status('was-queued')['state'], 'done')
         self.assertEqual(self.status('was-running')['state'], 'failed')
         self.assertFalse((self.home / 'o3').exists())
+
+
+class CanceledSpellingTests(JobTestCase):
+    """0.4.2 and earlier wrote `cancelled`; later versions write `canceled` and read both."""
+
+    def old_status(self, stem, **fields):
+        status = self.service.new_status(stem, 'cancelled', reason='cancelled', exit_code=130,
+                                         agent_pid=dead_pid(), **fields)
+        (self.service.jobs / (stem + '.status.json')).write_bytes(json.dumps(status).encode('utf-8'))
+        return status
+
+    def test_agent_file_lists_the_canceled_feature(self):
+        self.service.write_agent(self.busy)
+        agent = json.loads(self.service.agent_path.read_bytes().decode('utf-8'))
+        self.assertIn('canceled', agent['features'])
+        self.assertEqual(agent['protocol'], 1)
+
+    def test_old_cancelled_status_is_final(self):
+        old = self.old_status('old')
+        self.submit('old', designs=['a'])
+        self.assertIn('cancelled', jobs.FINAL)
+        self.assertFalse(self.service.update(dict(old, state='running')))
+        self.service.recover(self.busy)
+        self.handle()
+        status = self.status('old')
+        self.assertEqual((status['state'], status['reason']), ('cancelled', 'cancelled'))  # left as written
+        self.assertFalse(self.output.exists())
+
+    def test_finish_gives_both_spellings_the_cancel_exit_code(self):
+        for state in ('canceled', 'cancelled'):
+            status = self.service.new_status('job-' + state, 'running')
+            self.service.finish(status, state, state)
+            self.assertEqual(self.status('job-' + state)['exit_code'], 130)
+
+    def test_result_from_either_name_concludes_canceled(self):
+        job = NS(action='export')
+        self.output.mkdir()
+        for result in (dict(cancelled=True), dict(canceled=True), dict(canceled=True, cancelled=True)):
+            status = self.service.new_status('job-1', 'running')
+            self.service.conclude(job, status, dict(result, counts={}), NS(total=None), self.output)
+            self.assertEqual((self.status()['state'], self.status()['reason']), ('canceled', 'canceled'))
+        status = self.service.new_status('job-1', 'running')
+        self.service.conclude(job, status, dict(canceled=False, cancelled=False, counts={}), NS(total=None),
+                              self.output)
+        self.assertEqual(self.status()['state'], 'done')
+
+    def test_was_canceled_reads_either_name(self):
+        from fusion_bulk_export.core import was_canceled
+        self.assertTrue(was_canceled(dict(cancelled=True)))
+        self.assertTrue(was_canceled(dict(canceled=True)))
+        self.assertFalse(was_canceled(dict(canceled=False, cancelled=False)))
+        self.assertFalse(was_canceled({}))
+        self.assertFalse(was_canceled(None))
 
 
 class EntryFileTests(JobTestCase):
